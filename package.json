@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "bin": {
-    "shiki": "cli/shiki.ts"
+    "shiki": "cli/shiki.ts",
+    "mctl": "cli/shiki.ts"
   },
   "scripts": {
     "start": "bun server/index.ts",
