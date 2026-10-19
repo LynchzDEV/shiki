@@ -2,14 +2,16 @@
 
 **A simple cockpit for any AI coding agent, extensible with plugins.**
 
+Website: [shikidan.com](https://shikidan.com)
+
 Shikidan is a workspace that runs your AI coding agents from one chat. It isn't tied to one vendor: bring Claude Code, Codex, Grok, GLM (through any Anthropic-compatible endpoint), or any ACP, OpenCode or headless-CLI agent you add under **Studio → Manage AIs → Add an AI**. Extend it with plugin add-ons from a git marketplace, or write your own with the plugin SDK (see [Plugins](#plugins)).
 
-You describe the work in a chat. The chat answers directly, or spins up agents in isolated git worktrees, has a *different* AI family review each code change it makes, and lands it on your branch. (Jobs you start outside the chat, for example with `mctl job new`, skip that automatic review.) Live terminals, a workflow Studio and your whole history sit in the same window.
+You describe the work in a chat. The chat answers directly, or spins up agents in isolated git worktrees, has a *different* AI family review each code change it makes, and lands it on your branch. (Jobs you start outside the chat, for example with `shiki job new`, skip that automatic review.) Live terminals, a workflow Studio and your whole history sit in the same window.
 
 **What you get:**
 - **A CLI for people and agents.** `shiki` drives a running Shikidan from a shell: `shiki status`, `shiki job new "…" --follow`, `shiki attention`, `shiki runs`, `shiki plugin add <git url>`. See [Command line](#command-line).
 - **Describe a workflow, get a draft.** In Studio, type what you want into **Describe your workflow** and an AI drafts the steps on an editable canvas. Or start from the default (plan → verify → execute → cross-family review), a template, or scratch.
-- **Skills set up for you.** On start, Shikidan links its bundled skills into `~/.claude/skills`, loads the agents, skills and flows that installed plugins contribute, and mirrors Claude's global instructions, skills and agents to Codex so both follow the same rules.
+- **Skills set up for you.** On start, Shikidan links its `skd-dispatch` skill into `~/.claude/skills`, loads the agents, skills and flows that installed plugins contribute, and mirrors Claude's global instructions, skills and agents to Codex so both follow the same rules.
 
 **Example default setup:** Claude Code leads the chat, GLM via z.ai handles cheaper fan-out work, and Codex CLI reviews from the outside. Swap any of them for the agents you already use.
 
