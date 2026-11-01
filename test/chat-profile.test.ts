@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CHAT_RULES, chatEnv, chatRules, ensureChatProfile } from '../server/chat-profile'
+import { PSTACK_FLOW_IDS } from '../server/pstack-flows'
 import { flowDesignRules } from '../server/flow-design'
 import { engineArgs, realEngineResolver } from '../server/jobs-engine-iface'
 import { writeSecrets } from '../server/secrets'
@@ -29,6 +30,15 @@ describe('chat rules', () => {
   test('chat rules explain when to use a flow and how to relay approval', () => {
     for (const phrase of ['more than one step that changes code', 'GET $SKD_URL/api/studio/workflows', '"status":"awaiting-approval"', '/approve {"chat":"$SKD_CHAT_ID"}', 'Never approve without the owner saying so']) expect(CHAT_RULES).toContain(phrase)
     expect(CHAT_RULES).not.toContain('Naming a Studio workflow is optional')
+  })
+  test('chat rules prefer a built-in pstack flow over in-chat subagent fan-out', () => {
+    expect(CHAT_RULES).toContain('pstack-arena')
+    expect(CHAT_RULES).toContain('/api/studio/runs instead of spawning the subagents yourself')
+    const named = CHAT_RULES.match(/pstack-[a-z]+/g) ?? []
+    expect(named.length).toBeGreaterThan(0)
+    for (const id of named) expect(PSTACK_FLOW_IDS as readonly string[]).toContain(id)
+    const skills = /for example pstack's ([^)]*)\)/.exec(CHAT_RULES)![1].split(/, | or /)
+    for (const skill of skills) expect(PSTACK_FLOW_IDS as readonly string[]).toContain(`pstack-${skill}`)
   })
   test('chat rules say to design the flow when Studio reports design mode', () => {
     expect(CHAT_RULES).toContain(`When GET $SKD_URL/api/studio/workflows returns "design": true, ${flowDesignRules('$SKD_URL')}`)
