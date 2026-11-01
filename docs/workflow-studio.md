@@ -93,3 +93,5 @@ Next to **pstack Feature**, Studio lists seven read-only flows adapted from psta
 - **pstack Why**: three investigators search source history, issue and PR discussion, and docs, then Codex writes a confidence-graded answer.
 - **pstack Reflect**: three reviewers (judgment, tooling, divergent) read a session, Codex sorts findings into Accepted, Rejected and Backlog, and you approve.
 - **pstack Thermos**: Codex reviews bugs and security, Claude reviews code quality, then you merge and dedupe the two reviews.
+
+Shikidan turns the pstack plugin off inside Claude and GLM worker and step jobs, so its routing mandate does not make workers dispatch further agents. Chats and terminals keep it.

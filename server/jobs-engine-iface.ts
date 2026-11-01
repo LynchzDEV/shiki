@@ -42,6 +42,7 @@ import { ensureWorkerProfiles } from './worker-profile'
 import type { BridgeLaunch } from './chat-bridge-core'
 import { join } from 'node:path'
 import { readEnv } from './env'
+import { workerPluginSettings } from './worker-plugin-guard'
 
 export function engineArgs(engine: EngineName, prompt: string, resumeSessionId?: string, model?: string): string[] {
   if (engine === 'codex') {
@@ -116,6 +117,8 @@ export const realEngineResolver: EngineResolver = async ({ engine, prompt, resum
   if (coreRules) args.unshift(...(name === 'codex' ? ['-c', `developer_instructions=${JSON.stringify(coreRules)}`] : ['--append-system-prompt', coreRules]))
   if (purpose === 'chat' && edit === false && name !== 'codex') args.push('--disallowedTools', 'Edit,Write,MultiEdit,NotebookEdit')
   if (purpose === 'chat' && name !== 'codex') args.push('--include-partial-messages')
+  const pluginSettings = purpose !== 'chat' && name !== 'codex' ? workerPluginSettings() : null
+  if (pluginSettings) args.push('--settings', pluginSettings)
   const env = purpose === 'chat'
     ? { ...(await buildEnv(name, { worker: false })), ...(await chatProfileEnv(name)) }
     : await buildEnv(name, { worker: !readOnly })
