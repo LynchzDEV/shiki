@@ -1,9 +1,10 @@
+import { REVIEW_STEP_INSTRUCTIONS, VERIFY_PLAN_STEP_INSTRUCTIONS } from '../server/reviewer-prompts'
 import type { Workflow, WorkflowNode } from '../server/workflows'
 export const stepPresets = [
   { id:'plan', title:'Plan work', description:'Turn a request into a clear plan', kind:'plan', role:'plan', symbol:'plan', instruction:'Inspect the request and project. Outline the changes, constraints, and how to verify the result.' },
-  { id:'verify-plan', title:'Check a plan', description:'Catch gaps before work begins', kind:'verify-plan', role:'review', symbol:'check', instruction:'Check the plan against the request and project. Flag missing steps and unclear requirements.' },
+  { id:'verify-plan', title:'Check a plan', description:'Catch gaps before work begins', kind:'verify-plan', role:'review', symbol:'check', instruction:VERIFY_PLAN_STEP_INSTRUCTIONS },
   { id:'implement', title:'Implement changes', description:'Carry out the approved plan', kind:'implement', role:'execute', symbol:'code', instruction:'Implement the verified plan. Follow project conventions and check that the changes work.' },
-  { id:'review', title:'Review work', description:'Get an independent second opinion', kind:'review', role:'review', symbol:'review', instruction:'Review the changes against the plan. Inspect the actual work and report findings with evidence.' },
+  { id:'review', title:'Review work', description:'Get an independent second opinion', kind:'review', role:'review', symbol:'review', instruction:REVIEW_STEP_INSTRUCTIONS },
   { id:'research', title:'Research', description:'Explore a question and collect sources', kind:'task', role:'plan', symbol:'research', instruction:'Research the question. Compare sources and provide a concise, evidence-backed answer.' },
   { id:'test', title:'Run tests', description:'Check that the result works as expected', kind:'task', role:'execute', symbol:'test', instruction:'Run the relevant tests and inspect the result. Report what passed, what failed, and supporting evidence.' },
   { id:'custom', title:'Custom task', description:'Write your own instructions', kind:'task', role:'execute', symbol:'spark', instruction:'Describe the task, constraints, and evidence required for success.' },

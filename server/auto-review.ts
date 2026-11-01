@@ -1,3 +1,4 @@
+import { CODE_REVIEW_RUBRIC } from './reviewer-prompts'
 import type { JobManager, JobRecord } from './jobs'
 import type { EngineResolver } from './jobs-engine-iface'
 import type { QuotaComposite } from './quota'
@@ -11,10 +12,13 @@ export function buildReviewPrompt(source: JobRecord): string {
   return [
     `Cross-family review of a finished ${source.engine} implementation job (${source.label}). You are in the job's working tree.`,
     `Scope: ONLY the diff — \`git status --porcelain\`; dirty tree → \`git diff HEAD\` plus untracked files; clean tree → \`git diff HEAD~1\`.`,
-    `Read at most the files that appear in that diff, and only around the changed hunks. Do NOT scan the repository, do NOT run the test suite, do NOT edit anything.`,
+    `Start from the files in that diff. You MAY read callers and dependents of the changed code to trace side effects, but do NOT scan unrelated parts of the repository, do NOT run the full test suite, do NOT edit anything.`,
     `Ignore worktree-local setup noise: database names, ports, .env values, generated files.`,
     `Output: first line exactly SHIP or NO-SHIP, then findings ranked most severe first as file:line — what is wrong — why it matters. Only report bugs, data loss, security, or broken behavior; style is not a finding. SHIP with no findings → one line.`,
     `Reported diff stat: ${source.diffStat ?? 'unknown'}.`,
+    `Where the output contract above differs from the rubric below, the output contract wins.`,
+    `Review rubric (from pstack thermo-nuclear-review):`,
+    CODE_REVIEW_RUBRIC,
   ].join('\n')
 }
 

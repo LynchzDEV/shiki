@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
+import { REVIEW_STEP_INSTRUCTIONS, VERIFY_PLAN_STEP_INSTRUCTIONS } from './reviewer-prompts'
 import { configDir } from './secrets'
 import { WORKER_CLAUDE_MD } from './worker-profile'
 
@@ -50,9 +51,9 @@ export function sessionRules(mcUrl: string, runId: string, nodeId: string): stri
 export function defaultWorkflow(): Workflow {
   return workflowSchema.parse({ id: 'default', name: 'Plan, verify, execute, review', entry: 'plan', nodes: [
     { id: 'plan', title: 'Plan', kind: 'plan', agent: { role: 'plan', engine: 'session' }, instructions: 'Inspect the request and repository. Produce a concrete implementation plan, affected files, constraints, and acceptance checks. Do not modify application code. If an upstream plan check failed, revise the plan to fix every finding it lists.' },
-    { id: 'verify-plan', title: 'Verify plan', kind: 'verify-plan', agent: { role: 'review' }, instructions: 'Verify the upstream plan against the request and actual code. Pass only if the plan is complete and executable. Report gaps as fail. Do not implement.' },
+    { id: 'verify-plan', title: 'Verify plan', kind: 'verify-plan', agent: { role: 'review' }, instructions: VERIFY_PLAN_STEP_INSTRUCTIONS },
     { id: 'execute', title: 'Execute', kind: 'implement', agent: { role: 'execute' }, instructions: 'Implement the verified plan in this workspace. Follow repository conventions, create a regression test when appropriate, and run relevant checks. Report files changed and real test evidence. Do not make a commit unless the request explicitly asks. If an upstream review failed, fix every finding it lists.' },
-    { id: 'review', title: 'Cross-family review', kind: 'review', agent: { role: 'review' }, instructions: 'Independently review the implementation and evidence against the verified plan. Inspect the actual diff and relevant files. Run appropriate checks. Pass only when no blocking findings remain; otherwise report specific findings as fail.' },
+    { id: 'review', title: 'Cross-family review', kind: 'review', agent: { role: 'review' }, instructions: REVIEW_STEP_INSTRUCTIONS },
   ].map((node, index) => ({ ...node, position: { x: index * 270, y: 100 } })), edges: [
     { source: 'plan', target: 'verify-plan', outcome: 'pass' },
     { source: 'verify-plan', target: 'execute', outcome: 'pass' },

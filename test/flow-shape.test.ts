@@ -112,3 +112,10 @@ test('a prompt without notes is unchanged', () => {
   const node = nodeOf(graph, 'plan')
   expect(composeWorkflowPrompt(policy, graph, node, 'x', [], [], {})).toBe(composeWorkflowPrompt(policy, graph, node, 'x', [], []))
 })
+
+test('the default flow review and plan-check nodes carry the pstack rubric and red flags', () => {
+  const nodes = defaultWorkflow().nodes
+  expect(nodes.find(node => node.id === 'review')!.instructions).toContain('ONLY report issues related to code')
+  expect(nodes.find(node => node.id === 'verify-plan')!.instructions).toContain('## Shallow module')
+  expect(validateWorkflow(defaultWorkflow())).toEqual([])
+})

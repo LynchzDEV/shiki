@@ -112,3 +112,13 @@ test('the Run workflow modal notes that In Session steps run as agents from Stud
   expect(runNote(withSession)).toBe('In Session steps run as agents when started from Studio.')
   expect(runNote(without)).toBeNull()
 })
+
+test('review and plan-check presets carry the pstack rubric and red flags',()=>{
+  expect(taskPreset('review').instructions).toContain('ONLY report issues related to code')
+  expect(taskPreset('verify-plan').instructions).toContain('## Shallow module')
+})
+
+test('the browser bundle of studio-graph resolves the shared reviewer prompts',async()=>{
+  const { transpileClientModule } = await import('../server/index')
+  expect(await transpileClientModule('studio-graph.js')).toContain('ONLY report issues related to code')
+})
