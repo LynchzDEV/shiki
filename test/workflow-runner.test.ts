@@ -261,6 +261,14 @@ test('a chat run of the default flow keeps its three design runners and judge on
   expect(['runner-claude', 'runner-glm', 'runner-codex', 'judge'].map(id => run.agents[id]!.family)).toEqual(['claude', 'glm', 'gpt', 'gpt'])
 })
 
+test('a chat run of pstack Thermos keeps its security pass on codex and its quality pass on claude', async () => {
+  await build(resolver, true)
+  const root = await chatRoot()
+  const run = await runner.start({ workflowId: 'pstack-thermos', cwd: repo, request: 'Review the diff', label: 'thermos', chat: root.id, engine: 'claude' })
+  expect(run.agents.security).toMatchObject({ engine: 'codex' })
+  expect(run.agents.quality).toMatchObject({ engine: 'claude' })
+})
+
 test('a chat run puts Chat decides steps on the chat AI, keeps pinned steps, and files its jobs under the chat', async () => {
   const store = await build()
   const graph = classicWorkflow()

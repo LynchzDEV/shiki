@@ -1,6 +1,6 @@
 # Notices
 
-The code-review rubric and plan red-flags text in `server/reviewer-prompts.ts`, and the step instructions of the built-in pstack Feature flow in `server/workflows.ts` (adapted from its Feature playbook, `how` explorer prompt, `architect` runner prompt and `arena` skill), are copied or adapted from pstack (Claude Code plugin by Lauren Tan and Michael Denyer), used under the MIT license below.
+The code-review rubric and plan red-flags text in `server/reviewer-prompts.ts`, and the step instructions of the built-in pstack Feature flow in `server/workflows.ts` (adapted from its Feature playbook, `how` explorer prompt, `architect` runner prompt and `arena` skill), and the prompts of the built-in pstack Arena, Interrogate, Swarm, How, Why, Reflect and Thermos flows in `server/pstack-prompts.ts` and `server/pstack-flows.ts` (adapted from the `arena`, `interrogate`, `swarm`, `how`, `why`, `reflect`, `thermos` and `thermo-nuclear-code-quality-review` skills and their reference prompts), are copied or adapted from pstack (Claude Code plugin by Lauren Tan and Michael Denyer), used under the MIT license below.
 
 MIT License
 

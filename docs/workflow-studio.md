@@ -81,3 +81,15 @@ Private files live under the existing Shikidan config directory: `connections/`,
 Run `bun test` for the test suite and `bun run typecheck:studio` for the Studio modules. Studio is verified in a browser against a throwaway instance (`SKD_PORT=7781 SKD_CONFIG_DIR=<scratch> bun server/index.ts`) with Playwright; the old `check:studio` script targeted the pre-2.0 page and was removed.
 
 Studio reuses [React Flow](https://reactflow.dev/learn) (MIT), the [ACP TypeScript SDK](https://github.com/agentclientprotocol/typescript-sdk) (Apache-2.0), and an externally installed [OpenCode](https://opencode.ai/docs/acp/) runtime (MIT). React is isolated to Studio; existing pages keep their original rendering path.
+
+## Built-in pstack flows
+
+Next to **pstack Feature**, Studio lists seven read-only flows adapted from pstack. Each fans out to a panel on different AI families (Claude, GLM, Codex), joins, then finishes. None of them edits your workspace. To change one, duplicate it under a new id.
+
+- **pstack Arena**: you and the AI frame a brief and a hidden rubric, three AIs each solve it, Codex judges, then you pick a base and graft parts.
+- **pstack Interrogate**: three adversaries try to break the change and prove every finding by running it, then Codex reruns each finding and keeps only the reproduced ones.
+- **pstack Swarm (race)**: you set the done test and the race rule, three AIs work the same brief, then you apply the rule to one report.
+- **pstack How**: three explorers trace the flow, the data and the boundaries of a subsystem, then Codex writes one explanation.
+- **pstack Why**: three investigators search source history, issue and PR discussion, and docs, then Codex writes a confidence-graded answer.
+- **pstack Reflect**: three reviewers (judgment, tooling, divergent) read a session, Codex sorts findings into Accepted, Rejected and Backlog, and you approve.
+- **pstack Thermos**: Codex reviews bugs and security, Claude reviews code quality, then you merge and dedupe the two reviews.

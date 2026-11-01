@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
+import { pstackFlows } from './pstack-flows'
 import { REVIEW_STEP_INSTRUCTIONS, VERIFY_PLAN_STEP_INSTRUCTIONS } from './reviewer-prompts'
 import { configDir } from './secrets'
 import { WORKER_CLAUDE_MD } from './worker-profile'
@@ -280,14 +281,17 @@ export function createWorkflowStore(base = configDir(), options: WorkflowStoreOp
     writes = next.catch(() => {})
     return next
   }
+  const pstack = () => pstackFlows().map(flow => workflowSchema.parse(flow))
+  const builtIn = (id: string): Workflow | undefined => id === 'default' ? defaultWorkflow() : pstack().find(flow => flow.id === id)
   async function get(id: string, revision?: string): Promise<WorkflowRevision> {
     identifier.parse(id)
     if (revision) identifier.parse(revision)
-    const fromPlugin = id === 'default' ? undefined : await pluginFlow(id)
+    const builtin = builtIn(id)
+    const fromPlugin = builtin ? undefined : await pluginFlow(id)
     if (fromPlugin && (!revision || revision === fromPlugin.revision)) return fromPlugin
     const directory = join(root, id)
-    if (id === 'default' && (!revision || revision === hash(defaultWorkflow()))) {
-      const record = { ...defaultWorkflow(), revision: hash(defaultWorkflow()), createdAt: 0 }
+    if (builtin && (!revision || revision === hash(builtin))) {
+      const record = { ...builtin, revision: hash(builtin), createdAt: 0 }
       await mkdir(directory, { recursive: true, mode: 0o700 })
       try { await writeFile(join(directory, `${record.revision}.json`), JSON.stringify(record), { mode: 0o600, flag: 'wx' }) }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error }
@@ -308,6 +312,7 @@ export function createWorkflowStore(base = configDir(), options: WorkflowStoreOp
       if (errors.length) throw new Error(errors.join('\n'))
       const graph = workflowSchema.parse(value)
       if (graph.id === 'default') throw new Error('Duplicate the built-in default to customize it')
+      if (builtIn(graph.id)) throw new Error('This flow is built in; save it under a new id to change it')
       const fromPlugin = await pluginFlow(graph.id)
       if (fromPlugin) throw new Error(`This flow comes from the ${fromPlugin.plugin} plugin; save it under a new id to change it`)
       let current: WorkflowRevision | undefined
@@ -326,12 +331,13 @@ export function createWorkflowStore(base = configDir(), options: WorkflowStoreOp
   }
   async function list(): Promise<WorkflowRevision[]> {
     const entries = await readdir(root, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return []; throw error })
-    const saved = await Promise.all(entries.filter(entry => entry.isDirectory() && entry.name !== 'default').map(entry => get(entry.name)))
+    const saved = await Promise.all(entries.filter(entry => entry.isDirectory() && !builtIn(entry.name)).map(entry => get(entry.name)))
     const savedIds = new Set(saved.map(flow => flow.id))
-    return [await get('default'), ...saved, ...(await pluginFlows()).filter(flow => !savedIds.has(flow.id))]
+    const builtins = await Promise.all(['default', ...pstack().map(flow => flow.id)].map(id => get(id)))
+    return [...builtins, ...saved, ...(await pluginFlows()).filter(flow => !savedIds.has(flow.id))]
   }
   async function revisions(id: string): Promise<WorkflowRevision[]> {
-    if (id === 'default') return [await get(id)]
+    if (builtIn(id)) return [await get(id)]
     const files = await readdir(join(root, identifier.parse(id)))
     const records = await Promise.all(files.filter(file => /^[a-f0-9]{24}\.json$/.test(file)).map(file => get(id, file.slice(0, -5))))
     return records.sort((a, b) => b.createdAt - a.createdAt)

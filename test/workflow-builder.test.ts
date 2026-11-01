@@ -1,3 +1,4 @@
+import { PSTACK_FLOW_IDS } from '../server/pstack-flows'
 import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
@@ -53,7 +54,7 @@ test('builds a draft in an isolated job without saving or executing its workflow
   expect(result.status).toBe('done');expect(result.draft?.workflow.nodes).toHaveLength(4)
   expect(readOnly).toBe(true)
   expect(manager.getJob(started.id)?.purpose).toBe('workflow-design')
-  expect((await store.list()).map(item=>item.id)).toEqual(['default'])
+  expect((await store.list()).map(item=>item.id)).toEqual(['default',...PSTACK_FLOW_IDS])
   expect(manager.listJobs()).toHaveLength(1)
   await builder.cleanup(manager.getJob(started.id)!)
 })

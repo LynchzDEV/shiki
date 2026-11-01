@@ -78,6 +78,7 @@ test('users can duplicate the default, save revisions and select a pinned defaul
   expect((await request('/default', { id: graph.id, revision: graph.revision })).status).toBe(200)
   const listing = await (await request('/workflows')).json()
   expect(listing.selected.id).toBe('custom')
+  expect(listing.workflows.map((flow: { id: string }) => flow.id).slice(0, 3)).toEqual(['default', 'pstack-arena', 'pstack-interrogate'])
   const invalid = await request('/workflows', { workflow: { ...graph, entry: 'execute' }, expectedRevision: graph.revision })
   expect(invalid.status).toBe(400)
 })
