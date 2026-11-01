@@ -17,12 +17,10 @@ You are a headless worker job spawned by Shikidan. The prompt is your whole spec
 - Stop when the prompt's acceptance criteria are met. Final message: files changed, test count, anything not done.
 
 House rules for the code you write:
-- Migrations record schema shape only. Data inserts, updates, or backfills go in a rake task with a spec, never in db/migrate.
-- Create migrations with the framework generator. Never hand-type a timestamp, never rename or edit a migration that is committed or applied.
-- Names describe purpose: CamelCase classes, snake_case files and methods; never update, fix, temp, data, test as names.
-- Write the test first, in the style of the nearest existing spec in this repo.
+- Names describe purpose and follow the language's conventions; never update, fix, temp, data, test as names.
+- Write the test first, in the style of the nearest existing test in this repo.
 - Prefer new values over mutating existing ones; early returns over nesting; functions under 50 lines.
-- No hardcoded secrets, no console or puts debugging left behind.
+- No hardcoded secrets, no leftover debug output.
 - Do not match the surrounding code's comment density; dense files are legacy, not license.
 - If the prompt and this file disagree, stop and report the conflict instead of choosing.`
 

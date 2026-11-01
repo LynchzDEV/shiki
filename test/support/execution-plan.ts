@@ -8,5 +8,5 @@ export function executionPlan(body: string): string {
 ### Step 1 — server/index.ts
 Do the work.
 Done means all of these hold, verified by you before you report:
-1. Touched specs pass.`
+1. The assignment's acceptance criteria are met.`
 }

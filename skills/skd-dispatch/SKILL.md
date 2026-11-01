@@ -220,9 +220,6 @@ gets a 422 with the miss list, and no job is created.
       build the record) as tasks — "about ten files" on 2026-09-14 was 28,
       and the gap became an 84-minute job
 - [ ] every test example has a literal expected value
-- [ ] every step under `db/migrate/`, `config/credentials*`, or a deploy
-      file was checked against global + project CLAUDE.md; a migration step
-      changes schema only, data moves are a rake task with a spec
 - [ ] at most 8 steps inline; a longer plan lives in
       `docs/superpowers/plans/*.md` in the tree and the spec says
       "execute tasks N..M of <file> in order"
@@ -263,36 +260,29 @@ o
 
 ### Acceptance baseline — paste into EVERY worker prompt (claude, glm, codex)
 
-Workers run on the slim profile, so the prompt is their only contract. Every
-spec ends with these lines verbatim, after the ticket-specific acceptance
-bullets (2026-09-08, user-mandated; scoped 2026-09-09 so the full suite runs
-once per landed change, not once per worker iteration; concern 4 added
-2026-09-14; concern 5 added 2026-09-22; concern 6 added 2026-09-30; concern 7
-added 2026-10-11 from the team's Definition of Done,
-https://app.clickup.com/3845974/v/dc/3nbup-45016/3nbup-367616):
+Workers run on the slim profile, so the prompt is their only contract. Every spec ends with the block below verbatim, after the ticket-specific acceptance bullets.
 
 ```
 Done means all of these hold, verified by you before you report:
-1. Every spec for a file you touched, plus every spec that references a class or module you changed, passes locally. Run those specs while iterating and once more at the end. Do NOT run the full suite or bin/ci: the orchestrator runs it once at landing.
-2. Those runs have no hard or forced waits (no sleep, no fixed wait_for/timeout padding) and are clean: zero warnings, zero error logs, zero deprecation output. No model spec that proves ActiveRecord plumbing (associations, column defaults, attribute round-trips, enum listings, allow_nil): a model example exists only for a rule the model itself enforces, and plumbing examples in files you touch are deleted. If a model you touch holds business logic, do not spec it there: flag it in your report as "why is this business logic in the model layer?" and name the service / query / PORO it should move to. A spec that sometimes passes and sometimes fails is a FAILING spec: never re-run until green or call it "just flaky" — find the cause (shared state, ordering, timing, a wrong column type) and fix it; evidence is the same specs green on repeated runs. Brakeman cannot be ignored: `config/brakeman.ignore` stays empty, every warning is fixed in code, and `brakeman --no-pager` reports 0 warnings with nothing ignored.
-3. Nothing on the remote is lost and the code stays compatible: fetch and rebase onto the latest remote tip before you finish, never force-push or drop commits, and keep existing callers, data and already-applied migrations working.
-4. The engine HAS TO spin up on its own: `spec/dummy` boots and its specs run with no host, no sibling engine and no host table; you added no dependency that is not necessary, and any that is enters through a settings adapter, never a direct constant.
-5. Migrations track schema changes and nothing else: create every new migration with `bin/rails g migration` so it carries a real wall-clock timestamp, never rename or re-timestamp one that is committed or already applied anywhere, and never add, update or delete data inside one — a data move is its own rake task with a spec.
-6. No needless recurring jobs: add no cron, scheduled, recurring or polling job (sidekiq-cron, whenever, solid_queue recurring, setInterval poll) that fires on a short fixed interval such as every 1 or 5 minutes to check whether something changed. Trigger the work from the event that causes it (enqueue at the moment of change, a callback, a webhook). A new recurring job is allowed only when no event exists to hang it on, and then at the longest interval the business tolerates.
-7. Names say what something is, does, or selects — for identifiers you added or renamed only; existing names are not a finding, do not rename them for style. Thing: a noun, plural for a collection (`Order`, `orders`, `total_price`). State: a predicate ending in `?`, positive wording, never saves, publishes or enqueues (`active?`, `has_stock?`). Action: a specific verb (`publish`, `calculate_total`). Selection (scope / query): names the records it returns (`Order.paid`, `Order.for_customer(customer)`). Job: verb + object + `Job` (`SendReceiptJob`). Concern: the capability it adds, usually an `-able` adjective (`Publishable`). `!` means "raises on failure" and nothing else (enum-generated methods exempt). No vague names (`data`, `info`, `manager`, `handler`, `process`) when a domain noun or verb exists. Renaming anything stored or called from outside the class (public API, database column, payload key, job class name) needs a compatibility plan.
-Report the exact spec command you ran and its summary line as evidence for 1 and 2, every model spec you added or changed with the model rule each example covers (plus any business-logic-in-model flag) for 2, the dummy boot command for 4, and the generator command plus resulting filename for any migration you added for 5, and every recurring or scheduled job you added (or "none") with its interval and why no event trigger fits for 6, and every identifier you added or renamed with its kind (Thing / State / Action / Selection / Job / Concern) for 7 — the reviewer signs that list off, not you.
+1. The assignment's acceptance criteria are met, each checked against real behavior (run it), not by reading the code.
+2. New or changed behavior has a test that fails without the change. The tests for every file you touched, and for code that depends on what you changed, pass. Run those while iterating and once more at the end. Do NOT run the full suite: the orchestrator runs it once at landing.
+3. No regressions: existing callers, public interfaces, stored data and config keep working. Any intended break is named in your report with the reason.
+4. The repo's own build, type check and linter pass for the files you touched with no new warnings. No debug output, commented-out code or hard-coded secrets are left behind.
+5. Nothing on the remote is lost: fetch and rebase onto the latest base before you finish; never force-push or drop commits.
+6. Docs that describe the changed behavior (README, docs/, help text) are updated in the same change.
+Report the exact commands you ran and their summary lines as evidence for 2 and 4, and every intended break (or "none") for 3. The reviewer signs that evidence off, not you.
 ```
 
 A job that reports done without that evidence is not done: reply to it
 (`/reply`) asking for it before review.
 
 **Landing gate (orchestrator, not the worker):** after `POST /api/jobs/<id>/land`
-cherry-picks onto the base branch, run `bin/ci` (or the repo's full test
-command) ONCE on the base branch before any push. One full run per landed
-change, serialized, never concurrently across worktrees — several full rspec
-runs against the shared test DB are what produced the
-`PG::TRDeadlockDetected` failures on 2026-09-03. A failure here is a NO-SHIP:
-fix via `/reply` to the job, re-land, re-run.
+cherry-picks onto the base branch, run the repo's full test command (for
+example its CI script) ONCE on the base branch before any push. One full run
+per landed change, serialized, never concurrently across worktrees: concurrent
+full runs against shared test infrastructure (one test database, one port)
+collide and fail for reasons unrelated to the change. A failure here is a
+NO-SHIP: fix via `/reply` to the job, re-land, re-run.
 
 **Autonomous push conditions (default in the project's acceptance checklist):**
 when the user sets a session-scoped finish-and-push condition ("push to tip

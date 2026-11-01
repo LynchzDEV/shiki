@@ -15,7 +15,7 @@ Add three tests.
 ## Tests
 1. 'filters jobs' expects length 1.
 Done means all of these hold, verified by you before you report:
-1. Every spec passes.`
+1. The assignment's acceptance criteria are met.`
 
 describe('lintSpec', () => {
   test('a full execution plan has no misses', () => {

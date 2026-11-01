@@ -73,9 +73,8 @@ describe('ensureWorkerProfiles', () => {
 
 describe('WORKER_CLAUDE_MD house rules', () => {
   test('carries the code-output rules the slim profile drops with the global CLAUDE.md', () => {
-    expect(WORKER_CLAUDE_MD).toContain('Migrations record schema shape only')
-    expect(WORKER_CLAUDE_MD).toContain('never in db/migrate')
-    expect(WORKER_CLAUDE_MD).toContain('Never hand-type a timestamp')
+    expect(WORKER_CLAUDE_MD).toContain("language's conventions")
+    expect(WORKER_CLAUDE_MD).not.toContain('db/migrate')
     expect(WORKER_CLAUDE_MD).toContain('Write the test first')
     expect(WORKER_CLAUDE_MD).toContain('stop and report the conflict')
   })

@@ -735,7 +735,7 @@ describe('POST /api/jobs/:id/land', () => {
 
 describe('POST /api/jobs spec lint', () => {
   const thin = 'Goal: add a label filter.\nAcceptance:\n- works\nPointers: server/routes/jobs.ts'
-  const full = `${thin}\n## Decisions\n1. exact match.\n## Preserve\n- shape (server/routes/jobs.ts:152).\n## Steps\n### Step 1 — server/routes/jobs.ts\nedit.\nDone means all of these hold, verified by you before you report:\n1. specs pass.`
+  const full = `${thin}\n## Decisions\n1. exact match.\n## Preserve\n- shape (server/routes/jobs.ts:152).\n## Steps\n### Step 1 — server/routes/jobs.ts\nedit.\nDone means all of these hold, verified by you before you report:\n1. acceptance criteria are met.`
 
   test('rejects a thin prompt for the execute engine with every miss listed', async () => {
     const app = buildApp(createJobManager(), echoResolver)
