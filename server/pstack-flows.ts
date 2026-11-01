@@ -12,7 +12,7 @@ export const PSTACK_FLOW_IDS = ['pstack-arena', 'pstack-interrogate', 'pstack-sw
 const SESSION = 'session'
 const FAMILIES = [['claude', 'Claude'], ['glm', 'GLM'], ['codex', 'Codex']] as const
 const COLUMN = 280
-const ROW = 140
+const ROW = 200
 
 const step = (id: string, title: string, role: Role, engine: string | undefined, instructions: string): Step =>
   ({ id, title, kind: 'task', agent: { role, ...(engine ? { engine } : {}) }, instructions })

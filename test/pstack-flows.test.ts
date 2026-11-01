@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createWorkflowStore, forkSections, validateWorkflow, workflowSchema } from '../server/workflows'
+import { createWorkflowStore, defaultWorkflow, forkSections, validateWorkflow, workflowSchema } from '../server/workflows'
 import { PSTACK_FLOW_IDS, pstackFlows } from '../server/pstack-flows'
 
 let dir: string
@@ -51,4 +51,14 @@ test('a built-in pstack flow resolves with a stable revision, including its pinn
 test('saving over a built-in pstack flow is refused', async () => {
   const store = createWorkflowStore(dir)
   await expect(store.save({ ...flows()[0]!, name: 'Mine' })).rejects.toThrow('This flow is built in; save it under a new id to change it')
+})
+
+test('steps stacked in one column sit far enough apart that their cards do not overlap', () => {
+  for (const flow of [defaultWorkflow(), ...flows()]) {
+    const columns = Map.groupBy(flow.nodes, node => node.position.x)
+    for (const column of columns.values()) {
+      const ys = column.map(node => node.position.y).sort((a, b) => a - b)
+      for (let index = 1; index < ys.length; index++) expect(ys[index]! - ys[index - 1]!).toBeGreaterThanOrEqual(200)
+    }
+  }
 })
