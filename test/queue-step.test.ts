@@ -1,10 +1,10 @@
 import { expect, test } from 'bun:test'
 
 import { queueStep } from '../server/queue-step'
-import { defaultWorkflow } from '../server/workflows'
+import { classicWorkflow } from './support/classic-workflow'
 import type { WorkflowAttempt, WorkflowRun } from '../server/workflow-runner'
 
-const workflow = { ...defaultWorkflow(), revision: 'r1', createdAt: 0 }
+const workflow = { ...classicWorkflow(), revision: 'r1', createdAt: 0 }
 const attempt = (nodeId: string, number: number): WorkflowAttempt => ({ nodeId, number, jobId: `j${number}`, status: 'settled', prompt: '', startedAt: 1, endedAt: 2, result: null, checks: [], output: '', workspace: null, tokenId: 't', pathId: 'main', from: [] })
 const run = (currentNodeId: string, attempts: WorkflowAttempt[]) => ({ workflow, currentNodeId, attempts }) as Pick<WorkflowRun, 'workflow' | 'currentNodeId' | 'attempts'>
 

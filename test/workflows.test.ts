@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CORE_RULES, createWorkflowStore, defaultWorkflow, draftRevision, forkSections, passTargets, validateWorkflow, workflowSchema, composeWorkflowPrompt } from '../server/workflows'
+import { classicWorkflow } from './support/classic-workflow'
 
 let dir: string
 beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'mc-workflows-')) })
@@ -49,7 +50,7 @@ test('prompt composition keeps mandatory rules, resolved workflow and task separ
 test('policy revisions retain implementation rules without requiring them for research tasks', async () => {
   const store = createWorkflowStore(dir)
   const policy = await store.policy()
-  const graph = defaultWorkflow()
+  const graph = classicWorkflow()
   expect(composeWorkflowPrompt(policy, graph, graph.nodes[2]!, 'Implement', [])).toContain("language's conventions")
   expect(composeWorkflowPrompt(policy, graph, graph.nodes[0]!, 'Research', [])).not.toContain("language's conventions")
   const next = await store.savePolicy('Team instructions\n{{core_rules}}\n{{workflow}}\n{{assignment}}')
@@ -59,19 +60,19 @@ test('policy revisions retain implementation rules without requiring them for re
 })
 
 test('graph validation rejects stale verification after replanning and unreachable nodes', () => {
-  const graph = defaultWorkflow()
+  const graph = classicWorkflow()
   graph.edges.push({ source: 'execute', target: 'plan', outcome: 'fail' })
   expect(validateWorkflow(graph)).toEqual([])
   graph.edges.push({ source: 'plan', target: 'execute', outcome: 'fail' })
   expect(validateWorkflow(graph).join(' ')).toContain('verified plan')
-  expect(validateWorkflow({ ...defaultWorkflow(), nodes: [...defaultWorkflow().nodes, { id: 'lost', title: 'Lost', instructions: 'Inspect' }] }).join(' ')).toContain('reachable')
+  expect(validateWorkflow({ ...classicWorkflow(), nodes: [...classicWorkflow().nodes, { id: 'lost', title: 'Lost', instructions: 'Inspect' }] }).join(' ')).toContain('reachable')
 })
 
 test('draftRevision stamps a valid graph and rejects one that breaks a safety rule', () => {
-  const draft = draftRevision({ ...defaultWorkflow(), id: 'drafted', name: 'Drafted' })
+  const draft = draftRevision({ ...classicWorkflow(), id: 'drafted', name: 'Drafted' })
   expect(draft.revision).toMatch(/^[a-f0-9]{24}$/)
   expect(draft.name).toBe('Drafted')
-  const unsafe = { ...defaultWorkflow(), id: 'unsafe', name: 'Unsafe', edges: [{ source: 'plan', target: 'execute', outcome: 'pass' }] }
+  const unsafe = { ...classicWorkflow(), id: 'unsafe', name: 'Unsafe', edges: [{ source: 'plan', target: 'execute', outcome: 'pass' }] }
   expect(() => draftRevision(unsafe)).toThrow('requires a verified plan')
 })
 
@@ -156,12 +157,12 @@ test('the big-flow fixture is a valid 22-step flow with two splits, a nested spl
   expect(forkSections(workflowSchema.parse(graph)).map(section => [section.fork, section.join])).toEqual([['split', 'join'], ['split2', 'join2'], ['ui-split', 'ui-join']])
 })
 
-test('the built-in default plans In Session and loops failed checks back to the step they judge', () => {
+test('the built-in default designs In Session and loops failed checks back to the step they judge', () => {
   const graph = defaultWorkflow()
-  expect(graph.nodes.find(node => node.id === 'plan')!.agent.engine).toBe('session')
-  expect(graph.edges).toContainEqual({ source: 'verify-plan', target: 'plan', outcome: 'fail' })
+  for (const id of ['architect', 'pick']) expect(graph.nodes.find(node => node.id === id)!.agent.engine).toBe('session')
+  expect(graph.edges).toContainEqual({ source: 'verify-plan', target: 'architect', outcome: 'fail' })
   expect(graph.edges).toContainEqual({ source: 'review', target: 'execute', outcome: 'fail' })
-  expect(graph.nodes.find(node => node.id === 'plan')!.instructions).toContain('If an upstream plan check failed, revise the plan to fix every finding it lists.')
+  expect(graph.nodes.find(node => node.id === 'architect')!.instructions).toContain('If an upstream plan check failed, revise the plan to fix every finding it lists.')
   expect(graph.nodes.find(node => node.id === 'execute')!.instructions).toContain('If an upstream review failed, fix every finding it lists.')
   expect(validateWorkflow(graph)).toEqual([])
 })

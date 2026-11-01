@@ -1,6 +1,6 @@
 # Notices
 
-The code-review rubric and plan red-flags text in `server/reviewer-prompts.ts` are copied from pstack (Claude Code plugin by Lauren Tan and Michael Denyer), used under the MIT license below.
+The code-review rubric and plan red-flags text in `server/reviewer-prompts.ts`, and the step instructions of the built-in pstack Feature flow in `server/workflows.ts` (adapted from its Feature playbook, `how` explorer prompt, `architect` runner prompt and `arena` skill), are copied or adapted from pstack (Claude Code plugin by Lauren Tan and Michael Denyer), used under the MIT license below.
 
 MIT License
 

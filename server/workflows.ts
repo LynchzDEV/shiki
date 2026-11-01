@@ -48,18 +48,39 @@ export function sessionRules(mcUrl: string, runId: string, nodeId: string): stri
   return `You are doing this step In Session, in your own conversation, where the user can see it. Do the step with the user; do not start other steps. When the user accepts the result (or says go), report it: POST ${mcUrl}/api/studio/runs/${runId}/steps/${nodeId} with {"outcome":"pass|fail|blocked","summary","evidence":[...],"output":"<the full result>"} plus your terminalId or chat. If they ask for changes, revise first. A plan step must not change code. If your result has an SKD_SHAPE line, keep it in output.`
 }
 
+const PLAN_SHAPE = 'affected files, data shape, constraints, and acceptance checks'
+const SKETCH = 'Sketch the design only: types, function signatures, module boundaries, data flow, and tradeoffs. Do not modify code.'
+const runner = (engine: string, name: string, y: number) => ({ id: `runner-${engine}`, title: `Design runner · ${name}`, kind: 'task', agent: { role: 'plan', engine }, position: { x: 840, y }, instructions: `You are one of three runners, each on a different AI family, sketching a design for the same problem. Use only the runner brief from the arena brief step; ignore the judging rubric. ${SKETCH} Write the caller's usage and two or three real call sites first, then derive the types from them. Get the core data structures right and trace each main access pattern through them. Prefer a small interface hiding real complexity; keep wire and storage types off the public surface. Give every piece of state one owner. Encode invariants in types over runtime checks over prose. Produce the best design your model can make; do not hedge toward a safe middle, because the differences between runners are the signal.` })
+
 export function defaultWorkflow(): Workflow {
-  return workflowSchema.parse({ id: 'default', name: 'Plan, verify, execute, review', entry: 'plan', nodes: [
-    { id: 'plan', title: 'Plan', kind: 'plan', agent: { role: 'plan', engine: 'session' }, instructions: 'Inspect the request and repository. Produce a concrete implementation plan, affected files, constraints, and acceptance checks. Do not modify application code. If an upstream plan check failed, revise the plan to fix every finding it lists.' },
-    { id: 'verify-plan', title: 'Verify plan', kind: 'verify-plan', agent: { role: 'review' }, instructions: VERIFY_PLAN_STEP_INSTRUCTIONS },
-    { id: 'execute', title: 'Execute', kind: 'implement', agent: { role: 'execute' }, instructions: 'Implement the verified plan in this workspace. Follow repository conventions, create a regression test when appropriate, and run relevant checks. Report files changed and real test evidence. Do not make a commit unless the request explicitly asks. If an upstream review failed, fix every finding it lists.' },
-    { id: 'review', title: 'Cross-family review', kind: 'review', agent: { role: 'review' }, instructions: REVIEW_STEP_INSTRUCTIONS },
-  ].map((node, index) => ({ ...node, position: { x: index * 270, y: 100 } })), edges: [
-    { source: 'plan', target: 'verify-plan', outcome: 'pass' },
+  return workflowSchema.parse({ id: 'default', name: 'pstack Feature', entry: 'explore', nodes: [
+    { id: 'explore', title: 'Explore', kind: 'task', agent: { role: 'plan' }, position: { x: 0, y: 0 }, instructions: 'Map the subsystem this request touches before anyone designs. Report: the key components (name, file path, one sentence each); the execution flow step by step, with the data passed between steps; where the subsystem meets the rest of the codebase; existing patterns and helpers to reuse; anything non-obvious or easy to get wrong; open questions you could not trace. List every file you read. Read only; make no edits.' },
+    { id: 'architect', title: 'Architect', kind: 'plan', agent: { role: 'plan', engine: SESSION_ENGINE }, position: { x: 280, y: 0 }, instructions: `Design the change with the owner, using the exploration. Produce the plan: ${PLAN_SHAPE}. Do not modify code. Rate your confidence in the design. If one design is clearly right and confidence is high, report pass with the plan. If you cannot decide between structurally different designs, or confidence is not high, report fail (not blocked) and put the candidate directions and the open questions in the summary and output; that sends the design to a three-family arena. If an upstream plan check failed, revise the plan to fix every finding it lists.` },
+    { id: 'arena-brief', title: 'Arena brief', kind: 'task', agent: { role: 'plan' }, position: { x: 560, y: 360 }, instructions: 'From the architect\'s open directions and questions, write two clearly labeled sections. RUNNER BRIEF: one shared brief every design runner gets, with the problem, the constraints, and the files involved. JUDGING RUBRIC: 3 to 6 concrete, gradeable criteria for what a good design looks like on this task. Keep the rubric out of the runner brief. Do not modify code.' },
+    runner('claude', 'Claude', 220),
+    runner('glm', 'GLM', 360),
+    runner('codex', 'Codex', 500),
+    { id: 'arena-join', title: 'Join', kind: 'join', position: { x: 1120, y: 360 }, instructions: 'Collect the three design sketches.' },
+    { id: 'judge', title: 'Judge', kind: 'task', agent: { role: 'review', engine: 'codex' }, position: { x: 1400, y: 360 }, instructions: 'Compare the three design sketches criterion by criterion against the judging rubric from the arena brief, scoring each. Recommend a base design a future maintainer can extend most easily without breaking invariants, and name the one or two parts of each other sketch worth grafting into it. If the sketches converge, say so. Report only; do not edit anything.' },
+    { id: 'pick', title: 'Pick & graft', kind: 'plan', agent: { role: 'plan', engine: SESSION_ENGINE }, position: { x: 1680, y: 360 }, instructions: `With the owner, choose the base design (the judge's recommendation is advice) and graft one or two parts from the others by hand so the result stays one coherent design. Produce the final plan: ${PLAN_SHAPE}. Do not modify code.` },
+    { id: 'verify-plan', title: 'Verify plan', kind: 'verify-plan', agent: { role: 'review' }, position: { x: 1960, y: 0 }, instructions: VERIFY_PLAN_STEP_INSTRUCTIONS },
+    { id: 'execute', title: 'Execute', kind: 'implement', agent: { role: 'execute' }, position: { x: 2240, y: 0 }, instructions: 'Implement the verified plan in this workspace. Follow repository conventions, create a regression test when appropriate, and run relevant checks. Report files changed and real test evidence. Do not make a commit unless the request explicitly asks. If an upstream review failed, fix every finding it lists.' },
+    { id: 'review', title: 'pstack review', kind: 'review', agent: { role: 'review' }, position: { x: 2520, y: 0 }, instructions: REVIEW_STEP_INSTRUCTIONS },
+  ], edges: [
+    { source: 'explore', target: 'architect', outcome: 'pass' },
+    { source: 'architect', target: 'verify-plan', outcome: 'pass' },
+    { source: 'architect', target: 'arena-brief', outcome: 'fail' },
+    ...['claude', 'glm', 'codex'].flatMap(engine => [
+      { source: 'arena-brief', target: `runner-${engine}`, outcome: 'pass' },
+      { source: `runner-${engine}`, target: 'arena-join', outcome: 'pass' },
+    ]),
+    { source: 'arena-join', target: 'judge', outcome: 'pass' },
+    { source: 'judge', target: 'pick', outcome: 'pass' },
+    { source: 'pick', target: 'verify-plan', outcome: 'pass' },
     { source: 'verify-plan', target: 'execute', outcome: 'pass' },
-    { source: 'verify-plan', target: 'plan', outcome: 'fail' },
-    { source: 'review', target: 'execute', outcome: 'fail' },
+    { source: 'verify-plan', target: 'architect', outcome: 'fail' },
     { source: 'execute', target: 'review', outcome: 'pass' },
+    { source: 'review', target: 'execute', outcome: 'fail' },
   ] })
 }
 

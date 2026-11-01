@@ -1,10 +1,11 @@
 import { expect, test } from 'bun:test'
-import { defaultWorkflow, workflowSchema } from '../server/workflows'
+import { workflowSchema } from '../server/workflows'
+import { classicWorkflow } from './support/classic-workflow'
 import { runView, scopeSnapshot } from '../server/run-view'
 import type { WorkflowRun } from '../server/workflow-runner'
 import type { JobRecord } from '../server/jobs'
 
-const workflow = { ...defaultWorkflow(), revision: 'r1', createdAt: 0 }
+const workflow = { ...classicWorkflow(), revision: 'r1', createdAt: 0 }
 const run = (patch: Partial<WorkflowRun>): WorkflowRun => ({ id: 'run-1', label: 'Add export', cwd: '/x', request: 'secret request text', workflow, policy: { revision: 'p', template: 't', coreRules: 'c', implementationRules: 'i', createdAt: 0 }, agents: Object.fromEntries(workflow.nodes.map(node => [node.id, { engine: node.id === 'review' ? 'codex' : 'claude', model: null, family: null }])), skills: {}, status: 'running', error: null, currentNodeId: 'execute', attempts: [{ nodeId: 'plan', number: 0, jobId: 'j1', status: 'settled', prompt: 'long prompt', startedAt: 1, endedAt: 2, result: { outcome: 'pass', summary: 'Planned', evidence: ['e'] }, checks: [], output: 'long output', workspace: null }], createdAt: 0, updatedAt: 3, origin: { source: 'saved', by: 'codex', where: 'terminal' }, versions: [], terminalId: 't1', tokens: [{ id: 'tok-1', nodeId: 'execute', pathId: 'main', workspace: '/x', state: 'ready', attempt: null, from: [0] }], sections: [], keptBranches: [], ...patch })
 const job = (patch: Partial<JobRecord>) => ({ id: 'j', label: 'Fix badge', engine: 'codex', status: 'done', startedAt: 1, endedAt: 2, cwd: '/x', ...patch }) as JobRecord
 

@@ -12,7 +12,7 @@ import { createChatQueue } from '../server/chat-queue'
 import type { ChatQueue } from '../server/chat-queue'
 import { initScratchGitRepo } from './support/scratch-git-repo'
 import type { WorkflowAttempt, WorkflowRun } from '../server/workflow-runner'
-import { defaultWorkflow } from '../server/workflows'
+import { classicWorkflow } from './support/classic-workflow'
 
 const base: JobRecord = { id: 'j1', engine: 'codex', cwd: '/p', worktree: null, baseRepo: null, baseBranch: null, label: 'Build it', prompt: 'x', pid: 1, status: 'done', startedAt: 1, turns: 3, slowAt: null, lastTool: null, endedAt: 2, exitCode: 0, diffStat: ' 2 files changed', reviewedAt: null, sessionId: null, parentJobId: null, threadRoot: 'j1', terminalId: null, reviewOf: null, model: null, chatId: 'root' }
 const textEvent = (text: string) => JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } })
@@ -51,7 +51,7 @@ describe('agentReport', () => {
 const attempt = (nodeId: string, outcome: 'pass' | 'fail' | 'blocked' | null, summary = ''): WorkflowAttempt => ({ nodeId, number: 0, jobId: null, status: outcome ? 'settled' : 'running', prompt: '', startedAt: 1, endedAt: outcome ? 2 : null, result: outcome ? { outcome, summary, evidence: [] } : null, checks: [], output: '', workspace: null })
 const runFixture = (fields: Partial<WorkflowRun> = {}): WorkflowRun => ({
   id: 'run-1', label: 'ship', cwd: '/p', request: 'Ship it',
-  workflow: { ...defaultWorkflow(), name: 'Shipping', revision: 'r1' } as unknown as WorkflowRun['workflow'],
+  workflow: { ...classicWorkflow(), name: 'Shipping', revision: 'r1' } as unknown as WorkflowRun['workflow'],
   policy: {} as WorkflowRun['policy'], agents: {}, skills: {},
   status: 'done', error: null, currentNodeId: 'review',
   attempts: [attempt('plan', 'pass', 'Planned the change'), attempt('review', 'pass', 'No findings')],
@@ -447,7 +447,7 @@ describe('createChatFlusher', () => {
 
   const sessionRun = (fields: Partial<WorkflowRun> = {}): WorkflowRun => runFixture({
     status: 'running', reportedAt: null,
-    workflow: { ...defaultWorkflow(), revision: 'r1' } as unknown as WorkflowRun['workflow'],
+    workflow: { ...classicWorkflow(), revision: 'r1' } as unknown as WorkflowRun['workflow'],
     attempts: [{ ...attempt('plan', null), number: 0, inSession: true, sessionNotifiedAt: null }],
     ...fields,
   })

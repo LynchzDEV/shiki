@@ -6,6 +6,7 @@ import { Elysia } from 'elysia'
 import { createJobManager, type JobManager } from '../server/jobs'
 import { fakeEchoResolver } from '../server/jobs-engine-iface'
 import { createWorkflowStore, defaultWorkflow } from '../server/workflows'
+import { classicWorkflow } from './support/classic-workflow'
 import { createWorkflowRunner, LIVE_STATUSES, type WorkflowRunner } from '../server/workflow-runner'
 import { studioRoutes } from '../server/routes/studio'
 import { initScratchGitRepo } from './support/scratch-git-repo'
@@ -185,16 +186,16 @@ test('the run list filters by chat and terminal', async () => {
 
 function withMigrate() {
   const graph = defaultWorkflow()
-  graph.nodes.push({ ...graph.nodes[2]!, id: 'migrate', title: 'Migrate', instructions: 'Write the migration' })
+  graph.nodes.push({ ...graph.nodes.find(node => node.id === 'execute')!, id: 'migrate', title: 'Migrate', instructions: 'Write the migration' })
   graph.edges = graph.edges.filter(edge => edge.source !== 'verify-plan').concat({ source: 'verify-plan', target: 'migrate', outcome: 'pass' }, { source: 'migrate', target: 'execute', outcome: 'pass' })
   return graph
 }
 
 test('a drafted graph starts as a drafted flow waiting for approval, and a graph that breaks a rule is refused with the rule', async () => {
-  const drafted = await post('/api/studio/runs', { ...(await runBody()), graph: { ...defaultWorkflow(), id: 'drafted-export', name: 'Drafted export' } }, {})
+  const drafted = await post('/api/studio/runs', { ...(await runBody()), graph: { ...classicWorkflow(), id: 'drafted-export', name: 'Drafted export' } }, {})
   expect(drafted.status).toBe(200)
   expect(await drafted.json()).toMatchObject({ status: 'awaiting-approval', origin: { source: 'drafted' } })
-  const unsafe = await post('/api/studio/runs', { ...(await runBody()), graph: { ...defaultWorkflow(), id: 'unsafe', name: 'Unsafe', edges: [{ source: 'plan', target: 'execute', outcome: 'pass' }] } }, {})
+  const unsafe = await post('/api/studio/runs', { ...(await runBody()), graph: { ...classicWorkflow(), id: 'unsafe', name: 'Unsafe', edges: [{ source: 'plan', target: 'execute', outcome: 'pass' }] } }, {})
   expect(unsafe.status).toBe(400)
   expect((await unsafe.json()).error).toContain('requires a verified plan')
 })
@@ -290,7 +291,7 @@ test('reading runs never returns the graph, agents or skills of a version', asyn
 test('the owning terminal reports an In Session step with its token; the browser cannot', async () => {
   const store = createWorkflowStore(dir)
   const cwd = await scratchRepo()
-  const graph = await store.get('default')
+  const graph = await store.save(classicWorkflow())
   const terminal = { id: 'terminal-a', engine: 'claude', cwd, pid: 1, createdAt: 0, title: 'Terminal', sessionId: null, inSessionAware: true as const, workflow: { id: graph.id, name: graph.name, revision: graph.revision, selectedDefault: true } }
   runner = createWorkflowRunner({ manager, resolver: fakeEchoResolver, store, requireApproval: async () => true, terminals: { get: id => id === terminal.id ? terminal : undefined } })
   app = new Elysia().use(studioRoutes(store, runner))
@@ -310,7 +311,7 @@ test('the owning terminal reports an In Session step with its token; the browser
 test('the owner reads a waiting In Session step with its token, and it is gone once reported', async () => {
   const store = createWorkflowStore(dir)
   const cwd = await scratchRepo()
-  const graph = await store.get('default')
+  const graph = await store.save(classicWorkflow())
   const terminal = { id: 'terminal-a', engine: 'claude', cwd, pid: 1, createdAt: 0, title: 'Terminal', sessionId: null, inSessionAware: true as const, workflow: { id: graph.id, name: graph.name, revision: graph.revision, selectedDefault: true } }
   runner = createWorkflowRunner({ manager, resolver: fakeEchoResolver, store, requireApproval: async () => true, terminals: { get: id => id === terminal.id ? terminal : undefined } })
   app = new Elysia().use(studioRoutes(store, runner))
@@ -328,7 +329,7 @@ test('the owner reads a waiting In Session step with its token, and it is gone o
 test('only the drawer reminds the owning terminal of a waiting step', async () => {
   const store = createWorkflowStore(dir)
   const cwd = await scratchRepo()
-  const graph = await store.get('default')
+  const graph = await store.save(classicWorkflow())
   const terminal = { id: 'terminal-a', engine: 'claude', cwd, pid: 1, createdAt: 0, title: 'Terminal', sessionId: null, inSessionAware: true as const, workflow: { id: graph.id, name: graph.name, revision: graph.revision, selectedDefault: true } }
   const writes: string[] = []
   runner = createWorkflowRunner({ manager, resolver: fakeEchoResolver, store, requireApproval: async () => true, terminals: { get: id => id === terminal.id ? terminal : undefined, write: (_id, data) => { writes.push(data); return true } } })

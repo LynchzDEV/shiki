@@ -3,7 +3,8 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createJobManager, type JobManager } from '../server/jobs'
-import { createWorkflowStore, defaultWorkflow } from '../server/workflows'
+import { createWorkflowStore } from '../server/workflows'
+import { classicWorkflow } from './support/classic-workflow'
 import { createWorkflowBuilder, readWorkflowDraft } from '../server/workflow-builder'
 import { realEngineResolver, type EngineResolver } from '../server/jobs-engine-iface'
 import { writeConfig } from '../server/secrets'
@@ -21,7 +22,7 @@ afterEach(async () => {
   delete process.env.SKD_CONFIG_DIR
   await rm(config,{recursive:true,force:true}); await rm(home,{recursive:true,force:true})
 })
-const answer = () => ({workflow:{...defaultWorkflow(),id:'draft',name:'My workflow'},summary:'Created an implementation flow',setup:[]})
+const answer = () => ({workflow:{...classicWorkflow(),id:'draft',name:'My workflow'},summary:'Created an implementation flow',setup:[]})
 const log = (value:unknown) => JSON.stringify({type:'result',is_error:false,result:JSON.stringify(value)})
 
 test('accepts a valid draft and rejects a graph that bypasses implementation rules',()=>{

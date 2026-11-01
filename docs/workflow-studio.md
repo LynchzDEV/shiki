@@ -1,6 +1,21 @@
 # Workflow Studio
 
-Open **Studio** from the workspace toolbar. Describe the workflow you want, use your default, browse templates, or start blank. All paths lead to the same editable canvas. The built-in default remains Plan → Verify plan → Execute → Cross-family review. Editing it creates your own copy automatically. **Save** creates a version; **History → Use as default workflow** selects a saved version for future runs.
+Open **Studio** from the workspace toolbar. Describe the workflow you want, use your default, browse templates, or start blank. All paths lead to the same editable canvas. The built-in default is **pstack Feature**, based on the pstack plugin's Feature playbook (see `NOTICE.md`). Editing it creates your own copy automatically.
+
+## The default flow: pstack Feature
+
+1. **Explore** maps the part of the project the request touches: the files involved, how data moves through them, and existing code worth reusing. It changes nothing.
+2. **Architect** designs the change with you, In Session, and writes the plan. It also says how sure it is.
+3. If the design is clear, the plan goes straight to **Verify plan**.
+4. If the architect is torn between different designs, or not confident, it reports a failure on purpose and the flow runs a **design arena** instead:
+   - **Arena brief** writes one shared brief for the designers and a short scoring list (3 to 6 points) that the designers never see.
+   - Three **design runners** sketch a design at the same time, each on a different AI: Claude, GLM and Codex. These steps name their AI, so a flow started from a chat still uses three different AIs.
+   - A **Judge** (Codex) scores the three sketches against the list and recommends one, plus the best parts of the others.
+   - **Pick & graft**, In Session, is where you and your AI choose the base design, borrow one or two parts from the others, and write the final plan.
+5. **Verify plan** checks the plan against the code and the design red flags. A failed check goes back to the architect.
+6. **Execute** builds it, then **pstack review** reviews it on a different model family. A failed review goes back to Execute.
+
+A step that crashes or ends without a result stops the run as blocked. Only the architect's deliberate failure opens the arena. **Save** creates a version; **History → Use as default workflow** selects a saved version for future runs.
 
 ## Build with AI
 
@@ -16,11 +31,11 @@ Use **Add step** to search editable presets or select **Custom task**. Every ste
 
 **Who should do it?** offers **Use default** or one entry per connected AI. The helper text names the AI currently assigned by the step's planning, execution, or review default. Choosing an AI directly keeps that assignment when role defaults change.
 
-The **New terminal** form has a **Workflow** selector, shared with **Resume**. **Default workflow** selects your saved default; choose another saved workflow for that terminal alone. If your saved default is custom, **Plan, verify, execute, review** still offers the original Plan → Verify → Execute → Review workflow. Each terminal shows its workflow name and version below its header, including in split views and after refreshing the page.
+The **New terminal** form has a **Workflow** selector, shared with **Resume**. **Default workflow** selects your saved default; choose another saved workflow for that terminal alone. If your saved default is custom, **pstack Feature** still offers the built-in default. Each terminal shows its workflow name and version below its header, including in split views and after refreshing the page.
 
 Opening a terminal pins that workflow version; later blueprint edits or changes to the workspace default do not change existing terminals. Opening a terminal does not start a workflow run. Native agents receive the selection in their instructions. Terminal-originated workflow runs pass `terminalId`; the server enforces that terminal's workflow version and directory, and links every node job back to its terminal. The session's `SKD_URL` and configuration directory keep dispatches on its own Shikidan instance, including port 7778.
 
-Mark code-writing steps as **Implement changes** under **Task purpose**. They require a successful plan and plan verification before execution and a later successful review before the workflow can finish. Review uses a different declared model family, even when two differently named connections expose the same model. For unknown model IDs, set the family on the connection or node. Research and test tasks do not require a commit. The **Review work** and **Check a plan** steps, the built-in default flow, and the automatic cross-family review all use pstack's code-review rubric and design red-flags list (see `NOTICE.md`).
+Mark code-writing steps as **Implement changes** under **Task purpose**. They require a successful plan and plan verification before execution and a later successful review before the workflow can finish. Review uses a different declared model family, even when two differently named connections expose the same model. For unknown model IDs, set the family on the connection or node. Research and test tasks do not require a commit. The **Review work** and **Check a plan** steps, the built-in pstack Feature flow, and the automatic cross-family review all use pstack's code-review rubric and design red-flags list (see `NOTICE.md`).
 
 Add Markdown skill files by path under **Tools, skills & checks**. Their contents are snapshotted at run start. Attached stdio MCP servers use the ACP adapter. Their environment settings map target variable names to existing Shikidan server environment variable names; they are not credential values.
 

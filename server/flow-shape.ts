@@ -44,9 +44,9 @@ export function readShape(output: string): { shape: FlowShape } | { errors: stri
 }
 
 export function shapeTarget(workflow: Workflow): ShapeTarget | null {
-  if (forkSections(workflow).length) return null
+  const onPaths = new Set(forkSections(workflow).flatMap(section => section.paths.flat()))
   const kind = (id: string) => workflow.nodes.find(node => node.id === id)?.kind
-  for (const verify of workflow.nodes.filter(node => node.kind === 'verify-plan')) {
+  for (const verify of workflow.nodes.filter(node => node.kind === 'verify-plan' && !onPaths.has(node.id))) {
     const [execute, ...extra] = passTargets(workflow, verify.id)
     if (!execute || extra.length || execute === workflow.entry || kind(execute) !== 'implement') continue
     const [review, ...more] = passTargets(workflow, execute)

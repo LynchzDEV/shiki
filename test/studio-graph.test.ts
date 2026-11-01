@@ -1,9 +1,10 @@
 import { expect, test } from 'bun:test'
 import { defaultWorkflow, validateWorkflow } from '../server/workflows'
+import { classicWorkflow } from './support/classic-workflow'
 import { agentHelp, agentIcon, agentLabel, insertWorkflowStep, runNote, showsModelFields, kindIcon, nodeRunStates, roleWord, removeWorkflowStep, taskPreset, workflowTemplates } from '../client/studio-graph'
 
 test('adding a custom step keeps the following review connected and preserves failure routes',()=>{
-  const graph=defaultWorkflow()
+  const graph=classicWorkflow()
   graph.edges.push({source:'execute',target:'verify-plan',outcome:'fail'})
   const step=taskPreset('custom')
   const next=insertWorkflowStep(graph,step,'execute')
@@ -15,7 +16,7 @@ test('adding a custom step keeps the following review connected and preserves fa
 })
 
 test('removing a custom step reconnects the existing flow without removing its review',()=>{
-  const graph=defaultWorkflow(),step=taskPreset('custom')
+  const graph=classicWorkflow(),step=taskPreset('custom')
   expect(removeWorkflowStep(insertWorkflowStep(graph,step,'execute'),step.id)).toEqual(graph)
 })
 

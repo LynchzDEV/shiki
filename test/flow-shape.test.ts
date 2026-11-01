@@ -65,7 +65,7 @@ test('a shape compiles into a valid fork that joins before review', () => {
   expect(graph).toEqual(before)
   expect(validateWorkflow(next)).toEqual([])
   expect(passTargets(next, 'verify-plan')).toEqual(['path-api-1', 'path-ui-1'])
-  expect(forkSections(next)).toEqual([{ fork: 'verify-plan', join: 'join-paths', paths: [['path-api-1', 'path-api-2'], ['path-ui-1']] }])
+  expect(forkSections(next)).toContainEqual({ fork: 'verify-plan', join: 'join-paths', paths: [['path-api-1', 'path-api-2'], ['path-ui-1']] })
   expect(passTargets(next, 'join-paths')).toEqual(['review'])
   const edge = (source: string, outcome: string) => next.edges.find(edge => edge.source === source && edge.outcome === outcome)?.target
   expect(edge('join-paths', 'fail')).toBe('execute')
@@ -92,12 +92,12 @@ const nodeOf = (graph: Workflow, id: string) => graph.nodes.find(node => node.id
 
 test('the plan is told how to split only when the flow can take a shape', () => {
   const graph = defaultWorkflow()
-  const notes = shapeNotes(graph, nodeOf(graph, 'plan'), [])
+  const notes = shapeNotes(graph, nodeOf(graph, 'architect'), [])
   expect(notes.flowShapeRules).toContain('SKD_SHAPE')
-  expect(composeWorkflowPrompt(policy, graph, nodeOf(graph, 'plan'), 'Add CSV export', [], [], notes)).toContain('flowShapeRules')
+  expect(composeWorkflowPrompt(policy, graph, nodeOf(graph, 'architect'), 'Add CSV export', [], [], notes)).toContain('flowShapeRules')
   expect(shapeNotes(graph, nodeOf(graph, 'execute'), [])).toEqual({})
   const forked = shapeGraph(graph, twoPaths)
-  expect(shapeNotes(forked, nodeOf(forked, 'plan'), [])).toEqual({})
+  expect(shapeNotes(forked, nodeOf(forked, 'architect'), [])).toEqual({})
 })
 
 test('verify plan is told to judge a split only when the plan proposed one', () => {
@@ -109,13 +109,39 @@ test('verify plan is told to judge a split only when the plan proposed one', () 
 
 test('a prompt without notes is unchanged', () => {
   const graph = defaultWorkflow()
-  const node = nodeOf(graph, 'plan')
+  const node = nodeOf(graph, 'architect')
   expect(composeWorkflowPrompt(policy, graph, node, 'x', [], [], {})).toBe(composeWorkflowPrompt(policy, graph, node, 'x', [], []))
 })
 
 test('the default flow review and plan-check nodes carry the pstack rubric and red flags', () => {
   const nodes = defaultWorkflow().nodes
-  expect(nodes.find(node => node.id === 'review')!.instructions).toContain('ONLY report issues related to code')
+  const review = nodes.find(node => node.id === 'review')!
+  expect(review.kind).toBe('review')
+  expect(review.instructions).toContain('ONLY report issues related to code')
   expect(nodes.find(node => node.id === 'verify-plan')!.instructions).toContain('## Shallow module')
   expect(validateWorkflow(defaultWorkflow())).toEqual([])
+})
+
+test('the default flow is pstack Feature: explore, then an architect whose low confidence opens a three-family design arena', () => {
+  const graph = defaultWorkflow()
+  const edge = (source: string, outcome: string) => graph.edges.filter(edge => edge.source === source && edge.outcome === outcome).map(edge => edge.target)
+  expect(graph.id).toBe('default')
+  expect(graph.name).toBe('pstack Feature')
+  expect(graph.entry).toBe('explore')
+  expect(edge('explore', 'pass')).toEqual(['architect'])
+  expect(edge('architect', 'pass')).toEqual(['verify-plan'])
+  expect(edge('architect', 'fail')).toEqual(['arena-brief'])
+  expect(edge('architect', 'blocked')).toEqual([])
+  expect(forkSections(graph)).toEqual([{ fork: 'arena-brief', join: 'arena-join', paths: [['runner-claude'], ['runner-glm'], ['runner-codex']] }])
+  expect(['runner-claude', 'runner-glm', 'runner-codex'].map(id => nodeOf(graph, id).agent.engine)).toEqual(['claude', 'glm', 'codex'])
+  expect(edge('arena-join', 'pass')).toEqual(['judge'])
+  expect(edge('judge', 'pass')).toEqual(['pick'])
+  expect(nodeOf(graph, 'pick').agent.engine).toBe('session')
+  expect(edge('pick', 'pass')).toEqual(['verify-plan'])
+  expect(edge('verify-plan', 'fail')).toEqual(['architect'])
+})
+
+test('the default flow still takes a parallel shape after the arena', () => {
+  expect(shapeTarget(defaultWorkflow())).toEqual({ verify: 'verify-plan', execute: 'execute', review: 'review' })
+  expect(validateWorkflow(shapeGraph(defaultWorkflow(), twoPaths))).toEqual([])
 })

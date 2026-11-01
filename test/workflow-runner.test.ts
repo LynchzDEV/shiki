@@ -8,6 +8,7 @@ import { createWorkflowStore, defaultWorkflow, draftRevision, type Workflow } fr
 import { changeSize, covers, createWorkflowRunner, lineage, RunActionError, type ResolvedAgent, type WorkflowRun, type WorkflowRunner } from '../server/workflow-runner'
 import * as worktrees from '../server/job-worktrees'
 import { initScratchGitRepo } from './support/scratch-git-repo'
+import { classicWorkflow } from './support/classic-workflow'
 import type { TerminalRecord } from '../server/terminals'
 import { mcUrl } from '../server/secrets'
 
@@ -33,8 +34,10 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true })
   await rm(repo, { recursive: true, force: true })
 })
-function build(agent: EngineResolver = resolver, approval = false) {
+async function build(agent: EngineResolver = resolver, approval = false) {
   const store = createWorkflowStore(dir)
+  const classic = await store.get('classic').catch(() => store.save(classicWorkflow()))
+  await store.setDefault(classic.id, classic.revision)
   const settled: WorkflowRun[] = []
   settledRuns = settled
   manager = createJobManager({ onJobSettled: job => { void runner.onJobSettled(job) } })
@@ -42,7 +45,7 @@ function build(agent: EngineResolver = resolver, approval = false) {
   return store
 }
 function withoutSession(): Workflow {
-  const graph = defaultWorkflow()
+  const graph = classicWorkflow()
   graph.nodes[0]!.agent = { role: 'plan' }
   return graph
 }
@@ -55,18 +58,34 @@ async function until(id: string, predicate: (run: WorkflowRun) => boolean) {
   throw new Error('Run never reached the expected state')
 }
 
-test('default workflow executes four nodes with pinned policy and no mandatory commits', async () => {
-  build()
-  const started = await runner.start({ cwd: repo, request: 'Inspect and implement the fixture', label: 'fixture' })
+test('default workflow skips the arena when the architect is confident, with pinned policy and no mandatory commits', async () => {
+  await build()
+  const started = await runner.start({ workflowId: 'default', cwd: repo, request: 'Inspect and implement the fixture', label: 'fixture' })
   const done = await finished(started.id)
   expect(done.status).toBe('done')
-  expect(done.attempts.map(attempt => attempt.nodeId)).toEqual(['plan', 'verify-plan', 'execute', 'review'])
+  expect(done.attempts.map(attempt => attempt.nodeId)).toEqual(['explore', 'architect', 'verify-plan', 'execute', 'review'])
   expect(done.attempts.every(attempt => attempt.prompt.includes('Never dispatch'))).toBe(true)
   expect(manager.listJobs().every(job => job.workflowRunId === done.id)).toBe(true)
 })
 
+test('default workflow sends an unsure architect through the three-family design arena before the plan check', async () => {
+  await homeConfig()
+  let calls = 0
+  await build(() => ({ cmd: '/bin/echo', args: [report(calls++ === 1 ? 'fail' : 'pass')], env: {} }))
+  const started = await runner.start({ workflowId: 'default', cwd: repo, request: 'Design and implement the fixture', label: 'arena' }, { startedByUser: true })
+  const done = await finished(started.id)
+  expect(done.status).toBe('done')
+  const visited = done.attempts.map(attempt => attempt.nodeId)
+  expect(visited.slice(0, 3)).toEqual(['explore', 'architect', 'arena-brief'])
+  expect(new Set(visited.slice(3, 6))).toEqual(new Set(['runner-claude', 'runner-glm', 'runner-codex']))
+  expect(visited.slice(6)).toEqual(['arena-join', 'judge', 'pick', 'verify-plan', 'execute', 'review'])
+  expect(done.attempts[1]!.result!.outcome).toBe('fail')
+  const engineOf = (nodeId: string) => manager.listJobs().find(job => job.workflowNodeId === nodeId)!.engine
+  expect(['runner-claude', 'runner-glm', 'runner-codex', 'judge'].map(engineOf)).toEqual(['claude', 'glm', 'codex', 'codex'])
+})
+
 test('terminal runs default to their pinned workflow, let a named workflow override it, and reject unknown terminals', async () => {
-  const store = build()
+  const store = await build()
   const first = await store.save({ ...withoutSession(), id: 'terminal-workflow', name: 'Original terminal workflow' })
   const terminal: TerminalRecord = { id: 'terminal-a', engine: 'claude', cwd: repo, pid: 1, createdAt: 0, title: 'Terminal', sessionId: null, workflow: { id: first.id, name: first.name, revision: first.revision, selectedDefault: true } }
   runner = createWorkflowRunner({ manager, resolver, store, base: dir, terminals: { get: id => id === terminal.id ? terminal : undefined }, requireApproval: async () => false })
@@ -87,7 +106,7 @@ test('terminal runs default to their pinned workflow, let a named workflow overr
 })
 
 test('a terminal opened on a folder of repos runs its flow in a repo inside that folder, never outside it', async () => {
-  const store = build()
+  const store = await build()
   const pinned = await store.save({ ...withoutSession(), id: 'folder-workflow' })
   const terminalAt = (cwd: string): TerminalRecord => ({ id: 'terminal-a', engine: 'claude', cwd, pid: 1, createdAt: 0, title: 'Terminal', sessionId: null, workflow: { id: pinned.id, name: pinned.name, revision: pinned.revision, selectedDefault: true } })
   const startIn = (terminalCwd: string) => {
@@ -106,8 +125,8 @@ test('a terminal opened on a folder of repos runs its flow in a repo inside that
 })
 
 test('free-form E2E nodes require real checks; a failing check overrides AI pass', async () => {
-  const store = build()
-  const graph = await store.save({ ...defaultWorkflow(), id: 'e2e', entry: 'test', nodes: [{ id: 'test', title: 'E2E', instructions: 'Test with Jev', checks: [{ command: '/usr/bin/false' }] }], edges: [] })
+  const store = await build()
+  const graph = await store.save({ ...classicWorkflow(), id: 'e2e', entry: 'test', nodes: [{ id: 'test', title: 'E2E', instructions: 'Test with Jev', checks: [{ command: '/usr/bin/false' }] }], edges: [] })
   const run = await runner.start({ workflowId: graph.id, cwd: repo, request: 'Test checkout', label: 'e2e' })
   const done = await finished(run.id)
   expect(done.status).toBe('failed')
@@ -115,15 +134,15 @@ test('free-form E2E nodes require real checks; a failing check overrides AI pass
 })
 
 test('missing structured evidence blocks progress even when process exits zero', async () => {
-  build(() => ({ cmd: '/bin/echo', args: ['All done'], env: {} }))
+  await build(() => ({ cmd: '/bin/echo', args: ['All done'], env: {} }))
   const run = await runner.start({ cwd: repo, request: 'Inspect', label: 'missing-evidence' })
   expect((await finished(run.id)).status).toBe('blocked')
   expect(manager.listJobs()).toHaveLength(1)
 })
 
 test('custom blueprint revisions and policy changes cannot alter a retry', async () => {
-  const store = build(() => ({ cmd: '/bin/echo', args: [report('fail')], env: {} }))
-  const first = await store.save({ ...defaultWorkflow(), id: 'custom' })
+  const store = await build(() => ({ cmd: '/bin/echo', args: [report('fail')], env: {} }))
+  const first = await store.save({ ...classicWorkflow(), id: 'custom' })
   const run = await runner.start({ workflowId: first.id, cwd: repo, request: 'Inspect', label: 'retry' })
   await finished(run.id)
   await store.save({ ...first, name: 'New name' }, first.revision)
@@ -136,7 +155,7 @@ test('custom blueprint revisions and policy changes cannot alter a retry', async
 })
 
 test('a running workflow reserves its workspace against other workflows and ordinary jobs', async () => {
-  build(() => ({ cmd: '/bin/sleep', args: ['2'], env: {} }))
+  await build(() => ({ cmd: '/bin/sleep', args: ['2'], env: {} }))
   const run = await runner.start({ cwd: repo, request: 'Inspect', label: 'owner' })
   await expect(runner.start({ cwd: repo, request: 'Other', label: 'intruder' })).rejects.toThrow('running work')
   const job = await manager.createJob({ engine: 'claude', cwd: repo, prompt: 'Other', label: 'intruder' }, resolver)
@@ -145,8 +164,8 @@ test('a running workflow reserves its workspace against other workflows and ordi
 })
 
 test('failure routing is bounded and does not turn an endless loop into success', async () => {
-  const store = build(() => ({ cmd: '/bin/echo', args: [report('fail')], env: {} }))
-  const graph = await store.save({ ...defaultWorkflow(), id: 'loop', entry: 'test', nodes: [{ id: 'test', title: 'Test', instructions: 'Check', maxVisits: 2 }], edges: [{ source: 'test', target: 'test', outcome: 'fail' }] })
+  const store = await build(() => ({ cmd: '/bin/echo', args: [report('fail')], env: {} }))
+  const graph = await store.save({ ...classicWorkflow(), id: 'loop', entry: 'test', nodes: [{ id: 'test', title: 'Test', instructions: 'Check', maxVisits: 2 }], edges: [{ source: 'test', target: 'test', outcome: 'fail' }] })
   const run = await runner.start({ workflowId: graph.id, cwd: repo, request: 'Test', label: 'loop' })
   const done = await finished(run.id)
   expect(done.status).toBe('blocked')
@@ -155,8 +174,8 @@ test('failure routing is bounded and does not turn an endless loop into success'
 })
 
 test('same model family through different engine names cannot perform cross-family review', async () => {
-  const store = build()
-  const graph = defaultWorkflow()
+  const store = await build()
+  const graph = classicWorkflow()
   graph.id = 'same-family'
   graph.nodes[2]!.agent = { role: 'execute', engine: 'claude', model: 'claude-opus' }
   graph.nodes[3]!.agent = { role: 'review', engine: 'codex', model: 'anthropic/claude-sonnet' }
@@ -166,7 +185,7 @@ test('same model family through different engine names cannot perform cross-fami
 })
 
 test('restart adopts an existing running job and continues without dispatching it twice', async () => {
-  const store = build(({ prompt }) => ({ cmd: process.execPath, args: ['-e', `setTimeout(() => console.log(${JSON.stringify(report())}), 150)`], env: {} }))
+  const store = await build(({ prompt }) => ({ cmd: process.execPath, args: ['-e', `setTimeout(() => console.log(${JSON.stringify(report())}), 150)`], env: {} }))
   const run = await runner.start({ cwd: repo, request: 'Inspect', label: 'restart' })
   runner = createWorkflowRunner({ manager, resolver, store, base: dir })
   await runner.recover()
@@ -177,15 +196,15 @@ test('restart adopts an existing running job and continues without dispatching i
 })
 
 test('a terminal agent error overrides an earlier claimed pass even with exit zero', async () => {
-  build(() => ({ cmd: '/usr/bin/printf', args: ['%s\n%s\n', report(), JSON.stringify({ type: 'result', is_error: true, result: 'Provider failed' })], env: {} }))
+  await build(() => ({ cmd: '/usr/bin/printf', args: ['%s\n%s\n', report(), JSON.stringify({ type: 'result', is_error: true, result: 'Provider failed' })], env: {} }))
   const run = await runner.start({ cwd: repo, request: 'Inspect', label: 'false-success' })
   expect((await finished(run.id)).status).toBe('blocked')
   expect(manager.listJobs()).toHaveLength(1)
 })
 
 test('stopping an acceptance command prevents the next node from starting', async () => {
-  const store = build()
-  await store.save({ ...defaultWorkflow(), id: 'slow-check', entry: 'test', nodes: [{ id: 'test', title: 'Check', instructions: 'Check', checks: [{ command: '/bin/sleep', args: ['20'], timeoutSeconds: 30 }] }, { id: 'next', title: 'Next', instructions: 'Inspect' }], edges: [{ source: 'test', target: 'next', outcome: 'pass' }] })
+  const store = await build()
+  await store.save({ ...classicWorkflow(), id: 'slow-check', entry: 'test', nodes: [{ id: 'test', title: 'Check', instructions: 'Check', checks: [{ command: '/bin/sleep', args: ['20'], timeoutSeconds: 30 }] }, { id: 'next', title: 'Next', instructions: 'Inspect' }], edges: [{ source: 'test', target: 'next', outcome: 'pass' }] })
   const run = await runner.start({ workflowId: 'slow-check', cwd: repo, request: 'Inspect', label: 'stop-check' })
   for (let i = 0; i < 100 && !runner.get(run.id)?.attempts[0]?.checkPid; i++) await Bun.sleep(20)
   expect(runner.get(run.id)?.attempts[0]?.status).toBe('checking')
@@ -197,7 +216,7 @@ test('stopping an acceptance command prevents the next node from starting', asyn
 test('registered ACP agents work through the existing job manager with advertised resume support', async () => {
   const { realEngineResolver } = await import('../server/jobs-engine-iface')
   const { createConnectionStore } = await import('../server/agent-connections')
-  build(realEngineResolver)
+  await build(realEngineResolver)
   await createConnectionStore(dir).save({ id: 'fixture-acp', name: 'Fixture ACP', adapter: 'acp', command: process.execPath, args: [join(import.meta.dir, 'fixtures/agents/acp.ts')] })
   const created = await manager.createJob({ engine: 'fixture-acp', cwd: repo, prompt: 'Inspect', label: 'custom-agent' }, realEngineResolver)
   expect(created.ok).toBe(true)
@@ -209,7 +228,7 @@ test('registered ACP agents work through the existing job manager with advertise
 test('stop during dispatch also terminates the job that finishes launching afterwards', async () => {
   let release!: () => void
   const gate = new Promise<void>(resolve => { release = resolve })
-  build(async () => { await gate; return { cmd: '/bin/sleep', args: ['20'], env: {} } })
+  await build(async () => { await gate; return { cmd: '/bin/sleep', args: ['20'], env: {} } })
   const starting = runner.start({ cwd: repo, request: 'Inspect', label: 'stop-dispatch' })
   for (let i = 0; i < 100 && runner.list().length === 0; i++) await Bun.sleep(10)
   const id = runner.list()[0]!.id
@@ -234,9 +253,17 @@ async function settledStatuses() {
 }
 const stepJobs = () => manager.listJobs().filter(job => job.workflowRunId).sort((a, b) => a.workflowAttempt! - b.workflowAttempt!)
 
+test('a chat run of the default flow keeps its three design runners and judge on their own AI families', async () => {
+  await build(resolver, true)
+  const root = await chatRoot()
+  const run = await runner.start({ workflowId: 'default', cwd: repo, request: 'Ship it', label: 'ship', chat: root.id, engine: 'claude' })
+  expect(run.agents['arena-brief']).toMatchObject({ engine: 'claude' })
+  expect(['runner-claude', 'runner-glm', 'runner-codex', 'judge'].map(id => run.agents[id]!.family)).toEqual(['claude', 'glm', 'gpt', 'gpt'])
+})
+
 test('a chat run puts Chat decides steps on the chat AI, keeps pinned steps, and files its jobs under the chat', async () => {
-  const store = build()
-  const graph = defaultWorkflow()
+  const store = await build()
+  const graph = classicWorkflow()
   graph.id = 'shipping'; graph.name = 'Shipping'
   graph.nodes[0]!.agent = { role: 'plan', engine: 'codex' }
   await store.save(graph)
@@ -260,7 +287,7 @@ test('a chat run puts Chat decides steps on the chat AI, keeps pinned steps, and
 })
 
 test('a chat run without an engine uses the chat root AI for Chat decides steps', async () => {
-  const store = build()
+  const store = await build()
   await store.save({ ...withoutSession(), id: 'chat-decides' })
   const root = await chatRoot('glm')
   const run = await runner.start({ workflowId: 'chat-decides', cwd: repo, request: 'Ship it', label: 'ship', chat: root.id })
@@ -271,7 +298,7 @@ test('a chat run without an engine uses the chat root AI for Chat decides steps'
 })
 
 test('a run outside a chat keeps the stored roles and plain labels', async () => {
-  build(() => ({ cmd: '/bin/echo', args: ['All done'], env: {} }))
+  await build(() => ({ cmd: '/bin/echo', args: ['All done'], env: {} }))
   const run = await runner.start({ cwd: repo, request: 'Inspect', label: 'plain' })
   expect(run.agents.plan).toMatchObject({ engine: 'claude' })
   expect(run.agents.execute).toMatchObject({ engine: 'glm' })
@@ -283,7 +310,7 @@ test('a run outside a chat keeps the stored roles and plain labels', async () =>
 })
 
 test('a chat run rejects an unknown chat or a turn from another chat', async () => {
-  build()
+  await build()
   const root = await chatRoot()
   await expect(runner.start({ cwd: repo, request: 'Ship it', label: 'ship', chat: 'no-such-chat' })).rejects.toThrow('Chat not found')
   await expect(runner.start({ cwd: repo, request: 'Ship it', label: 'ship', chat: root.id, chatTurn: 'no-such-turn' })).rejects.toThrow('Chat turn not found')
@@ -291,8 +318,8 @@ test('a chat run rejects an unknown chat or a turn from another chat', async () 
 })
 
 test('a chat run loops past the chat retry cap up to its own visit limit', async () => {
-  const store = build(() => ({ cmd: '/bin/echo', args: [report('fail')], env: {} }))
-  await store.save({ ...defaultWorkflow(), id: 'chat-loop', entry: 'test', nodes: [{ id: 'test', title: 'Test', instructions: 'Check', maxVisits: 4 }], edges: [{ source: 'test', target: 'test', outcome: 'fail' }] })
+  const store = await build(() => ({ cmd: '/bin/echo', args: [report('fail')], env: {} }))
+  await store.save({ ...classicWorkflow(), id: 'chat-loop', entry: 'test', nodes: [{ id: 'test', title: 'Test', instructions: 'Check', maxVisits: 4 }], edges: [{ source: 'test', target: 'test', outcome: 'fail' }] })
   const root = await chatRoot()
   const run = await runner.start({ workflowId: 'chat-loop', cwd: repo, request: 'Test', label: 'loop', chat: root.id })
   const done = await finished(run.id)
@@ -301,7 +328,7 @@ test('a chat run loops past the chat retry cap up to its own visit limit', async
 })
 
 test('stopping a chat run settles it once, and a report mark survives a restart', async () => {
-  const store = build(() => ({ cmd: '/bin/sleep', args: ['20'], env: {} }))
+  const store = await build(() => ({ cmd: '/bin/sleep', args: ['20'], env: {} }))
   const root = await chatRoot()
   const run = await runner.start({ cwd: repo, request: 'Ship it', label: 'ship', chat: root.id })
   await runner.stop(run.id)
@@ -311,7 +338,7 @@ test('stopping a chat run settles it once, and a report mark survives a restart'
 })
 
 test('a run started by a session AI waits for approval and dispatches nothing', async () => {
-  build(resolver, true)
+  await build(resolver, true)
   const started = await runner.start({ cwd: repo, request: 'Implement the fixture', label: 'fixture' })
   expect(started.status).toBe('awaiting-approval')
   expect(started.versions).toEqual([expect.objectContaining({ number: 1, state: 'pending', approvedVia: null, size: 'initial' })])
@@ -321,7 +348,7 @@ test('a run started by a session AI waits for approval and dispatches nothing', 
 })
 
 test('approving from the drawer records the source and runs the flow', async () => {
-  build(resolver, true)
+  await build(resolver, true)
   const started = await runner.start({ cwd: repo, request: 'Implement the fixture', label: 'fixture' })
   const approved = await runner.approve(started.id, { via: 'drawer' })
   expect(approved.versions[0]).toEqual(expect.objectContaining({ state: 'approved', approvedVia: 'drawer', relayedBy: null }))
@@ -329,7 +356,7 @@ test('approving from the drawer records the source and runs the flow', async () 
 })
 
 test('a second approval of the same version is a conflict and dispatches once', async () => {
-  build(resolver, true)
+  await build(resolver, true)
   const started = await runner.start({ cwd: repo, request: 'Implement the fixture', label: 'fixture' })
   const results = await Promise.allSettled([runner.approve(started.id, { via: 'drawer' }), runner.approve(started.id, { via: 'drawer' })])
   expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1)
@@ -340,8 +367,8 @@ test('a second approval of the same version is a conflict and dispatches once', 
 })
 
 test('a relayed approval must come from the session that owns the run', async () => {
-  const store = build(resolver, true)
-  const first = await store.save({ ...defaultWorkflow(), id: 'terminal-workflow', name: 'Terminal workflow' })
+  const store = await build(resolver, true)
+  const first = await store.save({ ...classicWorkflow(), id: 'terminal-workflow', name: 'Terminal workflow' })
   const terminal: TerminalRecord = { id: 'terminal-a', engine: 'codex', cwd: repo, pid: 1, createdAt: 0, title: 'Terminal', sessionId: null, workflow: { id: first.id, name: first.name, revision: first.revision, selectedDefault: true } }
   runner = createWorkflowRunner({ manager, resolver, store, base: dir, terminals: { get: id => id === terminal.id ? terminal : undefined }, requireApproval: async () => true })
   const started = await runner.start({ terminalId: 'terminal-a', cwd: repo, request: 'Implement', label: 'fixture' })
@@ -352,7 +379,7 @@ test('a relayed approval must come from the session that owns the run', async ()
 })
 
 test('rejecting the first version stops the run and frees the workspace', async () => {
-  build(resolver, true)
+  await build(resolver, true)
   const started = await runner.start({ cwd: repo, request: 'Implement', label: 'fixture' })
   const rejected = await runner.reject(started.id, { via: 'drawer' })
   expect(rejected.status).toBe('stopped')
@@ -362,12 +389,12 @@ test('rejecting the first version stops the run and frees the workspace', async 
 })
 
 test('runs the user starts from the browser, or with approval off, start at once', async () => {
-  build(resolver, true)
+  await build(resolver, true)
   const byUser = await runner.start({ cwd: repo, request: 'Implement', label: 'fixture' }, { startedByUser: true })
   expect(byUser.versions[0]).toEqual(expect.objectContaining({ state: 'approved', approvedVia: 'user' }))
   await finished(byUser.id)
   await settledStatuses()
-  build(resolver, false)
+  await build(resolver, false)
   const auto = await runner.start({ cwd: repo, request: 'Implement', label: 'fixture' })
   expect(auto.versions[0]).toEqual(expect.objectContaining({ state: 'approved', approvedVia: 'auto' }))
   await finished(auto.id)
@@ -375,7 +402,7 @@ test('runs the user starts from the browser, or with approval off, start at once
 
 test('a paused run records the finished step but starts nothing new until resumed', async () => {
   const slow: EngineResolver = () => ({ cmd: '/bin/sh', args: ['-c', `sleep 0.3; echo '${report()}'`], env: {} })
-  build(slow, false)
+  await build(slow, false)
   const started = await runner.start({ cwd: repo, request: 'Implement', label: 'fixture' })
   const paused = await runner.pause(started.id)
   expect(paused.status).toBe('paused')
@@ -390,7 +417,7 @@ test('a paused run records the finished step but starts nothing new until resume
 })
 
 test('after a restart a waiting or paused run keeps its status and its workspace', async () => {
-  const store = build(resolver, true)
+  const store = await build(resolver, true)
   const waiting = await runner.start({ cwd: repo, request: 'Implement', label: 'fixture' })
   const reloaded = createWorkflowRunner({ manager, resolver, store, base: dir, requireApproval: async () => true })
   await reloaded.recover()
@@ -399,7 +426,7 @@ test('after a restart a waiting or paused run keeps its status and its workspace
 })
 
 test('a rejected first version cannot be retried into running', async () => {
-  build(resolver, true)
+  await build(resolver, true)
   const started = await runner.start({ cwd: repo, request: 'Implement', label: 'fixture' })
   await runner.reject(started.id, { via: 'drawer' })
   await expect(runner.retry(started.id)).rejects.toMatchObject({ status: 409 })
@@ -408,7 +435,7 @@ test('a rejected first version cannot be retried into running', async () => {
 
 test('pausing takes effect at once, even while a step is settling', async () => {
   const slow: EngineResolver = () => ({ cmd: '/bin/sh', args: ['-c', `sleep 0.2; echo '${report()}'`], env: {} })
-  build(slow, false)
+  await build(slow, false)
   const started = await runner.start({ cwd: repo, request: 'Implement', label: 'fixture' })
   const pausing = runner.pause(started.id)
   expect(runner.get(started.id)!.status).toBe('paused')
@@ -419,7 +446,7 @@ test('pausing takes effect at once, even while a step is settling', async () => 
 })
 
 test('a run paused between steps survives a restart still paused', async () => {
-  const store = build(resolver, false)
+  const store = await build(resolver, false)
   const started = await runner.start({ cwd: repo, request: 'Implement', label: 'fixture' })
   await runner.pause(started.id)
   await until(started.id, run => run.attempts.at(-1)?.status === 'settled')
@@ -430,7 +457,7 @@ test('a run paused between steps survives a restart still paused', async () => {
 })
 
 test('a paused run caught mid acceptance check is blocked on restart, not left paused', async () => {
-  const store = build(resolver, false)
+  const store = await build(resolver, false)
   const started = await runner.start({ cwd: repo, request: 'Implement', label: 'fixture' })
   const done = await finished(started.id)
   await settledStatuses()
@@ -461,8 +488,8 @@ test('every persisted change is reported through onChange', async () => {
 })
 
 test('a drafted graph runs as a drafted flow and is not saved', async () => {
-  const store = build(resolver, true)
-  const graph = { ...defaultWorkflow(), id: 'drafted-export', name: 'Drafted export' }
+  const store = await build(resolver, true)
+  const graph = { ...classicWorkflow(), id: 'drafted-export', name: 'Drafted export' }
   const started = await runner.start({ cwd: repo, request: 'Add export', label: 'export', graph })
   expect(started.origin.source).toBe('drafted')
   expect(started.workflow.name).toBe('Drafted export')
@@ -471,8 +498,8 @@ test('a drafted graph runs as a drafted flow and is not saved', async () => {
 })
 
 test('a drafted graph that breaks a rule is refused and claims nothing', async () => {
-  build(resolver, true)
-  const graph = { ...defaultWorkflow(), id: 'unsafe', name: 'Unsafe', edges: [{ source: 'plan', target: 'execute', outcome: 'pass' }] }
+  await build(resolver, true)
+  const graph = { ...classicWorkflow(), id: 'unsafe', name: 'Unsafe', edges: [{ source: 'plan', target: 'execute', outcome: 'pass' }] }
   await expect(runner.start({ cwd: repo, request: 'x', label: 'x', graph })).rejects.toThrow('requires a verified plan')
   expect(runner.list()).toHaveLength(0)
   const ok = await runner.start({ cwd: repo, request: 'x', label: 'x' })
@@ -480,20 +507,20 @@ test('a drafted graph that breaks a rule is refused and claims nothing', async (
 })
 
 test('a saved workflow and a drafted graph cannot both be named', async () => {
-  build(resolver, true)
-  await expect(runner.start({ cwd: repo, request: 'x', label: 'x', workflowId: 'default', graph: defaultWorkflow() })).rejects.toThrow('Use either a saved workflow or a drafted graph')
+  await build(resolver, true)
+  await expect(runner.start({ cwd: repo, request: 'x', label: 'x', workflowId: 'default', graph: classicWorkflow() })).rejects.toThrow('Use either a saved workflow or a drafted graph')
 })
 
 const slow: EngineResolver = () => ({ cmd: '/bin/sh', args: ['-c', `sleep 0.3; echo '${report()}'`], env: {} })
 const family = (engine: string, name: string): ResolvedAgent => ({ engine, model: null, family: name })
 const defaultAgents = { plan: family('claude', 'claude'), 'verify-plan': family('codex', 'gpt'), execute: family('glm', 'glm'), review: family('codex', 'gpt') }
 function withCheck(): Workflow {
-  const graph = defaultWorkflow()
+  const graph = classicWorkflow()
   graph.nodes.push({ ...graph.nodes[3]!, id: 'check', title: 'Run tests', kind: 'task', instructions: 'Run the test suite' })
   graph.edges = graph.edges.filter(edge => edge.source !== 'execute').concat({ source: 'execute', target: 'check', outcome: 'pass' }, { source: 'check', target: 'review', outcome: 'pass' })
   return graph
 }
-function withMigrate(base = defaultWorkflow()): Workflow {
+function withMigrate(base = classicWorkflow()): Workflow {
   const graph = structuredClone(base)
   graph.nodes.push({ ...graph.nodes[2]!, id: 'migrate', title: 'Migrate', instructions: 'Write the migration' })
   graph.edges = graph.edges.filter(edge => edge.source !== 'verify-plan').concat({ source: 'verify-plan', target: 'migrate', outcome: 'pass' }, { source: 'migrate', target: 'execute', outcome: 'pass' })
@@ -501,35 +528,35 @@ function withMigrate(base = defaultWorkflow()): Workflow {
 }
 
 test('changeSize: a check step on the review family is small', () => {
-  const run = { workflow: draftRevision(defaultWorkflow()), agents: defaultAgents }
+  const run = { workflow: draftRevision(classicWorkflow()), agents: defaultAgents }
   expect(changeSize(run, draftRevision(withCheck()), { ...defaultAgents, check: family('codex', 'gpt') }, false, ['plan'])).toBe('small')
 })
 
 test('changeSize: a new implementation step on the pass path is big', () => {
-  const run = { workflow: draftRevision(defaultWorkflow()), agents: defaultAgents }
+  const run = { workflow: draftRevision(classicWorkflow()), agents: defaultAgents }
   expect(changeSize(run, draftRevision(withMigrate()), { ...defaultAgents, migrate: family('glm', 'glm') }, false, ['plan'])).toBe('big')
 })
 
 test('changeSize: a fix loop reached only through a failed review is small', () => {
-  const graph = defaultWorkflow()
+  const graph = classicWorkflow()
   graph.nodes.push({ ...graph.nodes[2]!, id: 'fix', title: 'Fix', instructions: 'Fix the review findings' })
   graph.edges = graph.edges.filter(edge => edge.source !== 'review').concat({ source: 'review', target: 'fix', outcome: 'fail' }, { source: 'fix', target: 'review', outcome: 'pass' })
-  const run = { workflow: draftRevision(defaultWorkflow()), agents: defaultAgents }
+  const run = { workflow: draftRevision(classicWorkflow()), agents: defaultAgents }
   expect(changeSize(run, draftRevision(graph), { ...defaultAgents, fix: family('glm', 'glm') }, false, ['plan'])).toBe('small')
 })
 
 test('changeSize: dropping a second review, or a grown scope, is big', () => {
-  const twin = defaultWorkflow()
+  const twin = classicWorkflow()
   twin.nodes.push({ ...twin.nodes[3]!, id: 'review-2', title: 'Second review' })
   twin.edges.push({ source: 'review', target: 'review-2', outcome: 'pass' })
   const run = { workflow: draftRevision(twin), agents: { ...defaultAgents, 'review-2': family('codex', 'gpt') } }
-  expect(changeSize(run, draftRevision(defaultWorkflow()), defaultAgents, false, ['plan'])).toBe('big')
-  const plain = { workflow: draftRevision(defaultWorkflow()), agents: defaultAgents }
+  expect(changeSize(run, draftRevision(classicWorkflow()), defaultAgents, false, ['plan'])).toBe('big')
+  const plain = { workflow: draftRevision(classicWorkflow()), agents: defaultAgents }
   expect(changeSize(plain, draftRevision(withCheck()), { ...defaultAgents, check: family('codex', 'gpt') }, true, ['plan'])).toBe('big')
 })
 
 test('a small change to a running flow applies at once and the flow runs through it', async () => {
-  build(slow, false)
+  await build(slow, false)
   const started = await runner.start({ cwd: repo, request: 'Implement', label: 'fixture' })
   const changed = await runner.propose(started.id, { graph: withCheck(), reason: 'Run the tests before review' }, { via: 'drawer' })
   expect(changed.workflow.nodes.map(node => node.id)).toContain('check')
@@ -540,7 +567,7 @@ test('a small change to a running flow applies at once and the flow runs through
 })
 
 test('a big change waits for approval while the running step finishes, then runs the new graph', async () => {
-  build(slow, true)
+  await build(slow, true)
   const started = await runner.start({ cwd: repo, request: 'Implement', label: 'fixture' }, { startedByUser: true })
   await until(started.id, run => run.attempts[1]?.status === 'running')
   const proposed = await runner.propose(started.id, { graph: withMigrate(), reason: 'Needs a migration' }, { via: 'drawer' })
@@ -558,8 +585,8 @@ test('a big change waits for approval while the running step finishes, then runs
 })
 
 test('a proposal made while a step is settling keeps its result and holds the next step', async () => {
-  const store = build(resolver, true)
-  const graph = defaultWorkflow()
+  const store = await build(resolver, true)
+  const graph = classicWorkflow()
   graph.id = 'checked'
   graph.nodes[0]!.checks = [{ command: '/bin/sleep', args: ['0.4'], timeoutSeconds: 30 }]
   await store.save(graph)
@@ -578,7 +605,7 @@ test('a proposal made while a step is settling keeps its result and holds the ne
 })
 
 test('keeping the old version rejects the change and the old graph carries on', async () => {
-  build(slow, true)
+  await build(slow, true)
   const started = await runner.start({ cwd: repo, request: 'Implement', label: 'fixture' }, { startedByUser: true })
   await runner.propose(started.id, { graph: withMigrate(), reason: 'Needs a migration' }, { via: 'drawer' })
   await until(started.id, run => run.attempts[0]?.status === 'settled')
@@ -590,7 +617,7 @@ test('keeping the old version rejects the change and the old graph carries on', 
 })
 
 test('with approval off a big change applies at once', async () => {
-  build(slow, false)
+  await build(slow, false)
   const started = await runner.start({ cwd: repo, request: 'Implement', label: 'fixture' })
   const changed = await runner.propose(started.id, { graph: withMigrate(), reason: 'Needs a migration' }, { via: 'drawer' })
   expect(changed.versions.at(-1)).toEqual(expect.objectContaining({ number: 2, size: 'big', state: 'approved', approvedVia: 'auto' }))
@@ -600,9 +627,9 @@ test('with approval off a big change applies at once', async () => {
 })
 
 test('a change may not move the entry, drop a step that ran, or rewrite one', async () => {
-  const store = build(slow, false)
+  const store = await build(slow, false)
   const node = (id: string, title: string) => ({ id, title, instructions: `Do ${title}` })
-  const chain = { ...defaultWorkflow(), id: 'chain', entry: 'a', nodes: [node('a', 'Alpha'), node('b', 'Bravo'), node('c', 'Charlie')], edges: [{ source: 'a', target: 'b', outcome: 'pass' as const }, { source: 'b', target: 'c', outcome: 'pass' as const }] }
+  const chain = { ...classicWorkflow(), id: 'chain', entry: 'a', nodes: [node('a', 'Alpha'), node('b', 'Bravo'), node('c', 'Charlie')], edges: [{ source: 'a', target: 'b', outcome: 'pass' as const }, { source: 'b', target: 'c', outcome: 'pass' as const }] }
   await store.save(chain)
   const started = await runner.start({ workflowId: 'chain', cwd: repo, request: 'Walk', label: 'chain' })
   await until(started.id, run => run.attempts[1]?.status === 'running')
@@ -624,7 +651,7 @@ test('a change may not move the entry, drop a step that ran, or rewrite one', as
 })
 
 test('a second proposal while one waits is a conflict', async () => {
-  build(slow, true)
+  await build(slow, true)
   const started = await runner.start({ cwd: repo, request: 'Implement', label: 'fixture' }, { startedByUser: true })
   await runner.propose(started.id, { graph: withMigrate(), reason: 'Needs a migration' }, { via: 'drawer' })
   await expect(runner.propose(started.id, { graph: withCheck(), reason: 'Run the tests' }, { via: 'drawer' })).rejects.toMatchObject({ status: 409, message: 'A change is already waiting' })
@@ -632,14 +659,14 @@ test('a second proposal while one waits is a conflict', async () => {
 })
 
 test('a relayed change must come from the session that owns the run', async () => {
-  build(slow, false)
+  await build(slow, false)
   const started = await runner.start({ cwd: repo, request: 'Implement', label: 'fixture' })
   await expect(runner.propose(started.id, { graph: withCheck(), reason: 'Run the tests' }, { via: 'conversation', terminalId: 'terminal-b' })).rejects.toMatchObject({ status: 403 })
   expect(runner.get(started.id)!.versions).toHaveLength(1)
 })
 
 test('a pending change survives a restart, still holds dispatch, and approving it afterwards runs the new graph', async () => {
-  const store = build(slow, true)
+  const store = await build(slow, true)
   const started = await runner.start({ cwd: repo, request: 'Implement', label: 'fixture' }, { startedByUser: true })
   await runner.propose(started.id, { graph: withMigrate(), reason: 'Needs a migration' }, { via: 'drawer' })
   await until(started.id, run => run.attempts[0]?.status === 'settled')
@@ -664,7 +691,7 @@ function reviewBeforeCheck(): Workflow {
 }
 
 test('a change that moves the review behind the running step blocks the run instead of finishing it unreviewed', async () => {
-  build(slow, false)
+  await build(slow, false)
   const started = await runner.start({ cwd: repo, request: 'Implement', label: 'fixture', graph: withCheck() })
   await until(started.id, run => run.attempts[3]?.nodeId === 'check' && run.attempts[3]?.status === 'running')
   await runner.propose(started.id, { graph: reviewBeforeCheck(), reason: 'Review last is slow' }, { via: 'drawer' })
@@ -675,7 +702,7 @@ test('a change that moves the review behind the running step blocks the run inst
 })
 
 test('removing a review from the path ahead of the run is a big change', async () => {
-  build(slow, true)
+  await build(slow, true)
   const started = await runner.start({ cwd: repo, request: 'Implement', label: 'fixture', graph: withCheck() }, { startedByUser: true })
   await until(started.id, run => run.attempts[3]?.nodeId === 'check' && run.attempts[3]?.status === 'running')
   const proposed = await runner.propose(started.id, { graph: reviewBeforeCheck(), reason: 'Review last is slow' }, { via: 'drawer' })
@@ -689,8 +716,8 @@ test('changeSize: a review still ahead of the run in both graphs keeps a reroute
 })
 
 test('a builtin engine keeps its own family even when the node declares another', async () => {
-  build(resolver, true)
-  const graph = defaultWorkflow()
+  await build(resolver, true)
+  const graph = classicWorkflow()
   graph.nodes[2]!.agent = { role: 'execute', engine: 'claude' }
   graph.nodes[3]!.agent = { role: 'review', engine: 'claude', family: 'gpt' }
   await expect(runner.start({ cwd: repo, request: 'x', label: 'x', graph })).rejects.toThrow('must use a different model family from implementation')
@@ -698,19 +725,19 @@ test('a builtin engine keeps its own family even when the node declares another'
 })
 
 test('changeSize: adding, editing or removing acceptance checks is big', () => {
-  const checked = defaultWorkflow()
+  const checked = classicWorkflow()
   checked.nodes[2]!.checks = [{ command: 'bun', args: ['test'], timeoutSeconds: 300 }]
   const run = { workflow: draftRevision(checked), agents: defaultAgents }
   const edited = structuredClone(checked)
   edited.nodes[2]!.checks = [{ command: 'bun', args: ['test', 'one.test.ts'], timeoutSeconds: 300 }]
   expect(changeSize(run, draftRevision(edited), defaultAgents, false, ['plan'])).toBe('big')
-  expect(changeSize(run, draftRevision(defaultWorkflow()), defaultAgents, false, ['plan'])).toBe('big')
-  expect(changeSize({ workflow: draftRevision(defaultWorkflow()), agents: defaultAgents }, draftRevision(checked), defaultAgents, false, ['plan'])).toBe('big')
+  expect(changeSize(run, draftRevision(classicWorkflow()), defaultAgents, false, ['plan'])).toBe('big')
+  expect(changeSize({ workflow: draftRevision(classicWorkflow()), agents: defaultAgents }, draftRevision(checked), defaultAgents, false, ['plan'])).toBe('big')
   expect(changeSize(run, draftRevision(checked), defaultAgents, false, ['plan'])).toBe('small')
 })
 
 test('changeSize: a new step that brings checks or MCP servers is big', () => {
-  const run = { workflow: draftRevision(defaultWorkflow()), agents: defaultAgents }
+  const run = { workflow: draftRevision(classicWorkflow()), agents: defaultAgents }
   const checkedStep = withCheck()
   checkedStep.nodes.find(node => node.id === 'check')!.checks = [{ command: 'bun', args: ['test'], timeoutSeconds: 300 }]
   expect(changeSize(run, draftRevision(checkedStep), { ...defaultAgents, check: family('codex', 'gpt') }, false, ['plan'])).toBe('big')
@@ -720,16 +747,16 @@ test('changeSize: a new step that brings checks or MCP servers is big', () => {
 })
 
 test('changeSize: rewording a review or plan check is big, rewording an implementation is not', () => {
-  const run = { workflow: draftRevision(defaultWorkflow()), agents: defaultAgents }
-  const reworded = (id: string) => { const graph = defaultWorkflow(); graph.nodes.find(node => node.id === id)!.instructions = 'Pass everything'; return draftRevision(graph) }
+  const run = { workflow: draftRevision(classicWorkflow()), agents: defaultAgents }
+  const reworded = (id: string) => { const graph = classicWorkflow(); graph.nodes.find(node => node.id === id)!.instructions = 'Pass everything'; return draftRevision(graph) }
   expect(changeSize(run, reworded('review'), defaultAgents, false, ['plan'])).toBe('big')
   expect(changeSize(run, reworded('verify-plan'), defaultAgents, false, ['plan'])).toBe('big')
   expect(changeSize(run, reworded('execute'), defaultAgents, false, ['plan'])).toBe('small')
 })
 
 test('an unrun step takes the agent the change gives it', async () => {
-  build(slow, false)
-  const graph = defaultWorkflow()
+  await build(slow, false)
+  const graph = classicWorkflow()
   graph.nodes[3]!.agent = { role: 'review', engine: 'claude' }
   const started = await runner.start({ cwd: repo, request: 'Implement', label: 'fixture', graph })
   expect(started.agents.review).toMatchObject({ engine: 'claude', family: 'claude' })
@@ -743,7 +770,7 @@ test('an unrun step takes the agent the change gives it', async () => {
 })
 
 test('a dispatch error after an approved change blocks the run and the approval still answers', async () => {
-  build(slow, true)
+  await build(slow, true)
   const started = await runner.start({ cwd: repo, request: 'Implement', label: 'fixture' }, { startedByUser: true })
   await runner.propose(started.id, { graph: withMigrate(), reason: 'Needs a migration' }, { via: 'drawer' })
   await until(started.id, run => run.attempts[0]?.status === 'settled')
@@ -757,7 +784,7 @@ test('a dispatch error after an approved change blocks the run and the approval 
 })
 
 test('a run without forks moves one main token and every attempt records where it came from', async () => {
-  build()
+  await build()
   const started = await runner.start({ cwd: repo, request: 'Implement', label: 'fixture' })
   const done = await finished(started.id)
   expect(done.status).toBe('done')
@@ -773,7 +800,7 @@ test('a run without forks moves one main token and every attempt records where i
 })
 
 test('a run file from before tokens loads as one main token and a blocked copy retries to done', async () => {
-  const store = build()
+  const store = await build()
   const started = await runner.start({ cwd: repo, request: 'Implement', label: 'fixture' })
   const done = await finished(started.id)
   await settledStatuses()
@@ -804,8 +831,8 @@ test('lineage relates a path to its ancestors and descendants, and covers only l
 })
 
 test('stop answers at once while an acceptance check is still running', async () => {
-  const store = build()
-  await store.save({ ...defaultWorkflow(), id: 'sleepy-check', entry: 'test', nodes: [{ id: 'test', title: 'Check', instructions: 'Check', checks: [{ command: '/bin/sh', args: ['-c', 'trap "" TERM; sleep 2'], timeoutSeconds: 30 }] }], edges: [] })
+  const store = await build()
+  await store.save({ ...classicWorkflow(), id: 'sleepy-check', entry: 'test', nodes: [{ id: 'test', title: 'Check', instructions: 'Check', checks: [{ command: '/bin/sh', args: ['-c', 'trap "" TERM; sleep 2'], timeoutSeconds: 30 }] }], edges: [] })
   const run = await runner.start({ workflowId: 'sleepy-check', cwd: repo, request: 'Inspect', label: 'stop-fast' })
   await until(run.id, current => !!current.attempts[0]?.checkPid)
   const began = performance.now()
@@ -848,7 +875,7 @@ async function allJobsStopped() {
 
 test('a fork runs each path at the same time in its own worktree under the run folder', async () => {
   await homeConfig()
-  build(overlapping)
+  await build(overlapping)
   const started = await runner.start({ cwd: repo, request: 'Write both files', label: 'fork', graph: forked({ a: { instructions: 'Write A SLOW' }, b: { instructions: 'Write B SLOW' } }) }, { startedByUser: true })
   const working = await until(started.id, run => run.tokens.filter(token => token.state === 'working').length === 2 && run.attempts.filter(attempt => attempt.status === 'running').length === 2)
   const tokens = working.tokens.filter(token => token.state === 'working')
@@ -863,7 +890,7 @@ test('a fork runs each path at the same time in its own worktree under the run f
 
 test('a finished fork leaves both paths as uncommitted files and no commit, branch or worktree behind', async () => {
   await homeConfig()
-  build()
+  await build()
   const commits = await gitOut('rev-list', '--count', 'HEAD')
   const started = await runner.start({ cwd: repo, request: 'Write both files', label: 'fork', graph: forked() }, { startedByUser: true })
   const done = await finished(started.id)
@@ -881,7 +908,7 @@ test('a finished fork leaves both paths as uncommitted files and no commit, bran
 
 test('two paths settling together run the join exactly once', async () => {
   await homeConfig()
-  build()
+  await build()
   const started = await runner.start({ cwd: repo, request: 'Write both files', label: 'fork', graph: forked() }, { startedByUser: true })
   const done = await finished(started.id)
   expect(done.status).toBe('done')
@@ -892,7 +919,7 @@ test('two paths settling together run the join exactly once', async () => {
 
 test('the paths see the user’s uncommitted work and the join leaves it untouched', async () => {
   await homeConfig()
-  build()
+  await build()
   await writeFile(join(repo, 'README.md'), 'edited by the user\n')
   await writeFile(join(repo, 'notes.txt'), 'untracked notes\n')
   const started = await runner.start({ cwd: repo, request: 'Write both files', label: 'fork', graph: forked({ a: { checks: writes('a.txt', 'a', 'test -f notes.txt && grep -q edited README.md && ') } }) }, { startedByUser: true })
@@ -908,7 +935,7 @@ test('the paths see the user’s uncommitted work and the join leaves it untouch
 
 test('a join conflict takes the fail edge, keeps the unjoined branch and the fix step finishes the run', async () => {
   await homeConfig()
-  build()
+  await build()
   const graph = forked({ a: { checks: writes('same.txt', 'a') }, b: { checks: writes('same.txt', 'b') }, review: { kind: 'review', agent: { role: 'review', engine: 'claude' } } }, {
     nodes: [{ id: 'fix', title: 'Fix', kind: 'implement', agent: { role: 'execute', engine: 'codex' }, instructions: 'Resolve the conflict' }],
     edges: [{ source: 'join', target: 'fix', outcome: 'fail' }, { source: 'fix', target: 'review', outcome: 'pass' }],
@@ -931,7 +958,7 @@ test('a join conflict takes the fail edge, keeps the unjoined branch and the fix
 
 test('a join conflict with no fail edge blocks the run, keeps the paths and joins once the user resolves it', async () => {
   await homeConfig()
-  build()
+  await build()
   const graph = forked({ a: { checks: writes('same.txt', 'a') }, b: { checks: writes('same.txt', 'b') } })
   graph.nodes.find(node => node.id === 'join')!.maxVisits = 2
   const started = await runner.start({ cwd: repo, request: 'Write the same file', label: 'fork', graph }, { startedByUser: true })
@@ -963,7 +990,7 @@ test('a join conflict with no fail edge blocks the run, keeps the paths and join
 
 test('a join whose cleanup fails still finishes the run and records the failure', async () => {
   await homeConfig()
-  build()
+  await build()
   const realRemove = worktrees.removePathWorktree
   let failed = false
   const remove = spyOn(worktrees, 'removePathWorktree').mockImplementation(async (...args) => {
@@ -982,7 +1009,7 @@ test('a join whose cleanup fails still finishes the run and records the failure'
 
 test('stop kills both paths and keeps their worktrees, and retry joins both into the workspace', async () => {
   await homeConfig()
-  build(overlapping)
+  await build(overlapping)
   const started = await runner.start({ cwd: repo, request: 'Write both files', label: 'fork', graph: forked({ a: { instructions: 'Write A SLOW' }, b: { instructions: 'Write B SLOW' } }) }, { startedByUser: true })
   await until(started.id, run => run.tokens.filter(token => token.state === 'working').length === 2)
   const stopped = await runner.stop(started.id)
@@ -1001,7 +1028,7 @@ test('stop kills both paths and keeps their worktrees, and retry joins both into
 
 test('after a restart with one path waiting at the join and one working, both resume and the join runs once', async () => {
   await homeConfig()
-  const store = build(overlapping)
+  const store = await build(overlapping)
   const started = await runner.start({ cwd: repo, request: 'Write both files', label: 'fork', graph: forked({ b: { instructions: 'Write B SLOW' } }) }, { startedByUser: true })
   await until(started.id, run => run.tokens.some(token => token.state === 'waiting') && run.tokens.some(token => token.state === 'working'))
   runner = createWorkflowRunner({ manager, resolver: overlapping, store, base: dir, requireApproval: async () => false })
@@ -1014,7 +1041,7 @@ test('after a restart with one path waiting at the join and one working, both re
 
 test('a join interrupted between two applies resumes without applying a path twice', async () => {
   await homeConfig()
-  build()
+  await build()
   const realApply = worktrees.applyPath
   let calls = 0
   const apply = spyOn(worktrees, 'applyPath').mockImplementation(async (...args) => {
@@ -1040,7 +1067,7 @@ test('a join interrupted between two applies resumes without applying a path twi
 
 test('a passing review in one path does not clear an implementation in another path', async () => {
   await homeConfig()
-  build()
+  await build()
   const graph = forked({ a: { kind: 'implement', agent: { role: 'execute', engine: 'claude' }, checks: [] }, b: { id: 'r', title: 'R', kind: 'review', agent: { role: 'review', engine: 'codex' }, checks: [] }, review: { id: 'review2', title: 'Review 2', kind: 'review', agent: { role: 'review', engine: 'claude' } } })
   graph.edges = graph.edges.map(edge => ({ ...edge, source: edge.source === 'b' ? 'r' : edge.source === 'review' ? 'review2' : edge.source, target: edge.target === 'b' ? 'r' : edge.target === 'review' ? 'review2' : edge.target })).sort((x, y) => Number(y.target === 'r') - Number(x.target === 'r'))
   await expect(runner.start({ cwd: repo, request: 'Build and review', label: 'fork', graph })).rejects.toThrow('Review 2 must use a different model family from implementation')
@@ -1057,7 +1084,7 @@ test('changeSize: splitting a step into parallel paths is big', () => {
 
 test('a path that commits on a branch of its own still joins its change', async () => {
   await homeConfig()
-  build()
+  await build()
   const moved = [{ command: '/bin/sh', args: ['-c', 'git checkout -q -b other && echo c > c.txt && git add c.txt && git -c user.name=t -c user.email=t@localhost commit -q -m c'] }]
   const started = await runner.start({ cwd: repo, request: 'Write both files', label: 'fork', graph: forked({ b: { checks: moved } }) }, { startedByUser: true })
   const done = await finished(started.id)
@@ -1068,7 +1095,7 @@ test('a path that commits on a branch of its own still joins its change', async 
 
 test('stop during a fork setup command kills it at once', async () => {
   await homeConfig()
-  build()
+  await build()
   const graph = forked()
   graph.nodes.find(node => node.id === 'split')!.setup = [{ command: '/bin/sh', args: ['-c', 'touch setup-started; sleep 20'], timeoutSeconds: 60 }]
   const started = await runner.start({ cwd: repo, request: 'Write both files', label: 'fork', graph }, { startedByUser: true })
@@ -1095,7 +1122,7 @@ test('changeSize: editing a fork’s setup is big', () => {
 
 test('a run in a subdirectory of its repo forks and joins changes made there', async () => {
   await homeConfig()
-  build(overlapping)
+  await build(overlapping)
   await Bun.write(join(repo, 'sub', 'keep.txt'), 'keep\n')
   await gitOut('add', 'sub/keep.txt')
   await gitOut('commit', '-q', '-m', 'sub')
@@ -1112,7 +1139,7 @@ test('a run in a subdirectory of its repo forks and joins changes made there', a
 
 test('a subdirectory that holds only ignored files blocks the fork', async () => {
   await homeConfig()
-  build()
+  await build()
   await writeFile(join(repo, '.gitignore'), 'sub/\n')
   await Bun.write(join(repo, 'sub', 'build.log'), 'ignored\n')
   const started = await runner.start({ cwd: join(repo, 'sub'), request: 'Write both files', label: 'fork', graph: forked() }, { startedByUser: true })
@@ -1123,7 +1150,7 @@ test('a subdirectory that holds only ignored files blocks the fork', async () =>
 
 test('with two open paths, a change that drops the second path’s review is big', async () => {
   await homeConfig()
-  build(overlapping, true)
+  await build(overlapping, true)
   const graph = forked({ a: { instructions: 'Write A SLOW', checks: [] }, b: { instructions: 'Write B SLOW', checks: [] } }, { nodes: [{ id: 'rb', title: 'Review B', kind: 'review', agent: { role: 'review' }, instructions: 'Review B' }] })
   graph.edges = graph.edges.filter(edge => !(edge.source === 'b' && edge.target === 'join')).concat({ source: 'b', target: 'rb', outcome: 'pass' }, { source: 'rb', target: 'join', outcome: 'pass' })
   const started = await runner.start({ cwd: repo, request: 'Write both files', label: 'fork', graph }, { startedByUser: true })
@@ -1135,8 +1162,8 @@ test('with two open paths, a change that drops the second path’s review is big
 })
 
 async function sessionRunner(agent: EngineResolver = resolver, engine = 'claude', workflow?: Workflow) {
-  const store = build(agent, true)
-  const graph = workflow ? await store.save(workflow) : await store.get('default')
+  const store = await build(agent, true)
+  const graph = workflow ? await store.save(workflow) : await store.get('classic')
   const terminal: TerminalRecord = { id: 'terminal-a', engine, cwd: repo, pid: 1, createdAt: 0, title: 'Terminal', sessionId: 'claude-session-a', inSessionAware: true, workflow: { id: graph.id, name: graph.name, revision: graph.revision, selectedDefault: true } }
   const sessionSteps: WorkflowRun[] = []
   let open = true
@@ -1225,7 +1252,7 @@ test('a restart keeps an In Session step waiting and a later report settles it',
 })
 
 test('an In Session review is refused when the workflow is saved', async () => {
-  const graph = defaultWorkflow()
+  const graph = classicWorkflow()
   graph.id = 'session-review'
   graph.nodes[3]!.agent = { role: 'review', engine: 'session' }
   await expect(sessionRunner(resolver, 'glm', graph)).rejects.toThrow('Cross-family review: In Session is for plan and task steps')
@@ -1267,7 +1294,7 @@ test('the session is notified once per In Session attempt and the notice is reco
 })
 
 test('a run started from Studio resolves an In Session step like Chat decides', async () => {
-  build()
+  await build()
   const run = await runner.start({ cwd: repo, request: 'Implement', label: 'studio' })
   expect(run.agents.plan).toMatchObject({ engine: 'claude', family: 'claude' })
   expect(run.agents.plan!.inSession).toBeUndefined()
@@ -1298,7 +1325,7 @@ test('the waiting step is readable on its own and disappears once reported', asy
 })
 
 test('a report with acceptance checks answers at once, checks in the background and refuses a second report', async () => {
-  const graph = defaultWorkflow()
+  const graph = classicWorkflow()
   graph.id = 'checked-plan'
   graph.nodes[0]!.checks = [{ command: '/bin/sleep', args: ['1'], timeoutSeconds: 30 }]
   const { owner, begin } = await sessionRunner(resolver, 'claude', graph)
@@ -1404,7 +1431,7 @@ test('a restart after the owning session closed blocks the waiting step', async 
 })
 
 test('a chat run plans In Session on the chat root AI, never the engine it names, and checks the plan on another family', async () => {
-  build(resolver, true)
+  await build(resolver, true)
   const root = await chatRoot('claude')
   const named = await runner.start({ cwd: repo, request: 'Ship it', label: 'ship', chat: root.id, engine: 'glm' })
   expect(named.agents.plan).toEqual({ engine: 'claude', model: null, family: 'claude', inSession: true })
@@ -1416,8 +1443,8 @@ test('a chat run plans In Session on the chat root AI, never the engine it names
 })
 
 async function crashFlow(script: string) {
-  const store = build(() => ({ cmd: '/bin/sh', args: ['-c', script], env: {} }))
-  await store.save({ ...defaultWorkflow(), id: 'crash', entry: 'test', nodes: [{ id: 'test', title: 'Test', instructions: 'Check', maxVisits: 1 }, { id: 'fix', title: 'Fix', instructions: 'Fix' }], edges: [{ source: 'test', target: 'fix', outcome: 'fail' }] })
+  const store = await build(() => ({ cmd: '/bin/sh', args: ['-c', script], env: {} }))
+  await store.save({ ...classicWorkflow(), id: 'crash', entry: 'test', nodes: [{ id: 'test', title: 'Test', instructions: 'Check', maxVisits: 1 }, { id: 'fix', title: 'Fix', instructions: 'Fix' }], edges: [{ source: 'test', target: 'fix', outcome: 'fail' }] })
   return finished((await runner.start({ workflowId: 'crash', cwd: repo, request: 'Test', label: 'crash' })).id)
 }
 
@@ -1441,8 +1468,8 @@ test('a fail the agent reported still takes the fail edge when its process exits
 })
 
 test('interrupted attempts do not count toward the visit limit', async () => {
-  const store = build(() => ({ cmd: '/bin/sleep', args: ['20'], env: {} }))
-  await store.save({ ...defaultWorkflow(), id: 'once', entry: 'test', nodes: [{ id: 'test', title: 'Test', instructions: 'Check', maxVisits: 1 }], edges: [] })
+  const store = await build(() => ({ cmd: '/bin/sleep', args: ['20'], env: {} }))
+  await store.save({ ...classicWorkflow(), id: 'once', entry: 'test', nodes: [{ id: 'test', title: 'Test', instructions: 'Check', maxVisits: 1 }], edges: [] })
   const run = await runner.start({ workflowId: 'once', cwd: repo, request: 'Test', label: 'once' })
   await runner.stop(run.id)
   const retried = await runner.retry(run.id)
@@ -1475,7 +1502,7 @@ test('a reminder types the flow label on one line', async () => {
 })
 
 test('reminding a chat sends its nudge again', async () => {
-  build(resolver, true)
+  await build(resolver, true)
   const nudged: number[] = []
   runner = createWorkflowRunner({ manager, resolver, store: createWorkflowStore(dir), base: dir, requireApproval: async () => false, onSessionStep: run => { nudged.push(run.attempts[0]!.sessionNotifiedAt ?? 0) } })
   const root = await chatRoot('claude')
@@ -1542,7 +1569,7 @@ test('rejecting a proposed split keeps the straight flow', async () => {
 })
 
 test('an agent plan with a bad split stays straight and says why', async () => {
-  build(shapingPlanner(overlappingShape))
+  await build(shapingPlanner(overlappingShape))
   const started = await runner.start({ cwd: repo, request: 'Add CSV export', label: 'csv', graph: withoutSession() })
   const done = await finished(started.id)
   expect(done.status).toBe('done')
@@ -1553,7 +1580,7 @@ test('an agent plan with a bad split stays straight and says why', async () => {
 
 test('with approval off an agent plan split runs at once, and a failed review goes to the fix step', async () => {
   await homeConfig()
-  build(shapingPlanner(csvShape, true))
+  await build(shapingPlanner(csvShape, true))
   const started = await runner.start({ cwd: repo, request: 'Add CSV export', label: 'csv', graph: withoutSession() })
   const done = await finished(started.id)
   expect(done.status).toBe('done')
@@ -1570,7 +1597,7 @@ test('a failed plan check proposes no split and goes back to the plan', async ()
     if (!input.prompt.includes('Verify the upstream plan') || checks++ > 0) return planner(input)
     return { cmd: '/bin/echo', args: [report('fail')], env: {} }
   }
-  build(failFirstCheck, true)
+  await build(failFirstCheck, true)
   const started = await runner.start({ cwd: repo, request: 'Add CSV export', label: 'csv', graph: withoutSession() })
   await runner.approve(started.id, { via: 'drawer' })
   const waiting = await until(started.id, run => run.versions.length === 2)
@@ -1581,7 +1608,7 @@ test('a failed plan check proposes no split and goes back to the plan', async ()
 
 test('a split keeps the AI each step already had, and its paths use the AI of the step they replace', async () => {
   await homeConfig()
-  build(shapingPlanner(csvShape))
+  await build(shapingPlanner(csvShape))
   const root = await chatRoot()
   const started = await runner.start({ cwd: repo, request: 'Add CSV export', label: 'csv', graph: withoutSession(), chat: root.id, engine: 'claude', model: 'claude-opus-4' })
   const chosen = started.agents.execute
@@ -1600,7 +1627,7 @@ function withCommand(): Workflow {
 }
 
 test('an AI-drafted flow that adds commands waits for approval even with approval off', async () => {
-  build(resolver, false)
+  await build(resolver, false)
   const drafted = await runner.start({ cwd: repo, request: 'Implement', label: 'drafted', graph: withCommand() })
   expect(drafted.status).toBe('awaiting-approval')
   await runner.reject(drafted.id, { via: 'drawer' })
@@ -1612,7 +1639,7 @@ test('an AI-drafted flow that adds commands waits for approval even with approva
 })
 
 test('a session change that adds commands waits for approval even with approval off; the owner adding them in the drawer does not', async () => {
-  build(slow, false)
+  await build(slow, false)
   const root = await chatRoot()
   const started = await runner.start({ cwd: repo, request: 'Implement', label: 'fixture', chat: root.id, graph: withoutSession() })
   const fromSession = await runner.propose(started.id, { graph: { ...withCommand(), nodes: withCommand().nodes.map(node => node.id === 'plan' ? { ...node, agent: { role: 'plan' as const } } : node) }, reason: 'Run the tests' }, { via: 'conversation', chat: root.id })
@@ -1636,12 +1663,12 @@ function backgroundWaiter(resumed: (calls: StepCall[]) => ReturnType<EngineResol
   return { resolver, calls }
 }
 async function singleStep(store: Awaited<ReturnType<typeof build>>, engine = 'claude', id = `single-${engine}`) {
-  return store.save({ ...defaultWorkflow(), id, entry: 'build', nodes: [{ id: 'build', title: 'Build', instructions: 'Run the suite', agent: { role: 'execute', engine }, maxVisits: 1 }], edges: [] })
+  return store.save({ ...classicWorkflow(), id, entry: 'build', nodes: [{ id: 'build', title: 'Build', instructions: 'Run the suite', agent: { role: 'execute', engine }, maxVisits: 1 }], edges: [] })
 }
 
 test('a step that ends its turn waiting on background work is resumed once and the resumed result settles the step', async () => {
   const { resolver: waiter, calls } = backgroundWaiter(() => lines(sessionLine, report()))
-  const store = build(waiter)
+  const store = await build(waiter)
   const graph = await singleStep(store)
   const run = await runner.start({ workflowId: graph.id, cwd: repo, request: 'Run the suite', label: 'nudge' })
   const done = await finished(run.id)
@@ -1658,7 +1685,7 @@ test('a step that ends its turn waiting on background work is resumed once and t
 
 test('a step that ends twice without SKD_RESULT blocks with its last words and is not nudged again', async () => {
   const { resolver: waiter } = backgroundWaiter(() => lines(sessionLine, JSON.stringify({ type: 'result', result: 'Still waiting on the suite in the background' })))
-  const store = build(waiter)
+  const store = await build(waiter)
   const graph = await singleStep(store)
   const run = await runner.start({ workflowId: graph.id, cwd: repo, request: 'Run the suite', label: 'nudge-twice' })
   const done = await finished(run.id)
@@ -1678,7 +1705,7 @@ test('blocked or failed results, process failures, missing sessions and codex st
   ]
   for (const [label, first, engine] of cases) {
     const { resolver: waiter, calls } = backgroundWaiter(() => lines(sessionLine, report()), first)
-    const store = build(waiter)
+    const store = await build(waiter)
     const graph = await singleStep(store, engine, label.replace(/ /g, '-'))
     const run = await runner.start({ workflowId: graph.id, cwd: repo, request: 'Run the suite', label })
     const done = await finished(run.id)
@@ -1689,7 +1716,7 @@ test('blocked or failed results, process failures, missing sessions and codex st
 
 test('a restart while the resumed job runs adopts it instead of the first job and settles the step once', async () => {
   const { resolver: waiter, calls } = backgroundWaiter(() => ({ cmd: process.execPath, args: ['-e', `console.log(${JSON.stringify(sessionLine)}); setTimeout(() => console.log(${JSON.stringify(report())}), 300)`], env: {} }))
-  const store = build(waiter)
+  const store = await build(waiter)
   const graph = await singleStep(store)
   const run = await runner.start({ workflowId: graph.id, cwd: repo, request: 'Run the suite', label: 'nudge-restart' })
   await until(run.id, current => current.attempts[0]?.nudgedFrom !== undefined && current.attempts[0]?.jobId !== current.attempts[0]?.nudgedFrom)
@@ -1704,7 +1731,7 @@ test('a restart while the resumed job runs adopts it instead of the first job an
 
 test('a restart after the nudge was recorded but before its job launched still resumes the session once', async () => {
   const { resolver: waiter, calls } = backgroundWaiter(() => lines(sessionLine, report()))
-  const store = build(waiter)
+  const store = await build(waiter)
   const graph = await singleStep(store)
   const run = await runner.start({ workflowId: graph.id, cwd: repo, request: 'Run the suite', label: 'nudge-crash' })
   expect((await finished(run.id)).status).toBe('done')
@@ -1734,7 +1761,7 @@ async function noJobsRunning() {
 test('a nudged step keeps the first job\'s answer ahead of the resumed reply and asks for the whole answer again', async () => {
   const firstAnswer = JSON.stringify({ type: 'result', result: 'PLAN-BODY step 1 do X\nWaiting for the background check' })
   const { resolver: waiter, calls } = backgroundWaiter(() => lines(sessionLine, report()), () => lines(sessionLine, firstAnswer))
-  const store = build(waiter)
+  const store = await build(waiter)
   const graph = await singleStep(store)
   const run = await runner.start({ workflowId: graph.id, cwd: repo, request: 'Run the suite', label: 'nudge-output' })
   const done = await finished(run.id)
@@ -1759,7 +1786,7 @@ test('a plan step nudged after writing its split still proposes the split, and a
     }
     return lines(sessionLine, report())
   }
-  build(planner)
+  await build(planner)
   const started = await runner.start({ cwd: repo, request: 'Add CSV export', label: 'csv', graph: withoutSession() })
   const done = await finished(started.id)
   expect(done.status).toBe('done')
@@ -1777,7 +1804,7 @@ test('a plan step nudged after writing its split still proposes the split, and a
 
 test('a step job the user stopped is never nudged, even when it exits zero', async () => {
   const { resolver: waiter, calls } = backgroundWaiter(() => lines(sessionLine, report()), () => ({ cmd: '/bin/sh', args: ['-c', `echo '${sessionLine}'; trap 'exit 0' TERM; sleep 30 & wait`], env: {} }))
-  const store = build(waiter)
+  const store = await build(waiter)
   const graph = await singleStep(store)
   const run = await runner.start({ workflowId: graph.id, cwd: repo, request: 'Run the suite', label: 'nudge-stopped' })
   const working = await until(run.id, current => current.attempts[0]?.status === 'running' && !!current.attempts[0]?.jobId)
@@ -1792,7 +1819,7 @@ test('a step job the user stopped is never nudged, even when it exits zero', asy
 
 test('stopping the run while the resumed job works kills it and leaves the run stopped', async () => {
   const { resolver: waiter, calls } = backgroundWaiter(() => slowLines(5000, [sessionLine], [report()]))
-  const store = build(waiter)
+  const store = await build(waiter)
   const graph = await singleStep(store)
   const run = await runner.start({ workflowId: graph.id, cwd: repo, request: 'Run the suite', label: 'nudge-stop' })
   await until(run.id, resumedStarted)
@@ -1806,7 +1833,7 @@ test('stopping the run while the resumed job is still launching kills it once it
   let entered!: () => void
   const resolving = new Promise<void>(resolve => { entered = resolve })
   let calls = 0
-  const store = build(async ({ resumeSessionId }) => {
+  const store = await build(async ({ resumeSessionId }) => {
     calls++
     if (resumeSessionId === undefined) return lines(sessionLine, waitingLine)
     entered()
@@ -1823,7 +1850,7 @@ test('stopping the run while the resumed job is still launching kills it once it
 
 test('settling the first job again after the nudge changes nothing', async () => {
   const { resolver: waiter, calls } = backgroundWaiter(() => slowLines(800, [sessionLine], [report()]))
-  const store = build(waiter)
+  const store = await build(waiter)
   const graph = await singleStep(store)
   const run = await runner.start({ workflowId: graph.id, cwd: repo, request: 'Run the suite', label: 'nudge-double' })
   const working = await until(run.id, resumedStarted)
@@ -1837,7 +1864,7 @@ test('settling the first job again after the nudge changes nothing', async () =>
 
 test('a paused flow holds the nudge until it is resumed', async () => {
   const { resolver: waiter, calls } = backgroundWaiter(() => lines(sessionLine, report()), () => slowLines(300, [sessionLine], [waitingLine]))
-  const store = build(waiter)
+  const store = await build(waiter)
   const graph = await singleStep(store)
   const run = await runner.start({ workflowId: graph.id, cwd: repo, request: 'Run the suite', label: 'nudge-pause' })
   const working = await until(run.id, current => current.attempts[0]?.status === 'running' && !!current.attempts[0]?.jobId)
@@ -1855,7 +1882,7 @@ test('a paused flow holds the nudge until it is resumed', async () => {
 
 test('a nudge held by a pause survives a restart and launches on resume', async () => {
   const { resolver: waiter, calls } = backgroundWaiter(() => lines(sessionLine, report()), () => slowLines(300, [sessionLine], [waitingLine]))
-  const store = build(waiter)
+  const store = await build(waiter)
   const graph = await singleStep(store)
   const run = await runner.start({ workflowId: graph.id, cwd: repo, request: 'Run the suite', label: 'nudge-pause-restart' })
   const working = await until(run.id, current => current.attempts[0]?.status === 'running' && !!current.attempts[0]?.jobId)
@@ -1874,7 +1901,7 @@ test('a nudge held by a pause survives a restart and launches on resume', async 
 
 test('a second miss with no closing words blocks without an empty last-words clause', async () => {
   const { resolver: waiter } = backgroundWaiter(() => lines(sessionLine))
-  const store = build(waiter)
+  const store = await build(waiter)
   const graph = await singleStep(store)
   const run = await runner.start({ workflowId: graph.id, cwd: repo, request: 'Run the suite', label: 'nudge-silent' })
   const done = await finished(run.id)
@@ -1893,7 +1920,7 @@ async function settledAs(store: ReturnType<typeof build>, status: 'blocked' | 'f
 }
 
 test('a blocked or failed run can be dismissed, and the mark is saved with the run', async () => {
-  const store = build()
+  const store = await build()
   const id = await settledAs(store, 'blocked')
   const dismissed = await runner.dismiss(id)
   expect(typeof dismissed.dismissedAt).toBe('number')
@@ -1906,7 +1933,7 @@ test('a blocked or failed run can be dismissed, and the mark is saved with the r
 })
 
 test('only a failed or blocked run can be dismissed, and an unknown run is not found', async () => {
-  build()
+  await build()
   const started = await runner.start({ cwd: repo, request: 'Implement', label: 'fixture' })
   const done = await finished(started.id)
   const refused = await runner.dismiss(done.id).catch((error: unknown) => error)
@@ -1916,7 +1943,7 @@ test('only a failed or blocked run can be dismissed, and an unknown run is not f
 })
 
 test('retrying a dismissed run clears the dismissal', async () => {
-  const store = build()
+  const store = await build()
   const id = await settledAs(store, 'blocked')
   await runner.dismiss(id)
   const retried = await runner.retry(id)

@@ -10,7 +10,7 @@ You describe the work in a chat. The chat answers directly, or spins up agents i
 
 **What you get:**
 - **A CLI for people and agents.** `shiki` drives a running Shikidan from a shell: `shiki status`, `shiki job new "…" --follow`, `shiki attention`, `shiki runs`, `shiki plugin add <git url>`. See [Command line](#command-line).
-- **Describe a workflow, get a draft.** In Studio, type what you want into **Describe your workflow** and an AI drafts the steps on an editable canvas. Or start from the default (plan → verify → execute → cross-family review), a template, or scratch.
+- **Describe a workflow, get a draft.** In Studio, type what you want into **Describe your workflow** and an AI drafts the steps on an editable canvas. Or start from the default, **pstack Feature** (explore → design → verify the plan → build → cross-family review, with a three-AI design contest when the design is unclear), a template, or scratch.
 - **Skills set up for you.** On start, Shikidan links its `skd-dispatch` skill into `~/.claude/skills`, loads the agents, skills and flows that installed plugins contribute, and mirrors Claude's global instructions, skills and agents to Codex so both follow the same rules.
 
 **Example default setup:** Claude Code leads the chat, GLM via z.ai handles cheaper fan-out work, and Codex CLI reviews from the outside. Swap any of them for the agents you already use.
@@ -94,7 +94,7 @@ The sidebar on the left lists your chats and live terminals, grouped by Today, Y
 
 **Studio** (top right) is where you shape how your AI team works:
 
-- **Workflows**: describe one and an AI drafts it, or start from the default (plan → verify → execute → cross-family review), a template, or scratch. Steps sit on a canvas with success, failure and needs-help branches. Each step shows what it does and which AI does it (**Chat decides**, or a pinned AI and model), and can carry skills, tools and acceptance checks. While a workflow runs, the canvas shows which steps passed, which one is running, and where it failed.
+- **Workflows**: describe one and an AI drafts it, or start from the default (**pstack Feature**: explore → design → verify → build → cross-family review), a template, or scratch. Steps sit on a canvas with success, failure and needs-help branches. Each step shows what it does and which AI does it (**Chat decides**, or a pinned AI and model), and can carry skills, tools and acceptance checks. While a workflow runs, the canvas shows which steps passed, which one is running, and where it failed.
 - **Manage AIs**: every connected AI with its usage, the role it plays, its models and its settings.
 - **Runs**: every run with its attempts, evidence and checks.
 - **Rules**: the core rules every step follows.

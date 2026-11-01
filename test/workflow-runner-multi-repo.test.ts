@@ -8,7 +8,8 @@ import { createJobManager, type JobManager } from '../server/jobs'
 import type { EngineResolver } from '../server/jobs-engine-iface'
 import { prepareRepoWorkspace } from '../server/repo-workspace'
 import { createWorkflowRunner, type WorkflowRun, type WorkflowRunner } from '../server/workflow-runner'
-import { createWorkflowStore, defaultWorkflow, type Workflow } from '../server/workflows'
+import { createWorkflowStore, type Workflow } from '../server/workflows'
+import { classicWorkflow } from './support/classic-workflow'
 import { git, repoAt } from './support/git-repos'
 
 setDefaultTimeout(30_000)
@@ -52,7 +53,7 @@ const writes = (file: string, text: string) => [{ command: '/bin/sh', args: ['-c
 function forked(steps: { a?: Partial<Step>; b?: Partial<Step> } = {}): Workflow {
   const pass = (source: string, target: string) => ({ source, target, outcome: 'pass' as const })
   return {
-    ...defaultWorkflow(), id: 'forked', name: 'Forked', entry: 'plan',
+    ...classicWorkflow(), id: 'forked', name: 'Forked', entry: 'plan',
     nodes: [
       { id: 'plan', title: 'Plan', kind: 'plan', agent: { role: 'plan' }, instructions: 'Plan the work' },
       { id: 'verify', title: 'Verify', kind: 'verify-plan', agent: { role: 'review' }, instructions: 'Verify the plan' },
@@ -136,7 +137,7 @@ const planner = (shape: unknown, seen: string[] = []): EngineResolver => ({ prom
   const write = owned.map(file => `mkdir -p "$(dirname ${file})" && echo x > ${file}`).join(' && ')
   return { cmd: '/bin/sh', args: ['-c', `${write ? `${write}; ` : ''}echo '${passing()}'`], env: {} }
 }
-const straight = (): Workflow => { const graph = defaultWorkflow(); graph.nodes[0]!.agent = { role: 'plan' }; return graph }
+const straight = (): Workflow => { const graph = classicWorkflow(); graph.nodes[0]!.agent = { role: 'plan' }; return graph }
 const nodeIds = (run: WorkflowRun) => run.attempts.map(attempt => attempt.nodeId)
 
 test('the plan of a multi-repo run is told to prefix files with their repo, and a prefixed split joins per repo', async () => {
@@ -198,7 +199,7 @@ test('a path workspace deleted after one of its steps finished blocks the run in
   build(slow)
   const pass = (source: string, target: string) => ({ source, target, outcome: 'pass' as const })
   const graph = {
-    ...defaultWorkflow(), id: 'forked2', name: 'Forked2', entry: 'plan',
+    ...classicWorkflow(), id: 'forked2', name: 'Forked2', entry: 'plan',
     nodes: [
       { id: 'plan', title: 'Plan', kind: 'plan', agent: { role: 'plan' }, instructions: 'Plan the work' },
       { id: 'verify', title: 'Verify', kind: 'verify-plan', agent: { role: 'review' }, instructions: 'Verify the plan' },
@@ -229,7 +230,7 @@ test('a split inside a path forks from the path workspace and both levels join b
   build()
   const pass = (source: string, target: string) => ({ source, target, outcome: 'pass' as const })
   const graph = {
-    ...defaultWorkflow(), id: 'nested', name: 'Nested', entry: 'plan',
+    ...classicWorkflow(), id: 'nested', name: 'Nested', entry: 'plan',
     nodes: [
       { id: 'plan', title: 'Plan', kind: 'plan', agent: { role: 'plan' }, instructions: 'Plan the work' },
       { id: 'verify', title: 'Verify', kind: 'verify-plan', agent: { role: 'review' }, instructions: 'Verify the plan' },
