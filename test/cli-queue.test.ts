@@ -127,6 +127,15 @@ describe('shiki queue', () => {
     expect(routesOf(h.calls)).toEqual(['DELETE /api/queue/a%2Fb'])
   })
 
+  test('pick sends the option with the optional tester and note', async () => {
+    const h = harness(() => Response.json({ item: { id: 'a1' } }))
+    expect(await main(['queue', 'pick', 'a1', 'B', '--tester', 'Ploy', '--note', 'wide'], h.deps)).toBe(0)
+    expect(h.calls).toEqual([{ method: 'POST', path: '/api/queue/a1/pick', body: { option: 'B', tester: 'Ploy', note: 'wide' } }])
+    const bare = harness(() => Response.json({ item: { id: 'a1' } }))
+    expect(await main(['queue', 'pick', 'a1', 'A'], bare.deps)).toBe(0)
+    expect(bare.calls[0]!.body).toEqual({ option: 'A' })
+  })
+
   test('a refused requeue prints the server message and exits 1', async () => {
     const h = harness(() => Response.json({ error: 'It is building now' }, { status: 409 }))
     expect(await main(['queue', 'requeue', 'a1'], h.deps)).toBe(1)

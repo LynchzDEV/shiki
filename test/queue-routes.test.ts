@@ -1,6 +1,6 @@
-import { afterAll, beforeAll, expect, spyOn, test } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test'
 import { mkdtempSync } from 'node:fs'
-import { mkdtemp, realpath, rm, symlink } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Elysia } from 'elysia'
@@ -28,7 +28,7 @@ afterAll(async () => {
   await rm(plain, { recursive: true, force: true })
 })
 
-type Engine = Pick<QueueEngine, 'add' | 'requeue' | 'checkReplies' | 'remove' | 'move' | 'checkedAt' | 'subscribeChecks'>
+type Engine = Pick<QueueEngine, 'add' | 'requeue' | 'pick' | 'checkReplies' | 'remove' | 'move' | 'checkedAt' | 'subscribeChecks'>
 type RunLookup = NonNullable<Parameters<typeof queueRoutes>[3]>
 
 function engine(items: ReturnType<typeof store>, over: Partial<QueueEngine> = {}): Engine {
@@ -36,6 +36,7 @@ function engine(items: ReturnType<typeof store>, over: Partial<QueueEngine> = {}
   return {
     add: async input => items.add({ ...newItem, externalId: input.externalId, repo: input.repo, flowId: input.flowId ?? null }, input.position ?? 'end'),
     requeue: async id => items.update(id, { state: 'queued' }),
+    pick: async (id, choice) => { if (found(id).state !== 'waiting-pick') throw new QueueRefusal('It is queued now', 409); return items.update(id, { state: 'queued', questions: [choice.option, choice.tester ?? '', choice.note ?? ''] }) },
     checkReplies: async () => ({ checked: 2, resumed: 1 }),
     remove: async id => { if (found(id).state === 'building') throw new QueueRefusal('It is building now', 409); await items.remove(id) },
     move: async (id, to) => { found(id); await items.move(id, to) },
@@ -324,4 +325,88 @@ test('a queued item whose workspace is being prepared is marked preparing', asyn
   const app = new Elysia().use(queueRoutes(items, { ...engine(items), preparing: () => a.id }))
   const listed = (await (await call(app, '/api/queue')).json()).items as Array<{ externalId: string; preparing?: boolean }>
   expect(listed.map(entry => entry.preparing)).toEqual([true, undefined])
+})
+
+test('POST pick hands the choice to the engine and maps refusals', async () => {
+  const items = store()
+  const app = new Elysia().use(queueRoutes(items, engine(items)))
+  const parked = await items.add(newItem, 'end')
+  expect((await post(app, `/api/queue/${parked.id}/pick`, { option: 'B' })).status).toBe(409)
+  await items.update(parked.id, { state: 'waiting-pick' })
+  const picked = await post(app, `/api/queue/${parked.id}/pick`, { option: 'B', tester: 'Ploy', note: 'wide' })
+  expect(picked.status).toBe(200)
+  expect((await picked.json()).item).toMatchObject({ state: 'queued', questions: ['B', 'Ploy', 'wide'] })
+  expect((await post(app, '/api/queue/nope/pick', { option: 'B' })).status).toBe(404)
+  expect((await post(app, `/api/queue/${parked.id}/pick`, {})).status).toBe(400)
+  expect((await post(app, `/api/queue/${parked.id}/pick`, { option: 'B', note: 'x'.repeat(4001) })).status).toBe(400)
+})
+
+describe('mockup files', () => {
+  let tree: string
+  let outside: string
+  beforeAll(async () => {
+    tree = await mkdtemp(join(tmpdir(), 'mc-queue-mock-'))
+    outside = await mkdtemp(join(tmpdir(), 'mc-queue-out-'))
+    await mkdir(join(tree, 'visualizer', 'demo'), { recursive: true })
+    await writeFile(join(tree, 'visualizer', 'demo', 'index.html'), '<h1>demo</h1>')
+    await writeFile(join(tree, 'visualizer', 'demo', 'a.css'), 'h1{}')
+    await writeFile(join(tree, 'visualizer', 'demo', 'blob.bin'), 'x')
+    await writeFile(join(tree, 'visualizer', 'demo', '.secret'), 'no')
+    await writeFile(join(tree, 'secret.txt'), 'no')
+    await writeFile(join(outside, 'loot.txt'), 'no')
+    await symlink(join(outside, 'loot.txt'), join(tree, 'visualizer', 'demo', 'file-link.txt'))
+    await symlink(outside, join(tree, 'visualizer', 'dir-link'))
+  })
+  afterAll(async () => {
+    await rm(tree, { recursive: true, force: true })
+    await rm(outside, { recursive: true, force: true })
+  })
+
+  async function files(path: string, over: { worktree?: string | null } = {}) {
+    const items = store()
+    const item = await items.add(newItem, 'end')
+    await items.update(item.id, { worktree: over.worktree === undefined ? tree : over.worktree })
+    return call(new Elysia().use(queueRoutes(items, engine(items))), `/queue/${path.replace('{id}', item.id)}`)
+  }
+  const sealed = (response: Response) => {
+    expect(response.headers.get('content-security-policy')).toBe('sandbox allow-scripts')
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff')
+  }
+
+  test('serves a file with its type, sandbox policy and nosniff', async () => {
+    const html = await files('{id}/files/demo/index.html')
+    expect(html.status).toBe(200)
+    expect(html.headers.get('content-type')).toBe('text/html; charset=utf-8')
+    expect(await html.text()).toBe('<h1>demo</h1>')
+    sealed(html)
+    expect((await files('{id}/files/demo/a.css')).headers.get('content-type')).toBe('text/css; charset=utf-8')
+    expect((await files('{id}/files/demo/blob.bin')).headers.get('content-type')).toBe('application/octet-stream')
+  })
+
+  test('answers 404, still sealed, for everything it refuses', async () => {
+    const refused = [
+      '{id}/files/demo/missing.html', '{id}/files/demo', '{id}/files/%2e%2e/secret.txt', '{id}/files/demo/%2e%2e/%2e%2e/secret.txt',
+      '{id}/files/demo/file-link.txt', '{id}/files/dir-link/loot.txt', '{id}/files/demo/.secret', '{id}/files/demo/..%2f..%2fsecret.txt',
+    ]
+    for (const path of refused) {
+      const response = await files(path)
+      expect([path, response.status]).toEqual([path, 404])
+      if (!path.includes('%2e%2e/')) sealed(response)
+    }
+  })
+
+  test('a visualizer folder that is itself a link is refused', async () => {
+    const linked = await mkdtemp(join(tmpdir(), 'mc-queue-mock-link-'))
+    await symlink(join(tree, 'visualizer'), join(linked, 'visualizer'))
+    expect((await files('{id}/files/demo/index.html', { worktree: linked })).status).toBe(404)
+    await rm(linked, { recursive: true, force: true })
+  })
+
+  test('an item without a workspace, or an unknown item, has no files', async () => {
+    const bare = await files('{id}/files/demo/index.html', { worktree: null })
+    expect(bare.status).toBe(404)
+    sealed(bare)
+    const items = store()
+    expect((await call(new Elysia().use(queueRoutes(items, engine(items))), '/queue/nope/files/demo/index.html')).status).toBe(404)
+  })
 })

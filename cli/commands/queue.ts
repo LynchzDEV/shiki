@@ -44,6 +44,11 @@ function reposText(item: Json): string {
   return item.repos.length === 0 ? 'plan picks' : item.repos.map(String).join(', ')
 }
 
+function optionalText(ctx: Context, name: string): Json {
+  const value = stringOpt(ctx, name)
+  return value === undefined ? {} : { [name]: value }
+}
+
 function position(ctx: Context): number {
   const text = arg(ctx, 'to')
   if (!/^\d+$/.test(text)) throw new UsageError('to must be a whole number from 0')
@@ -95,6 +100,19 @@ export const queueCommands: Command[] = [
     args: ['id'],
     summary: 'Put a failed, ready or waiting item back in line',
     run: async (ctx) => emit(ctx, await ctx.client.post(itemPath(ctx, '/requeue'), {}), () => 'Back in the queue.\n'),
+  },
+  {
+    path: ['queue', 'pick'],
+    args: ['id', 'option'],
+    options: {
+      tester: { type: 'string', description: 'who to tag when the build is ready', placeholder: 'NAME' },
+      note: { type: 'string', description: 'a note for the next run', placeholder: 'TEXT' },
+    },
+    summary: 'Choose a design variant for an item waiting on a pick',
+    run: async (ctx) => {
+      const body = { option: arg(ctx, 'option'), ...optionalText(ctx, 'tester'), ...optionalText(ctx, 'note') }
+      emit(ctx, await ctx.client.post(itemPath(ctx, '/pick'), body), () => `Picked ${arg(ctx, 'option')}. Back in the queue.\n`)
+    },
   },
   {
     path: ['queue', 'remove'],

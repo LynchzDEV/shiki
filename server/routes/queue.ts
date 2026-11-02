@@ -4,13 +4,14 @@ import { z } from 'zod'
 import { requireLocal } from '../auth'
 import { QueueRefusal, SourceFailure, type QueueEngine } from '../queue-engine'
 import type { QueueItem, QueueStore } from '../queue-store'
+import { mockupResponse } from '../queue-mockups'
 import { queueStep, type QueueStep, type QueueStepRun } from '../queue-step'
 import { listFolderRepos, resolveQueueFolder } from '../queue-folder'
 import { queueTree, type QueueTree } from '../queue-tree'
 import { eventStreamResponse, type RunEvents } from '../run-events'
 
 type Status = { status?: number | string }
-type QueueEngineRoutes = Pick<QueueEngine, 'add' | 'requeue' | 'checkReplies' | 'remove' | 'move' | 'checkedAt' | 'subscribeChecks'> & Partial<Pick<QueueEngine, 'preparing'>>
+type QueueEngineRoutes = Pick<QueueEngine, 'add' | 'requeue' | 'pick' | 'checkReplies' | 'remove' | 'move' | 'checkedAt' | 'subscribeChecks'> & Partial<Pick<QueueEngine, 'preparing'>>
 export type QueueRunLookup = { get(id: string): QueueStepRun | undefined; subscribe(listener: () => void): () => void }
 const NO_RUNS: QueueRunLookup = { get: () => undefined, subscribe: () => () => {} }
 
@@ -22,6 +23,7 @@ const addSchema = z.object({
   flowId: z.string().min(1).max(200).nullable().optional(),
   position: z.enum(['end', 'next']).optional(),
 })
+const pickSchema = z.object({ option: z.string().min(1).max(16), tester: z.string().max(200).optional(), note: z.string().max(4000).optional() })
 const moveSchema = z.object({ to: z.number().int().min(0) })
 const NO_ITEM = 'No such queue item'
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error))
@@ -102,6 +104,12 @@ export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: 
       if (!parsed.success) { set.status = 400; return { error: 'to must be a position from 0' } }
       return refusing(set, async () => { await engine.move(params.id, parsed.data.to); return { items: store.list() } }, moveExplanation)
     })
+    .post('/api/queue/:id/pick', ({ params, body, set }) => {
+      const parsed = pickSchema.safeParse(body)
+      if (!parsed.success) { set.status = 400; return { error: 'option is required; tester is at most 200 characters and note at most 4000' } }
+      return refusing(set, async () => ({ item: await engine.pick(params.id, parsed.data) }))
+    })
+    .get('/queue/:id/files/*', ({ params }) => mockupResponse(store.get(params.id)?.worktree ?? null, params['*']))
     .post('/api/queue/:id/requeue', ({ params, set }) => requeueItem(store, engine, params.id, set))
     .delete('/api/queue/:id', ({ params, set }) => refusing(set, async () => { await engine.remove(params.id); return { ok: true } }, removeExplanation))
 }
