@@ -1,13 +1,15 @@
+import { basename } from 'node:path'
+
 import type { TaskContext } from './plugins/context-files'
-import { dropAnswerBackups, restoreAnswers } from './queue-answers'
-import { questionsOf, repoRequestsOf, runRequest, SETTLED, type RunView } from './queue-prompts'
+import { backUpAnswers, dropAnswerBackups, restoreAnswers } from './queue-answers'
+import { blockedSummary, pickOf, questionsOf, repoRequestsOf, runRequest, SETTLED, type RunView } from './queue-prompts'
 import { adoptionProblem, grantRepos, movedRealRepos, movedText, realRepoStates, reposToOffer, SINGLE_REPO_ASK } from './queue-repo-asks'
 import { refuseLinkedQueueFolders } from './queue-files'
 import { message, replyCheck } from './queue-replies'
 import type { QueueSource } from './queue-source'
 import { workspaceRepos } from './repo-workspace'
 import type { QueueItem, QueueStore } from './queue-store'
-import { fileExists, freshWorktree, worktreeRestorer } from './queue-worktree'
+import { fileExists, freshWorktree, WorktreeGone, worktreeRestorer } from './queue-worktree'
 
 export type QueueRunner = {
   start(input: { cwd: string; request: string; label: string; workflowId?: string }, context: { startedByUser: boolean }): Promise<{ id: string }>
@@ -30,6 +32,8 @@ export type QueueEngineDeps = {
 
 export type AddInput = { source: string; externalId: string; repo: string; repos?: string[]; flowId?: string | null; position?: 'end' | 'next' }
 
+export type PickChoice = { option: string; tester?: string; note?: string }
+
 export type AddOptions = { background?: boolean }
 
 export type QueueEngine = {
@@ -38,6 +42,7 @@ export type QueueEngine = {
   onRunSettled(run: RunView): Promise<void>
   recover(): Promise<void>
   requeue(id: string): Promise<QueueItem>
+  pick(id: string, choice: PickChoice): Promise<QueueItem>
   remove(id: string): Promise<void>
   move(id: string, to: number): Promise<void>
   checkReplies(): Promise<{ checked: number; resumed: number }>
@@ -47,7 +52,7 @@ export type QueueEngine = {
 }
 
 const MAX_RUN_LABEL = 120
-const REQUEUEABLE: ReadonlySet<QueueItem['state']> = new Set(['failed', 'ready', 'waiting-info'])
+const REQUEUEABLE: ReadonlySet<QueueItem['state']> = new Set(['failed', 'ready', 'waiting-info', 'waiting-pick'])
 const RETRIED_FROM = REQUEUEABLE
 
 export class QueueRefusal extends Error {
@@ -120,6 +125,13 @@ function queueSteps(deps: QueueEngineDeps, onPreparing: (id: string | null) => v
       if ('fail' in granted) return fail(item, granted.fail)
       if (questions.length === 0) return rerunWithRepos(item, granted.repos)
       item = await store.update(item.id, { repos: granted.repos })
+    }
+    const picked = pickOf(run)
+    if (picked !== null && 'invalid' in picked) return fail(item, `Bad pick line: ${picked.invalid}`)
+    if (picked !== null) {
+      const parked = await store.update(item.id, { state: 'waiting-pick', pick: { ...picked, summary: blockedSummary(run) }, questions, currentRunId: null })
+      deps.needsYou(parked, 'Pick a design variant')
+      return
     }
     if (questions.length === 0) return fail(item, run.error ?? `Run ${run.status}`)
     try {
@@ -246,8 +258,36 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
     const item = found(store, id)
     if (!REQUEUEABLE.has(item.state)) throw stateRefusal(item.state)
     if (runningInStudio(item)) throw new QueueRefusal('It is running in Studio now', 409)
-    await store.update(id, { state: 'queued', error: null, currentRunId: null, questions: [], repoReruns: item.repoReruns === undefined ? undefined : 0, realChanged: item.realChanged === undefined ? undefined : [] })
+    await store.update(id, { state: 'queued', error: null, currentRunId: null, pick: undefined, questions: [], repoReruns: item.repoReruns === undefined ? undefined : 0, realChanged: item.realChanged === undefined ? undefined : [] })
     await store.move(id, store.list().length)
+    await startNext()
+    return found(store, id)
+  })
+
+  const restore = worktreeRestorer(deps)
+  const PICK_FILE = /(^|-)pick\.md$/
+  const MAX_TESTER = 200
+  const MAX_NOTE = 4000
+
+  const pick = (id: string, choice: PickChoice): Promise<QueueItem> => serial(async () => {
+    const item = found(store, id)
+    if (item.state !== 'waiting-pick' || item.pick === undefined) throw stateRefusal(item.state)
+    if (!item.pick.options.includes(choice.option)) throw new QueueRefusal(`Not an option: ${choice.option}`, 409)
+    if (item.worktree === null) throw new QueueRefusal('It has no workspace', 409)
+    const tester = (choice.tester ?? '').trim().slice(0, MAX_TESTER)
+    const note = (choice.note ?? '').trim().slice(0, MAX_NOTE)
+    const markdown = `# Design pick\n\nOption: ${choice.option}\nTester: ${tester || '(not set)'}\nNote: ${note || '(none)'}\n`
+    try {
+      const worktree = await restore({ ...item, worktree: item.worktree })
+      await refuseLinkedQueueFolders(worktree, item.source)
+      const path = await deps.writeContext(item.source, { name: 'pick', markdown }, worktree)
+      await backUpAnswers(deps.backupDir(item.id), path, markdown)
+      await store.update(id, { state: 'queued', worktree, answerPaths: [...item.answerPaths.filter(entry => !PICK_FILE.test(basename(entry))), path], pick: undefined, questions: [], error: null })
+    } catch (error) {
+      if (error instanceof WorktreeGone) throw new QueueRefusal(error.message, 409)
+      throw error
+    }
+    await store.toFront(id)
     await startNext()
     return found(store, id)
   })
@@ -306,6 +346,7 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
   return {
     add,
     requeue,
+    pick,
     remove,
     move,
     recover,

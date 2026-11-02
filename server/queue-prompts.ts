@@ -56,11 +56,21 @@ type Attempt = RunView['attempts'][number]
 
 const byAgent = (attempt: Attempt): boolean => attempt.jobId !== null || attempt.inSession === true
 
-function blockedEvidence(run: RunView): string[] {
+function lastBlocked(run: RunView): Attempt | undefined {
   const settled = run.attempts.filter(attempt => attempt.result !== null && attempt.endedAt !== null && !attempt.interrupted)
   const last = settled.sort((a, b) => (a.endedAt ?? 0) - (b.endedAt ?? 0)).at(-1)
-  if (run.status !== 'blocked' || last === undefined || !byAgent(last) || last.result?.outcome !== 'blocked') return []
-  return last.result.evidence.map(line => line.trim()).filter(line => line !== '')
+  if (run.status !== 'blocked' || last === undefined || !byAgent(last) || last.result?.outcome !== 'blocked') return undefined
+  return last
+}
+
+const blockedEvidence = (run: RunView): string[] => lastBlocked(run)?.result?.evidence.map(line => line.trim()).filter(line => line !== '') ?? []
+
+const MAX_SUMMARY = 64000
+
+export function blockedSummary(run: RunView): string {
+  const last = lastBlocked(run)
+  const text = [last?.result?.summary ?? '', last?.output ?? ''].filter(part => part.trim() !== '').join('\n\n')
+  return text.slice(0, MAX_SUMMARY)
 }
 
 const pickBody = (line: string): string | null => PICK_LINE.exec(line.replace(BULLET, '').replace(QUOTES, '').trim())?.[1] ?? null
