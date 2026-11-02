@@ -112,7 +112,8 @@ test('pickOf is null without a pick line, for a pass, or for a repo ask', () => 
 
 test('pickOf rejects what it cannot show', () => {
   const invalid = (line: string) => expect(pickOf(blocked(line))).toEqual({ invalid: expect.any(String) })
-  invalid('pick:')
+  expect(pickOf(blocked('pick:'))).toBeNull()
+  expect(pickOf(blocked('Pick: which page first?'))).toBeNull()
   invalid('pick: A | visualizer/x')
   invalid('pick: A,B,C,D,E,F,G | visualizer/x')
   invalid('pick: A,A | visualizer/x')

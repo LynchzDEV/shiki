@@ -73,7 +73,10 @@ export function blockedSummary(run: RunView): string {
   return text.slice(0, MAX_SUMMARY)
 }
 
-const pickBody = (line: string): string | null => PICK_LINE.exec(line.replace(BULLET, '').replace(QUOTES, '').trim())?.[1] ?? null
+const pickBody = (line: string): string | null => {
+  const body = PICK_LINE.exec(line.replace(BULLET, '').replace(QUOTES, '').trim())?.[1] ?? null
+  return body !== null && body.includes('|') ? body : null
+}
 
 export function questionsOf(run: RunView): string[] {
   return blockedEvidence(run).filter(line => requestedRepos(line) === null && pickBody(line) === null)
