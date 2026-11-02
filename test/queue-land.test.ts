@@ -58,7 +58,7 @@ function harness(sourceOver: Partial<QueueSource> = {}) {
     runner: { start: async () => { const id = `run-${++next}`; runs.set(id, { id, status: 'running', error: null, attempts: [] }); return { id } }, get: id => runs.get(id) },
     source: () => source,
     prepareWorktree: async (repo, label) => { const worktree = join(dir, 'wt', label); await mkdir(worktree, { recursive: true }); return { worktree } },
-    writeContext: async (pluginId, context, cwd) => join(cwd, `${pluginId}-${context.name}.md`),
+    writeContext: async (_pluginId, context, cwd) => join(cwd, `20261102-${context.name}.md`),
     pluginFiles: pluginId => join(dir, 'plugin-data', pluginId),
     backupDir: itemId => join(dir, 'queue-files', itemId),
     needsYou: (item, reason) => { alerts.push({ title: item.title, reason, state: item.state }) },
@@ -363,7 +363,7 @@ test('SKD_PICK_FILE is the answers file ending in pick.md, whatever its stamp', 
   const id = await h.ship([stage('uat', up)])
   await h.engine.landIdle()
   expect((await readFile(dump, 'utf8')).trim()).toBe('')
-  await h.store.update(id, { state: 'failed', land: { ...h.item(id).land!, stages: { uat: { status: 'failed' } } }, answerPaths: ['/w/.shikidan/queue/clickup/1-answers.md', '/w/.shikidan/queue/clickup/20261102-pick.md'] })
+  await h.store.update(id, { state: 'failed', land: { ...h.item(id).land!, stages: { uat: { status: 'failed' } } }, answerPaths: ['/w/.shikidan/queue/clickup/1-answers.md', '/w/.shikidan/queue/clickup/20261101-pick.md', '/w/.shikidan/queue/clickup/20261102-pick.md', '/w/.shikidan/queue/clickup/20261103-whitepick.md'] })
   await h.engine.retryStage(id)
   await h.engine.landIdle()
   expect((await readFile(dump, 'utf8')).trim()).toBe('/w/.shikidan/queue/clickup/20261102-pick.md')

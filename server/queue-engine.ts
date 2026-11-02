@@ -5,7 +5,7 @@ import { backUpAnswers, dropAnswerBackups, restoreAnswers } from './queue-answer
 import { blockedSummary, pickOf, questionsOf, repoRequestsOf, runRequest, SETTLED, type RunView } from './queue-prompts'
 import { adoptionProblem, grantRepos, movedRealRepos, movedText, realRepoStates, reposToOffer, SINGLE_REPO_ASK } from './queue-repo-asks'
 import { refuseLinkedQueueFolders } from './queue-files'
-import { createLand, type Land } from './queue-land'
+import { createLand, PICK_FILE, type Land } from './queue-land'
 import { buildReport } from './queue-report'
 import { QueueRefusal } from './queue-refusal'
 import { message, replyCheck } from './queue-replies'
@@ -272,7 +272,6 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
   })
 
   const restore = worktreeRestorer(deps)
-  const PICK_FILE = /(^|-)pick\.md$/
   const MAX_TESTER = 200
   const MAX_NOTE = 4000
 
