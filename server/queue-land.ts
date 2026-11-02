@@ -81,7 +81,7 @@ async function spawnCommand(command: Command, options: { cwd: string; env: Recor
     const exitCode = await proc.exited
     clearTimeout(timer)
     clearTimeout(killer)
-    if (timedOut) killGroup(proc.pid, 'SIGKILL')
+    killGroup(proc.pid, 'SIGKILL')
     const [stdout, stderr] = await pipes
     return { exitCode, timedOut, stdout, stderr }
   } catch (error) {

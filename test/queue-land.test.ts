@@ -486,3 +486,12 @@ test('a symlinked stage report is left out of the item report', async () => {
   await symlink(outside, join(landDir, 'prod.md'))
   expect(await h.engine.report(id)).not.toContain('TOP-SECRET-VALUE')
 })
+
+test('a preflight that leaves a background child holding its output returns promptly', async () => {
+  const h = harness()
+  const flight = await script('flight.sh', 'echo ok\nsleep 30 &')
+  const started = Date.now()
+  const id = await h.ship([button('prod', await script('ship.sh', 'true'), flight)])
+  expect(Date.now() - started).toBeLessThan(10_000)
+  expect(h.item(id).land!.stages.prod!.preflight).toEqual({ exitCode: 0, markdown: 'ok\n' })
+})
