@@ -93,7 +93,7 @@ async function spawnCommand(command: Command, options: { cwd: string; env: Recor
 
 function repoKeys(item: QueueItem): string[] {
   const keys = item.repos === undefined || item.repos.length === 0 ? [item.repo] : item.repos.map(name => `${item.repo}/${name}`)
-  return [...new Set(keys)].sort()
+  return [...new Set([item.repo, ...keys])].sort()
 }
 
 function repoMutex() {

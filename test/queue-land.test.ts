@@ -495,3 +495,21 @@ test('a preflight that leaves a background child holding its output returns prom
   expect(Date.now() - started).toBeLessThan(10_000)
   expect(h.item(id).land!.stages.prod!.preflight).toEqual({ exitCode: 0, markdown: 'ok\n' })
 })
+
+test('two items with different repos under the same folder take turns', async () => {
+  const h = harness()
+  const log = join(dir, 'folder-turns')
+  const slow = await script('slow.sh', `echo start >> ${log}\nsleep 0.3\necho end >> ${log}`)
+  const plan = [button('prod', slow)]
+  const park = async (externalId: string, repo: string) => {
+    const added = await h.store.add({ source: 'clickup-board', externalId, title: externalId, url: 'u', repo: '/work', repos: [repo], flowId: null }, 'end')
+    await h.store.update(added.id, { state: 'awaiting-stage', worktree: dir, runIds: ['r'], land: { stage: 'prod', stages: { prod: { status: 'waiting', preflight: { exitCode: 0, markdown: '' } } }, plan, runId: 'r' } })
+    return added.id
+  }
+  const first = await park('1', 'api')
+  const second = await park('2', 'portal')
+  await h.engine.startStage(first, 'prod')
+  await h.engine.startStage(second, 'prod')
+  await h.engine.landIdle()
+  expect((await readFile(log, 'utf8')).trim().split('\n')).toEqual(['start', 'end', 'start', 'end'])
+})
