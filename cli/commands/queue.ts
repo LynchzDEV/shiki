@@ -81,7 +81,8 @@ async function landStage(ctx: Context): Promise<void> {
   const preflight = preflightOf(await ctx.client.get('/api/queue'), id, stage)
   const shown = `${typeof preflight.markdown === 'string' ? preflight.markdown.trimEnd() : ''}\n`
   if (!flag(ctx, 'yes')) {
-    emit(ctx, { stage, preflight }, () => `${shown}Run again with --yes to start ${stage}.\n`)
+    const blocked = typeof preflight.exitCode === 'number' && preflight.exitCode !== 0
+    emit(ctx, { stage, preflight }, () => `${shown}${blocked ? `This stage is blocked by its preflight (exit ${preflight.exitCode}).` : `Run again with --yes to start ${stage}.`}\n`)
     return
   }
   if (!ctx.json) ctx.out(shown)

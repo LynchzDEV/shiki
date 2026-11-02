@@ -224,6 +224,15 @@ describe('shiki queue with several repos', () => {
     expect(h.out()).toContain('Run again with --yes to start prod.')
   })
 
+  test('land without --yes says the stage is blocked when the preflight failed', async () => {
+    const blockedItem = { ...waiting, land: { stage: 'prod', stages: { prod: { status: 'waiting', preflight: { exitCode: 2, markdown: 'behind main' } } } } }
+    const h = harness((call) => (call.path === '/api/queue' ? Response.json({ items: [blockedItem] }) : undefined))
+    expect(await main(['queue', 'land', 'q1', 'prod'], h.deps)).toBe(0)
+    expect(h.out()).toContain('behind main')
+    expect(h.out()).toContain('This stage is blocked by its preflight')
+    expect(h.out()).not.toContain('Run again with --yes')
+  })
+
   test('land with --yes prints the preflight first, then starts the stage with confirm', async () => {
     const h = harness((call) => (call.method === 'POST' ? Response.json({ item: { id: 'q1' } }) : listing(call)))
     expect(await main(['queue', 'land', 'q1', 'prod', '--yes'], h.deps)).toBe(0)
