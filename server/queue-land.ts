@@ -303,7 +303,8 @@ export function createLand(deps: LandDeps) {
       const name = item.land?.stage
       if (item.state !== 'failed' || name === undefined) throw new QueueRefusal('There is no stage to retry', 409)
       if (item.land!.stages[name]?.status !== 'ok') {
-        await begin(id, name)
+        if (stageOf(item, name).run === 'button') await awaitButton(id, name)
+        else await begin(id, name)
         return found(id)
       }
       const posting = await store.update(id, { state: 'landing', error: null, land: progress(item, name) })
