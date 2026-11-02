@@ -484,7 +484,7 @@ test('a drag that ends outside the screen still lets go', async () => {
 })
 
 const picking = item({ id: 'p1', state: 'waiting-pick', title: 'Login button wording', questions: ['Which tenant?'], runIds: ['r-p1'], pick: { options: ['A', 'B', 'C'], path: 'visualizer/login', recommended: 'B', tester: 'Ploy', summary: '**Three** variants' } } as Partial<QueueItem>)
-const pickDialog = () => doc.querySelector('dialog.q-pick') as HTMLDialogElement
+const pickDialog = () => doc.querySelector('dialog.q-pick-dialog') as HTMLDialogElement
 const openPick = async (reply: () => Response = () => new Response('<h1>x</h1>')) => {
   replies.set('GET /queue/p1/files/login/index.html', reply)
   send([picking])
