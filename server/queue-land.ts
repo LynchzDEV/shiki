@@ -248,7 +248,8 @@ export function createLand(deps: LandDeps) {
     if (post !== undefined && item.land!.stages[name]?.posted === undefined) {
       try {
         const sent = await deps.source(item.source).post({ id: item.externalId, kind: 'update', lines: post.lines, ...(post.mention === undefined ? {} : { mention: post.mention }), ...(post.status === undefined ? {} : { status: post.status }) })
-        await store.update(id, { land: progress(found(id), name, { posted: sent.commentId }) })
+        const stored = await store.update(id, { land: progress(found(id), name, { posted: sent.commentId, ...(sent.warning === undefined ? {} : { warning: sent.warning }) }) })
+        if (sent.warning !== undefined) deps.needsYou(stored, `${name} posted with a warning: ${sent.warning.split('\n')[0]}`)
       } catch (error) {
         return fail(id, `${name} ran but posting failed: ${message(error)}`, name)
       }

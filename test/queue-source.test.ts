@@ -33,6 +33,13 @@ test('post sends kind and lines and returns the comment id', async () => {
   expect(calls[0]).toEqual({ method: 'source.post', params: { id: '1', kind: 'ask', lines: ['Which page?'] } })
 })
 
+test('post passes a warning through and rejects an oversized one', async () => {
+  const { deps: d } = deps(() => ({ commentId: 'c9', warning: 'Status not set: no such status' }))
+  expect(await pluginSource('clickup-board', d).post({ id: '1', kind: 'update', lines: ['x'] })).toEqual({ commentId: 'c9', warning: 'Status not set: no such status' })
+  const { deps: big } = deps(() => ({ commentId: 'c9', warning: 'w'.repeat(2001) }))
+  await expect(pluginSource('clickup-board', big).post({ id: '1', kind: 'update', lines: ['x'] })).rejects.toThrow()
+})
+
 test('replies parses replies and images', async () => {
   const { deps: d } = deps(() => ({ replies: [{ id: 'r1', author: 'Ploy', text: 'The login page', images: [{ name: 'shot.png', path: 'replies/shot.png' }] }], lastId: 'r1' }))
   expect(await pluginSource('clickup-board', d).replies({ id: '1', sinceId: 'c9' })).toEqual({ replies: [{ id: 'r1', author: 'Ploy', text: 'The login page', images: [{ name: 'shot.png', path: 'replies/shot.png' }] }], lastId: 'r1' })

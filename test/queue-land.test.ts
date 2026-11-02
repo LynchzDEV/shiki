@@ -542,3 +542,13 @@ test('after a bad stage json, retry posts the fixed file without running the sta
   expect((await readFile(runs, 'utf8')).trim().split('\n')).toEqual(['ran'])
   expect(h.posted).toHaveLength(1)
 })
+
+test('a post warning is stored on the stage, shown in the report and raised, and the item still lands', async () => {
+  const h = harness({ post: async () => ({ commentId: 'c1', warning: 'Status not set: no such status\nsee settings' }) })
+  const first = await script('first.sh', `printf '{"post":{"kind":"update","lines":["UAT is live"]}}' > "$SKD_LAND_DIR/uat.json"`)
+  const id = await h.ship([stage('uat', first)])
+  await h.engine.landIdle()
+  expect(h.item(id)).toMatchObject({ state: 'landed', land: { stages: { uat: { posted: 'c1', warning: 'Status not set: no such status\nsee settings' } } } })
+  expect(h.alerts.map(alert => alert.reason)).toContain('uat posted with a warning: Status not set: no such status')
+  expect(await h.engine.report(id)).toContain('Warning: Status not set: no such status\nsee settings')
+})

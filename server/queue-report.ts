@@ -39,6 +39,8 @@ export async function buildReport(item: QueueItem, runOf: (id: string) => RunVie
   for (const runId of item.runIds) lines.push(...runSection(runId, runOf(runId)))
   for (const stage of item.land?.plan ?? []) {
     lines.push(`## ${stage.label ?? stage.id}: ${stageStatus(item, stage.id)}`, '')
+    const warning = item.land?.stages[stage.id]?.warning
+    if (warning !== undefined) lines.push(`Warning: ${warning}`, '')
     const report = await stageReport(item, stage.id)
     if (report !== '') lines.push(report.trimEnd(), '')
   }
