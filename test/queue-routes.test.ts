@@ -395,6 +395,16 @@ describe('mockup files', () => {
     }
   })
 
+  test('a sandboxed mockup frame can load its own assets cross-site, but the queue api stays closed to it', async () => {
+    const items = store()
+    const item = await items.add(newItem, 'end')
+    await items.update(item.id, { worktree: tree })
+    const app = new Elysia().use(queueRoutes(items, engine(items)))
+    const crossSite = (path: string) => app.handle(new Request(`http://127.0.0.1:7777${path}`, { headers: { host: '127.0.0.1:7777', 'sec-fetch-site': 'cross-site' } }))
+    expect((await crossSite(`/queue/${item.id}/files/demo/a.css`)).status).toBe(200)
+    expect((await crossSite('/api/queue')).status).toBe(403)
+  })
+
   test('a visualizer folder that is itself a link is refused', async () => {
     const linked = await mkdtemp(join(tmpdir(), 'mc-queue-mock-link-'))
     await symlink(join(tree, 'visualizer'), join(linked, 'visualizer'))

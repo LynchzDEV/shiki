@@ -1,7 +1,8 @@
 import { Elysia } from 'elysia'
 import { z } from 'zod'
 
-import { requireLocal } from '../auth'
+import { requireLocal, type GuardContext } from '../auth'
+import { peerAddress, trustedHostRequest } from '../local-access'
 import { QueueRefusal, SourceFailure, type QueueEngine } from '../queue-engine'
 import type { QueueItem, QueueStore } from '../queue-store'
 import { mockupResponse } from '../queue-mockups'
@@ -92,10 +93,21 @@ function withStep(item: QueueItem, runs: QueueRunLookup, preparing: string | nul
   return step === null ? item : { ...item, step }
 }
 
+// The Pick panel iframe is sandboxed (opaque origin), so its own assets look cross-site to requireLocal.
+const MOCKUP_ASSET_PATH = /^\/queue\/[^/]+\/files\//
+
+async function requireLocalExceptMockupAssets(context: GuardContext): Promise<void | { error: string }> {
+  const request = context.request
+  if (request.method === 'GET'
+    && MOCKUP_ASSET_PATH.test(new URL(request.url).pathname)
+    && trustedHostRequest(request, peerAddress(context.server, request))) return
+  return requireLocal(context)
+}
+
 export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: () => Promise<QueueTree> = () => queueTree(store.list()), runs: QueueRunLookup = NO_RUNS) {
   const snapshot = () => ({ items: store.list().map(item => withStep(item, runs, engine.preparing?.() ?? null)), checkedAt: engine.checkedAt() })
   return new Elysia()
-    .onBeforeHandle(requireLocal)
+    .onBeforeHandle(requireLocalExceptMockupAssets)
     .get('/api/queue', snapshot)
     .get('/api/queue/tree', () => tree())
     .get('/api/queue/folder', ({ query, set }) => folderRepos(query.path, set))
