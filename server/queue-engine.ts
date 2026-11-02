@@ -99,7 +99,7 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
   const { store } = deps
 
   async function fail(item: QueueItem, reason: string): Promise<void> {
-    const failed = await store.update(item.id, { state: 'failed', error: reason, currentRunId: null, questions: [] })
+    const failed = await store.update(item.id, { state: 'failed', error: reason, currentRunId: null, pick: undefined, questions: [] })
     deps.needsYou(failed, reason)
   }
 
@@ -166,7 +166,7 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
     if (run.status !== 'done') return askOrFail(item, run)
     const stages = run.workflow?.land ?? []
     if (stages.length > 0) return land.begin(item, stages, run.workflow?.plugin)
-    const ready = await store.update(item.id, { state: 'ready', currentRunId: null, error: null, questions: [] })
+    const ready = await store.update(item.id, { state: 'ready', currentRunId: null, error: null, pick: undefined, questions: [] })
     deps.needsYou(ready, 'Built and ready for review')
   }
 

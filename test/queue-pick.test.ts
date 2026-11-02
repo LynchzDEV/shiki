@@ -72,6 +72,28 @@ test('a pick: line without a bar is an ordinary question', async () => {
   expect(h.store.get(h.item.id)).toMatchObject({ state: 'waiting-info', questions: ['Pick: which page first?'] })
 })
 
+async function settleParkedPick(status: 'failed' | 'done') {
+  const h = await building()
+  await h.block('run-1', [PICK])
+  expect(h.store.get(h.item.id)!.pick).toBeDefined()
+  const settled: RunView = { ...h.runs.get('run-1')!, status, error: status === 'failed' ? 'boom' : null }
+  h.runs.set('run-1', settled)
+  await h.engine.onRunSettled(settled)
+  return h.store.get(h.item.id)!
+}
+
+test('a stale pick is cleared when the item later fails', async () => {
+  const item = await settleParkedPick('failed')
+  expect(item.state).toBe('failed')
+  expect(item.pick).toBeUndefined()
+})
+
+test('a stale pick is cleared when the item later becomes ready', async () => {
+  const item = await settleParkedPick('done')
+  expect(item.state).toBe('ready')
+  expect(item.pick).toBeUndefined()
+})
+
 async function parkedPick() {
   const h = await building()
   await h.block('run-1', [PICK], 'step log')
