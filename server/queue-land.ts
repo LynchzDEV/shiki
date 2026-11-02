@@ -242,7 +242,7 @@ export function createLand(deps: LandDeps) {
   async function finish(id: string, name: string): Promise<void> {
     const item = found(id)
     let post: Awaited<ReturnType<typeof readPost>>
-    try { post = await readPost(item, name) } catch (error) { return fail(id, `Bad ${name}.json: ${message(error)}`, name, { status: 'failed' }) }
+    try { post = await readPost(item, name) } catch (error) { return fail(id, `Bad ${name}.json: ${message(error)}`, name) }
     if (post !== undefined && item.land!.stages[name]?.posted === undefined) {
       try {
         const sent = await deps.source(item.source).post({ id: item.externalId, kind: 'update', lines: post.lines, ...(post.mention === undefined ? {} : { mention: post.mention }), ...(post.status === undefined ? {} : { status: post.status }) })
