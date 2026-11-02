@@ -1,7 +1,6 @@
-import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { landDirOf } from './queue-land'
+import { landDirOf, readRegularFile } from './queue-land'
 import type { RunView } from './queue-prompts'
 import type { QueueItem } from './queue-store'
 
@@ -9,10 +8,7 @@ const MAX_STAGE_REPORT = 256 * 1024
 
 async function stageReport(item: QueueItem, stage: string): Promise<string> {
   if (item.worktree === null) return ''
-  try { return (await readFile(join(landDirOf(item.worktree), `${stage}.md`), 'utf8')).slice(0, MAX_STAGE_REPORT) } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return ''
-    throw error
-  }
+  return ((await readRegularFile(join(landDirOf(item.worktree), `${stage}.md`))) ?? '').slice(0, MAX_STAGE_REPORT)
 }
 
 function runSection(runId: string, run: RunView | undefined): string[] {

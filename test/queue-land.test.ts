@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -461,4 +461,28 @@ test('the log route serves only the last 256 KB of a big log', async () => {
   const served = await h.engine.landLog(id, 'uat')
   expect(Buffer.byteLength(served)).toBe(256 * 1024)
   expect(served.endsWith('the-end\n')).toBe(true)
+})
+
+test('a stage json planted before the stage runs is not posted', async () => {
+  const h = harness()
+  const quiet = await script('quiet.sh', 'true')
+  const added = await h.engine.add({ source: 'clickup-board', externalId: '1', repo: '/repo' })
+  const landDir = join(h.item(added.id).worktree!, '.mission-control', 'land')
+  await mkdir(landDir, { recursive: true })
+  await writeFile(join(landDir, 'uat.json'), JSON.stringify({ post: { kind: 'update', lines: ['planted by the agent'] } }))
+  await h.finish(h.item(added.id).currentRunId!, [stage('uat', quiet)])
+  await h.engine.landIdle()
+  expect(h.item(added.id).state).toBe('landed')
+  expect(h.posted).toEqual([])
+})
+
+test('a symlinked stage report is left out of the item report', async () => {
+  const h = harness()
+  const outside = join(dir, 'outside.txt')
+  await writeFile(outside, 'TOP-SECRET-VALUE')
+  const id = await h.ship([button('prod', await script('ship.sh', 'true'))])
+  const landDir = join(h.item(id).worktree!, '.mission-control', 'land')
+  await mkdir(landDir, { recursive: true })
+  await symlink(outside, join(landDir, 'prod.md'))
+  expect(await h.engine.report(id)).not.toContain('TOP-SECRET-VALUE')
 })

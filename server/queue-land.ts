@@ -1,5 +1,5 @@
 import { closeSync, openSync } from 'node:fs'
-import { chmod, mkdir, readFile, stat } from 'node:fs/promises'
+import { chmod, lstat, mkdir, readFile, rm, stat } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { z } from 'zod'
 
@@ -22,6 +22,16 @@ const TIMED_OUT = 124
 
 export const LOG_BYTES = 256 * 1024
 export const landDirOf = (worktree: string): string => join(worktree, '.mission-control', 'land')
+export async function readRegularFile(path: string): Promise<string | undefined> {
+  try {
+    if (!(await lstat(path)).isFile()) return undefined
+    return await readFile(path, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
+  }
+}
+
 export const landLogPath = (itemId: string, stage: string): string => join(configDir(), 'queue-land', itemId, `${stage}.log`)
 
 const postFile = z.object({
@@ -222,11 +232,8 @@ export function createLand(deps: LandDeps) {
   }
 
   async function readPost(item: QueueItem, name: string): Promise<z.infer<typeof postFile>['post']> {
-    let raw: string
-    try { raw = await readFile(join(landDirOf(item.worktree!), `${name}.json`), 'utf8') } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
-      throw error
-    }
+    const raw = await readRegularFile(join(landDirOf(item.worktree!), `${name}.json`))
+    if (raw === undefined) return undefined
     const parsed = postFile.safeParse(JSON.parse(raw))
     if (!parsed.success) throw new Error(parsed.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; '))
     return parsed.data.post
@@ -253,6 +260,7 @@ export function createLand(deps: LandDeps) {
       const stage = stageOf(item, name)
       const env = await environment(item, stage, name)
       const logFile = landLogPath(id, name)
+      for (const extension of ['json', 'md']) await rm(join(landDirOf(item.worktree!), `${name}.${extension}`), { force: true })
       await mkdir(join(configDir(), 'queue-land', id), { recursive: true, mode: 0o700 })
       const keys = repoKeys(item)
       const setMessage = (text: string | null) => async () => { await store.update(id, { land: text === null ? progress(found(id), name) : progress(found(id), name, undefined, { message: text }) }) }
