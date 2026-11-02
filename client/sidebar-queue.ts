@@ -10,6 +10,9 @@ const QUEUE_DOT: Record<QueueState, { s: string; label: string }> = {
   'waiting-pick': { s: 'waiting', label: 'Pick a variant' },
   ready: { s: 'done', label: 'Ready' },
   failed: { s: 'failed', label: 'Failed' },
+  landing: { s: 'running', label: 'Shipping' },
+  'awaiting-stage': { s: 'waiting', label: 'Waiting for you' },
+  landed: { s: 'done', label: 'Landed' },
 }
 
 let queueItems: QueueItemView[] = []

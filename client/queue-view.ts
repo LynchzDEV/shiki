@@ -1,11 +1,13 @@
-export type QueueState = 'queued' | 'building' | 'waiting-info' | 'waiting-pick' | 'ready' | 'failed'
+export type QueueState = 'queued' | 'building' | 'waiting-info' | 'waiting-pick' | 'ready' | 'failed' | 'landing' | 'awaiting-stage' | 'landed'
 
 export type QueuePickView = { options: string[]; path: string; recommended: string | null; tester: string | null; summary: string }
+export type LandStageView = { status: string; preflight?: { exitCode: number; markdown: string } }
+export type LandView = { stage: string; message?: string; plan: Array<{ id: string; label?: string }>; stages: Record<string, LandStageView> }
 
 export type QueueItemView = {
   id: string; source: string; externalId: string; title: string; url: string; flowId: string | null
   state: QueueState; runIds: string[]; questions: string[]; error: string | null; updatedAt: number
-  repo?: string; repos?: string[]; realChanged?: string[]; currentRunId?: string; step?: QueueStepView; preparing?: true; pick?: QueuePickView
+  repo?: string; repos?: string[]; realChanged?: string[]; currentRunId?: string; step?: QueueStepView; preparing?: true; pick?: QueuePickView; land?: LandView
 }
 
 export type QueueStepView = { title: string; attempt: number; maxAttempts: number }
@@ -20,7 +22,7 @@ export type QueueContext = {
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
 const LINE = 'Items from your sources, built one at a time. Nothing reaches the remote until you land it.'
-const STATES: readonly QueueState[] = ['building', 'queued', 'waiting-info', 'waiting-pick', 'ready', 'failed']
+const STATES: readonly QueueState[] = ['building', 'queued', 'waiting-info', 'waiting-pick', 'ready', 'failed', 'landing', 'awaiting-stage', 'landed']
 const PILL: Record<QueueState, { s: string; label: string; count: string; icon?: string }> = {
   building: { s: 'running', label: 'Building', count: 'building' },
   queued: { s: 'queued', label: 'Queued', count: 'queued' },
@@ -28,6 +30,9 @@ const PILL: Record<QueueState, { s: string; label: string; count: string; icon?:
   'waiting-pick': { s: 'waiting', label: 'Pick a variant', count: 'to pick', icon: 'q-clock' },
   ready: { s: 'done', label: 'Ready', count: 'ready' },
   failed: { s: 'failed', label: 'Failed', count: 'failed' },
+  landing: { s: 'running', label: 'Shipping', count: 'shipping' },
+  'awaiting-stage': { s: 'waiting', label: 'Waiting for you', count: 'waiting for you', icon: 'q-clock' },
+  landed: { s: 'done', label: 'Landed', count: 'landed' },
 }
 
 export type Child = Node | string
@@ -80,10 +85,18 @@ export function lineText(items: readonly QueueItemView[], queuedIndex: number): 
   return `${ordinal(queuedIndex + 1 + (items.some(item => item.state === 'building' || item.preparing === true) ? 1 : 0))} in line`
 }
 
-export function pill(state: QueueState): HTMLElement {
+export function pill(state: QueueState, text?: string): HTMLElement {
   const { s, label, icon: iconId } = PILL[state]
-  return el('span', { class: 'pill-state', 'data-s': s }, ...(iconId ? [icon(iconId)] : []), label)
+  return el('span', { class: 'pill-state', 'data-s': s }, ...(iconId ? [icon(iconId)] : []), text ?? label)
 }
+
+export function stageLabel(land: LandView, id: string): string {
+  return land.plan.find(stage => stage.id === id)?.label ?? id
+}
+
+const stagePill = (item: QueueItemView): string | undefined => (item.state === 'landing' && item.land !== undefined ? `Shipping: ${stageLabel(item.land, item.land.stage)}` : undefined)
+const failedAtStage = (item: QueueItemView): boolean => item.state === 'failed' && item.land !== undefined
+const firstLine = (text: string): string => text.split('\n')[0]!
 
 function heading(context: QueueContext): HTMLElement {
   const checked = context.checkedAt === null ? 'Not checked yet' : `Checked ${ageText(context.checkedAt, context.now)}`
@@ -139,7 +152,10 @@ function progressText(item: QueueItemView, items: readonly QueueItemView[], now:
   }
   if (item.state === 'waiting-pick') return `${item.pick?.options.length ?? 0} variants to choose from · ${ageText(item.updatedAt, now)}`
   if (item.state === 'ready') return `Built · ${ageText(item.updatedAt, now)}`
-  return item.error ?? 'Failed'
+  if (item.state === 'landing') return item.land?.message ?? `Running · ${ageText(item.updatedAt, now)}`
+  if (item.state === 'awaiting-stage') return `Waiting for you · ${ageText(item.updatedAt, now)}`
+  if (item.state === 'landed') return `Landed · ${ageText(item.updatedAt, now)}`
+  return failedAtStage(item) ? firstLine(item.error ?? 'Failed') : item.error ?? 'Failed'
 }
 
 function actions(item: QueueItemView, now: number): HTMLElement {
@@ -161,9 +177,14 @@ function actions(item: QueueItemView, now: number): HTMLElement {
     if (openRun) parts.push(button('Open run', 'connection-button primary', { ...id, 'data-act': 'open-run' }, 'flow-icon'))
   }
   if (item.state === 'failed') {
-    parts.push(button('Requeue', 'connection-button', { ...id, 'data-act': 'requeue' }, 'mk-refresh'))
+    if (failedAtStage(item)) parts.push(button('Retry stage', 'connection-button primary', { ...id, 'data-act': 'land-retry' }, 'mk-refresh'))
+    parts.push(button('Requeue', failedAtStage(item) ? 'text-button' : 'connection-button', { ...id, 'data-act': 'requeue' }, failedAtStage(item) ? undefined : 'mk-refresh'))
     if (openRun) parts.push(button('Open run', 'connection-button', { ...id, 'data-act': 'open-run' }, 'flow-icon'))
   }
+  if (item.state === 'landing') parts.push(button('Log', 'connection-button', { ...id, 'data-act': 'land-log' }))
+  if (item.state === 'awaiting-stage' && item.land !== undefined) parts.push(button(stageLabel(item.land, item.land.stage), 'connection-button primary', { ...id, 'data-act': 'land-confirm' }))
+  if ((item.state === 'landing' || item.state === 'awaiting-stage' || item.state === 'landed') && openRun) parts.push(button('Open run', 'text-button', { ...id, 'data-act': 'open-run' }))
+  parts.push(button('Report', 'text-button', { ...id, 'data-act': 'report' }))
   return el('div', { class: 'q-acts' }, ...parts)
 }
 
@@ -200,9 +221,10 @@ function row(item: QueueItemView, items: readonly QueueItemView[], context: Queu
     el('span', {}, progressText(item, items, context.now)))
   return el('article', { class: 'q-row', 'data-id': item.id, 'data-state': item.state, 'data-movable': movable, draggable: movable ? 'true' : false, 'data-openable': openable, 'data-open': open, 'data-watchable': watchable, tabindex: rowKeys ? '0' : false, title: watchable ? 'Watch this run' : false, 'aria-label': rowKeys ? `${item.title}, ${PILL[item.state].label}. Press Enter to watch its run` : false },
     el('span', { class: 'q-grip', title: movable ? 'Drag to reorder' : false }, icon('q-grip')),
-    pill(item.state),
+    pill(item.state, stagePill(item)),
     el('div', { class: 'q-main' }, el('strong', {}, item.title), meta),
     actions(item, context.now),
+    ...(failedAtStage(item) && item.error?.includes('\n') === true ? [el('pre', { class: 'q-land-error' }, item.error.slice(item.error.indexOf('\n') + 1))] : []),
     ...(open ? [questionsThread(item, context.now)] : []))
 }
 
@@ -245,6 +267,27 @@ function readPick(value: unknown): { pick: QueuePickView } | null {
   return { pick: { options, path, summary, recommended: isText(recommended) ? recommended : null, tester: isText(tester) ? tester : null } }
 }
 
+function readStages(value: unknown): Record<string, LandStageView> {
+  const stages: Record<string, LandStageView> = {}
+  if (typeof value !== 'object' || value === null) return stages
+  for (const [name, entry] of Object.entries(value)) {
+    const stage = entry as Record<string, unknown> | null
+    if (stage === null || typeof stage !== 'object' || !isText(stage.status)) continue
+    const preflight = stage.preflight as Record<string, unknown> | undefined
+    const flight = preflight !== undefined && typeof preflight.exitCode === 'number' && isText(preflight.markdown) ? { preflight: { exitCode: preflight.exitCode, markdown: preflight.markdown } } : {}
+    stages[name] = { status: stage.status, ...flight }
+  }
+  return stages
+}
+
+function readLand(value: unknown): { land: LandView } | null {
+  if (typeof value !== 'object' || value === null) return null
+  const { stage, message, plan, stages } = value as Record<string, unknown>
+  if (!isText(stage) || !Array.isArray(plan)) return null
+  const named = plan.filter((entry): entry is Record<string, unknown> => typeof entry === 'object' && entry !== null && isText((entry as Record<string, unknown>).id))
+  return { land: { stage, ...(isText(message) ? { message } : {}), plan: named.map(entry => ({ id: String(entry.id), ...(isText(entry.label) ? { label: entry.label } : {}) })), stages: readStages(stages) } }
+}
+
 function readItem(value: unknown): QueueItemView | null {
   if (typeof value !== 'object' || value === null) return null
   const entry = value as Record<string, unknown>
@@ -261,6 +304,7 @@ function readItem(value: unknown): QueueItemView | null {
     ...(entry.preparing === true ? { preparing: true as const } : {}),
     ...(readStep(entry.step) ?? {}),
     ...(readPick(entry.pick) ?? {}),
+    ...(readLand(entry.land) ?? {}),
   }
 }
 

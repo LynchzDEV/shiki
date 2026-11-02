@@ -162,7 +162,7 @@ export function createLand(deps: LandDeps) {
       ...(process.env as Record<string, string>),
       SKD_ITEM_ID: item.id, SKD_WORKSPACE: worktree, SKD_REPOS: repos.join(','), SKD_REPO_ROOT: item.repo,
       SKD_ITEM_URL: item.url, SKD_RUN_ID: item.runIds.at(-1) ?? '', SKD_STAGE: name, SKD_LAND_DIR: landDir,
-      SKD_PICK_FILE: item.answerPaths.find(path => basename(path) === 'pick.md') ?? '',
+      SKD_PICK_FILE: item.answerPaths.find(path => path.endsWith('pick.md')) ?? '',
       ...resolved,
     }
   }

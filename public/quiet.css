@@ -1516,3 +1516,13 @@ dialog, .access-dialog, .confirm-dialog { max-width: calc(100vw - 32px); max-hei
   .key-row .key-scroll small { font-size: 9px; font-weight: 500; color: var(--muted); }
   .live-jump:not([hidden]) { display: inline-flex; align-items: center; position: absolute; left: 50%; bottom: 10px; translate: -50% 0; z-index: 5; min-height: 30px; padding: 0 14px; border: 0; border-radius: var(--r-md); corner-shape: var(--corner); background: var(--accent); color: var(--paper); font-size: 12px; font-weight: 600; white-space: nowrap; box-shadow: var(--raised); }
 }
+.q-land { width: min(760px, 94vw); }
+.q-land-body { max-height: 62vh; overflow: auto; margin-bottom: 14px; font-size: 13.5px; line-height: 1.6; }
+.q-land-md { color: var(--text); }
+.q-land-md .md-table { border-collapse: collapse; margin: 10px 0; }
+.q-land-md .md-table :is(th, td) { padding: 5px 10px; border: 1px solid var(--line); text-align: left; }
+.q-land-blocked { margin: 0 0 12px; padding: 9px 12px; border-radius: var(--r-md); corner-shape: var(--corner); background: var(--field); color: var(--danger); font-size: 13px; }
+.q-land-log, .q-land-error { margin: 0; padding: 10px 12px; border-radius: var(--r-md); corner-shape: var(--corner); background: var(--field); color: var(--text); font: 12px/1.55 Menlo, monospace; white-space: pre-wrap; overflow: auto; }
+.q-land-log { max-height: 56vh; }
+.q-land-error { grid-column: 2 / -1; max-height: 220px; color: var(--text-soft); }
+.q-land .q-add-foot .sp { flex: 1; }

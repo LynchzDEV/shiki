@@ -163,11 +163,11 @@ test('only queued rows are draggable', () => {
 test('each state offers its own actions', () => {
   const view = queue.renderQueue(all, context())
   const actions = (id: string) => [...(rows(view).find(row => row.dataset.id === id)?.querySelectorAll('.q-acts button') ?? [])].map(button => button.textContent)
-  expect(actions('b1')).toEqual(['Watch'])
-  expect(actions('q1')).toEqual(['Remove'])
-  expect(actions('w1')).toEqual(['Requeue'])
-  expect(actions('r1')).toEqual(['Requeue', 'Open run'])
-  expect(actions('f1')).toEqual(['Requeue', 'Open run'])
+  expect(actions('b1')).toEqual(['Watch', 'Report'])
+  expect(actions('q1')).toEqual(['Remove', 'Report'])
+  expect(actions('w1')).toEqual(['Requeue', 'Report'])
+  expect(actions('r1')).toEqual(['Requeue', 'Open run', 'Report'])
+  expect(actions('f1')).toEqual(['Requeue', 'Open run', 'Report'])
   expect(buttonNamed('Git tree', view).disabled).toBe(false)
   expect(buttonNamed('Git tree', view).getAttribute('aria-pressed')).toBe('false')
   expect(buttonNamed('List', view).getAttribute('aria-pressed')).toBe('true')
@@ -540,4 +540,131 @@ test('a refused pick shows the server message inline and keeps the dialog open',
   expect(pickDialog().querySelector('.q-add-error')?.textContent).toContain('It is queued now')
   expect(buttonNamed('A', pickDialog()).hasAttribute('disabled')).toBe(false)
   expect(toasts).toEqual([])
+})
+
+const stagePlan = [{ id: 'uat', run: 'auto' }, { id: 'prod', run: 'button', label: 'Deploy prod' }]
+const landing = item({ id: 'l1', state: 'landing', title: 'Shipping one', runIds: ['r-l1'], land: { stage: 'uat', stages: { uat: { status: 'running' } }, plan: stagePlan } } as Partial<QueueItem>)
+const flight = (exitCode: number, markdown: string) => ({ stage: 'prod', stages: { uat: { status: 'ok' }, prod: { status: 'waiting', preflight: { exitCode, markdown } } }, plan: stagePlan })
+const awaiting = item({ id: 'a1', state: 'awaiting-stage', title: 'Waiting one', runIds: ['r-a1'], land: flight(0, '| repo | ahead |\n|---|---|\n| api | 2 |\n\nSafety: prod') } as Partial<QueueItem>)
+const blocked = item({ id: 'a2', state: 'awaiting-stage', title: 'Blocked one', runIds: ['r-a2'], land: flight(2, 'behind main') } as Partial<QueueItem>)
+const landed = item({ id: 'd1', state: 'landed', title: 'Done one', runIds: ['r-d1'], land: { stage: 'prod', stages: { prod: { status: 'ok' } }, plan: stagePlan } } as Partial<QueueItem>)
+const stuck = item({ id: 'x1', state: 'failed', title: 'Stuck one', runIds: ['r-x1'], error: 'uat failed (exit 3)\nline 49\nline 50', land: { stage: 'uat', stages: { uat: { status: 'failed' } }, plan: stagePlan } } as Partial<QueueItem>)
+const shipping = [landing, awaiting, blocked, landed, stuck]
+
+test('land states show their pill, their one main button and a Report button', () => {
+  const view = queue.renderQueue(shipping, context())
+  const row = (id: string) => rows(view).find(entry => entry.dataset.id === id)!
+  const actions = (id: string) => [...row(id).querySelectorAll('.q-acts button')].map(button => button.textContent)
+  expect(rows(view).map(entry => entry.querySelector('.pill-state')?.textContent)).toEqual(['Shipping: uat', 'Waiting for you', 'Waiting for you', 'Landed', 'Failed'])
+  expect(actions('l1')).toEqual(['Log', 'Open run', 'Report'])
+  expect(actions('a1')).toEqual(['Deploy prod', 'Open run', 'Report'])
+  expect(actions('d1')).toEqual(['Open run', 'Report'])
+  expect(actions('x1')).toEqual(['Retry stage', 'Requeue', 'Open run', 'Report'])
+  expect(row('x1').querySelector('.q-meta')?.textContent).toContain('uat failed (exit 3)')
+  expect(row('x1').querySelector('.q-land-error')?.textContent).toBe('line 49\nline 50')
+})
+
+test('Retry stage posts to the land retry route', async () => {
+  send([stuck])
+  await flush()
+  click(buttonNamed('Retry stage', rowOf('x1')))
+  await flush()
+  expect(calls.map(call => `${call.method} ${call.url}`)).toEqual(['POST /api/queue/x1/land/retry'])
+  expect(toasts).toEqual(['Retrying the stage of Stuck one'])
+})
+
+test('the stage button opens a confirm dialog with the preflight rendered; Confirm starts the stage', async () => {
+  send([awaiting])
+  await flush()
+  click(buttonNamed('Deploy prod', rowOf('a1')))
+  await flush()
+  const dialog = doc.querySelector('dialog.q-land') as HTMLDialogElement
+  expect(dialog.open).toBe(true)
+  expect(dialog.querySelector('table')?.textContent).toContain('api')
+  expect(dialog.querySelector('.q-land-md')?.textContent).toContain('Safety: prod')
+  const confirm = buttonNamed('Confirm', dialog)
+  expect(confirm.disabled).toBe(false)
+  click(confirm)
+  await flush()
+  expect(calls.map(call => `${call.method} ${call.url}`)).toEqual(['POST /api/queue/a1/land/prod/start'])
+  expect(calls[0]!.body).toEqual({ confirm: true })
+  expect(dialog.isConnected).toBe(false)
+  expect(toasts).toEqual(['Started Deploy prod'])
+})
+
+test('a blocked preflight shows its markdown, disables Confirm, and Refresh re-runs it', async () => {
+  send([blocked])
+  await flush()
+  click(buttonNamed('Deploy prod', rowOf('a2')))
+  await flush()
+  const dialog = doc.querySelector('dialog.q-land') as HTMLDialogElement
+  expect(dialog.querySelector('.q-land-md')?.textContent).toContain('behind main')
+  expect(dialog.querySelector('.q-land-blocked')?.textContent).toContain('blocked this stage (exit 2)')
+  expect(buttonNamed('Confirm', dialog).disabled).toBe(true)
+  replies.set('POST /api/queue/a2/land/prod/preflight', () => Response.json({ item: { ...blocked, land: flight(0, 'now fine') } }))
+  click(buttonNamed('Refresh', dialog))
+  await flush()
+  expect(calls.map(call => `${call.method} ${call.url}`)).toEqual(['POST /api/queue/a2/land/prod/preflight'])
+  expect(dialog.querySelector('.q-land-md')?.textContent).toContain('now fine')
+  expect(buttonNamed('Confirm', dialog).disabled).toBe(false)
+  dialog.close()
+})
+
+test('a refused Confirm shows the reason inside the dialog and nothing closes', async () => {
+  send([awaiting])
+  await flush()
+  click(buttonNamed('Deploy prod', rowOf('a1')))
+  await flush()
+  const dialog = doc.querySelector('dialog.q-land') as HTMLDialogElement
+  replies.set('POST /api/queue/a1/land/prod/start', () => Response.json({ error: 'Preflight changed, review it again' }, { status: 409 }))
+  click(buttonNamed('Confirm', dialog))
+  await flush()
+  expect(dialog.querySelector('.q-add-error')?.textContent).toBe('Preflight changed, review it again')
+  expect(dialog.open).toBe(true)
+  dialog.close()
+})
+
+test('Report opens the rendered report; a failure is shown in the dialog', async () => {
+  replies.set('GET /api/queue/d1/report', () => new Response('# Done one\n\n## prod: ok\n', { headers: { 'content-type': 'text/markdown' } }))
+  send([landed])
+  await flush()
+  click(buttonNamed('Report', rowOf('d1')))
+  await flush()
+  const dialog = doc.querySelector('dialog.q-land') as HTMLDialogElement
+  expect(dialog.querySelector('h1')?.textContent).toBe('Done one')
+  expect(dialog.querySelector('.q-land-md h2')?.textContent).toBe('prod: ok')
+  dialog.close()
+  replies.set('GET /api/queue/d1/report', () => Response.json({ error: 'No queue item d1' }, { status: 404 }))
+  click(buttonNamed('Report', rowOf('d1')))
+  await flush()
+  const failed = doc.querySelector('dialog.q-land') as HTMLDialogElement
+  expect(failed.querySelector('.q-add-error')?.textContent).toBe('No queue item d1')
+  failed.close()
+})
+
+test('the log dialog shows the log and polls every 5 seconds only while it is open', async () => {
+  const realSetInterval = globalThis.setInterval
+  const ticks: Array<() => void> = []
+  const cleared: unknown[] = []
+  globalThis.setInterval = ((handler: () => void) => { ticks.push(handler); return ticks.length }) as unknown as typeof setInterval
+  const realClear = globalThis.clearInterval
+  globalThis.clearInterval = ((id: unknown) => { cleared.push(id) }) as typeof clearInterval
+  try {
+    let reads = 0
+    replies.set('GET /api/queue/l1/land/uat/log', () => new Response(`log read ${++reads}\n`, { headers: { 'content-type': 'text/plain' } }))
+    send([landing])
+    await flush()
+    click(buttonNamed('Log', rowOf('l1')))
+    await flush()
+    const dialog = doc.querySelector('dialog.q-land') as HTMLDialogElement
+    expect(dialog.querySelector('.q-land-log')?.textContent).toBe('log read 1\n')
+    ticks.at(-1)!()
+    await flush()
+    expect(dialog.querySelector('.q-land-log')?.textContent).toBe('log read 2\n')
+    dialog.close()
+    expect(cleared.length).toBeGreaterThan(0)
+  } finally {
+    globalThis.setInterval = realSetInterval
+    globalThis.clearInterval = realClear
+  }
 })

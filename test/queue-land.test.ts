@@ -355,3 +355,16 @@ test('a parked item keeps the stages of the flow that ran, even if the flow chan
   const id = await h.ship([button('prod', ship)])
   expect(h.item(id).land!.plan.map(entry => entry.id)).toEqual(['prod'])
 })
+
+test('SKD_PICK_FILE is the answers file ending in pick.md, whatever its stamp', async () => {
+  const h = harness()
+  const dump = join(dir, 'pick.txt')
+  const up = await script('up.sh', `echo "$SKD_PICK_FILE" > ${dump}`)
+  const id = await h.ship([stage('uat', up)])
+  await h.engine.landIdle()
+  expect((await readFile(dump, 'utf8')).trim()).toBe('')
+  await h.store.update(id, { state: 'failed', land: { ...h.item(id).land!, stages: { uat: { status: 'failed' } } }, answerPaths: ['/w/.shikidan/queue/clickup/1-answers.md', '/w/.shikidan/queue/clickup/20261102-pick.md'] })
+  await h.engine.retryStage(id)
+  await h.engine.landIdle()
+  expect((await readFile(dump, 'utf8')).trim()).toBe('/w/.shikidan/queue/clickup/20261102-pick.md')
+})
