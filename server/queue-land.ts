@@ -1,8 +1,10 @@
 import { closeSync, openSync } from 'node:fs'
-import { chmod, mkdir, readFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, stat } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { z } from 'zod'
 
+import { readLogTail } from './jobs'
+import { logSecrets, redactAll } from './log-redaction'
 import { getSetting } from './plugins/settings'
 import { QueueRefusal } from './queue-refusal'
 import { message } from './queue-replies'
@@ -167,6 +169,13 @@ export function createLand(deps: LandDeps) {
     }
   }
 
+  async function redactForStage(item: QueueItem, name: string, text: string): Promise<string> {
+    const plugin = item.land?.plugin
+    const refs = Object.values(stageOf(item, name).env)
+    const settings = plugin === undefined ? [] : await Promise.all(refs.map(ref => getSetting(plugin, ref.slice('setting:'.length)).catch(() => null)))
+    return redactAll(text, [...(await logSecrets()), ...settings])
+  }
+
   async function fail(id: string, reason: string, stage: string, change?: Partial<LandStageState>): Promise<void> {
     const item = found(id)
     const failed = await store.update(id, { state: 'failed', error: reason, land: progress(item, stage, change, { stage }) })
@@ -182,7 +191,7 @@ export function createLand(deps: LandDeps) {
     if (result.startError !== undefined) return { exitCode: SPAWN_FAILED, markdown: `Could not start the preflight: ${result.startError}` }
     if (result.timedOut) return { exitCode: TIMED_OUT, markdown: `The preflight timed out after ${preflight.timeoutSeconds}s.` }
     const text = result.exitCode !== 0 && result.stdout.trim() === '' ? result.stderr : result.stdout
-    return { exitCode: result.exitCode ?? PREFLIGHT_FAILED, markdown: text.slice(0, MAX_MARKDOWN) }
+    return { exitCode: result.exitCode ?? PREFLIGHT_FAILED, markdown: (await redactForStage(item, name, text)).slice(0, MAX_MARKDOWN) }
   }
 
   async function awaitButton(id: string, name: string): Promise<void> {
@@ -248,7 +257,7 @@ export function createLand(deps: LandDeps) {
       const keys = repoKeys(item)
       const setMessage = (text: string | null) => async () => { await store.update(id, { land: text === null ? progress(found(id), name) : progress(found(id), name, undefined, { message: text }) }) }
       const result = await locks.hold(keys, setMessage(`waiting for another item to finish ${name}`), setMessage(null), () => spawnCommand(stage.command, { cwd: item.worktree!, env, logFile }))
-      const log = await readFile(logFile, 'utf8').catch(() => '')
+      const log = await redactForStage(found(id), name, (await readLogTail(logFile, LOG_BYTES)).content)
       const ended = { endedAt: clock(), exitCode: result.exitCode }
       if (result.startError !== undefined) return await fail(id, `${name} failed to start: ${result.startError}`, name, { ...ended, status: 'failed' })
       if (result.timedOut) return await fail(id, `${name} failed (timed out after ${stage.command.timeoutSeconds}s)\n${lastLines(log)}`, name, { ...ended, status: 'failed' })
@@ -324,13 +333,12 @@ export function createLand(deps: LandDeps) {
 
     async log(id: string, name: string): Promise<string> {
       stageOf(found(id), name)
-      try {
-        const bytes = await readFile(landLogPath(id, name))
-        return bytes.subarray(Math.max(0, bytes.length - LOG_BYTES)).toString('utf8')
-      } catch (error) {
+      const path = landLogPath(id, name)
+      try { await stat(path) } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new QueueRefusal('No log yet', 404)
         throw error
       }
+      return redactForStage(found(id), name, (await readLogTail(path, LOG_BYTES)).content)
     },
 
     async idle(): Promise<void> {

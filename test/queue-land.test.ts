@@ -435,3 +435,30 @@ test('a queue file saved before runId existed still loads', async () => {
   await writeFile(join(dir, 'queue.json'), JSON.stringify(saved))
   expect(createQueueStore(join(dir, 'queue.json')).get(id)).toMatchObject({ state: 'awaiting-stage' })
 })
+
+test('a stage secret echoed by the stage never reaches the stored error, the stored preflight or the log route', async () => {
+  const h = harness()
+  await setServerSetting('fixstack', 'stagingLogin', 'hunter2-hunter2')
+  const leaky = await script('leaky.sh', 'echo "login is $STAGING_LOGIN"\nexit 1')
+  const flight = await script('flight.sh', 'echo "using $STAGING_LOGIN"')
+  const env = { STAGING_LOGIN: 'setting:stagingLogin' }
+  const failed = await h.ship([stage('uat', leaky, { env })], '1', 'fixstack')
+  await h.engine.landIdle()
+  expect(h.item(failed).error).toContain('login is [REDACTED]')
+  expect(JSON.stringify(h.item(failed))).not.toContain('hunter2-hunter2')
+  expect(await h.engine.landLog(failed, 'uat')).toBe('login is [REDACTED]\n')
+  expect((await readFile(landLogPath(failed, 'uat'), 'utf8'))).toContain('hunter2-hunter2')
+  const waiting = await h.ship([button('prod', leaky, flight, { env })], '2', 'fixstack')
+  expect(h.item(waiting).land!.stages.prod!.preflight!.markdown).toBe('using [REDACTED]\n')
+  expect(JSON.stringify(h.item(waiting))).not.toContain('hunter2-hunter2')
+})
+
+test('the log route serves only the last 256 KB of a big log', async () => {
+  const h = harness()
+  const noisy = await script('noisy.sh', `head -c 400000 /dev/zero | tr '\\0' 'a'\necho\necho the-end`)
+  const id = await h.ship([stage('uat', noisy)])
+  await h.engine.landIdle()
+  const served = await h.engine.landLog(id, 'uat')
+  expect(Buffer.byteLength(served)).toBe(256 * 1024)
+  expect(served.endsWith('the-end\n')).toBe(true)
+})
