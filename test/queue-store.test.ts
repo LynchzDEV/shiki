@@ -113,3 +113,29 @@ test('a corrupt file logs once and a missing file logs nothing', async () => {
     errors.mockRestore()
   }
 })
+
+const pick = { options: ['A', 'B'], path: 'visualizer/x', recommended: 'A', tester: null, summary: 'Two variants' }
+
+test('a waiting-pick item keeps its pick across a reload and update can clear it', async () => {
+  const store = createQueueStore(path)
+  const a = await store.add(item('a'), 'end')
+  await store.update(a.id, { state: 'waiting-pick', pick })
+  expect(createQueueStore(path).get(a.id)).toMatchObject({ state: 'waiting-pick', pick })
+  await store.update(a.id, { state: 'queued', pick: undefined })
+  expect('pick' in createQueueStore(path).get(a.id)!).toBe(false)
+})
+
+test('a queue.json from before waiting-pick loads unchanged, and a malformed pick is left out', async () => {
+  const store = createQueueStore(path)
+  const a = await store.add(item('a'), 'end')
+  const b = await store.add(item('b'), 'end')
+  const raw = JSON.parse(await readFile(path, 'utf8')) as { items: Array<Record<string, unknown>> }
+  raw.items[1]!.pick = { options: 'A' }
+  await writeFile(path, JSON.stringify(raw))
+  const quiet = spyOn(console, 'error').mockImplementation(() => {})
+  const loaded = createQueueStore(path).list()
+  quiet.mockRestore()
+  expect(loaded.map(entry => entry.id)).toEqual([a.id])
+  expect(loaded[0]).toEqual(store.get(a.id)!)
+  expect(b.id).not.toBe(a.id)
+})

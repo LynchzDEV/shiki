@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 
-import { answersMarkdown, branchLabel, questionsOf, runRequest, SETTLED, type RunView } from '../server/queue-prompts'
+import { answersMarkdown, branchLabel, pickOf, questionsOf, runRequest, SETTLED, type RunView } from '../server/queue-prompts'
 import type { WorkflowAttempt } from '../server/workflow-runner'
 
 const attempt = (over: Partial<WorkflowAttempt>): WorkflowAttempt => ({ nodeId: 'plan', number: 1, jobId: 'j', status: 'settled', prompt: '', startedAt: 1, endedAt: 2, result: null, checks: [], output: '', workspace: null, tokenId: 't', pathId: 'main', from: [], ...over })
@@ -79,4 +79,53 @@ test('questionsOf does not reach back to an older blocked step once a join confl
   const older = attempt({ nodeId: 'plan-a', number: 1, endedAt: 5, result: { outcome: 'blocked', summary: 'Need info', evidence: ['Which page?'] } })
   const join = attempt({ nodeId: 'join', number: 2, jobId: null, endedAt: 9, result: { outcome: 'blocked', summary: 'Paths could not be joined: a.ts', evidence: ['Conflicts in p2: a.ts'] } })
   expect(questionsOf(run('blocked', [older, join]))).toEqual([])
+})
+
+const blocked = (...evidence: string[]): RunView => run('blocked', [attempt({ result: { outcome: 'blocked', summary: 'Pick one', evidence } })])
+const PICK = 'pick: A,B,C | visualizer/login/ | B | Ploy'
+
+test('pickOf reads options, folder, recommendation and tester', () => {
+  expect(pickOf(blocked(PICK))).toEqual({ options: ['A', 'B', 'C'], path: 'visualizer/login', recommended: 'B', tester: 'Ploy' })
+})
+
+test('pickOf takes the last two segments as optional', () => {
+  const bare = { options: ['A', 'B'], path: 'visualizer/x', recommended: null, tester: null }
+  expect(pickOf(blocked('pick: A,B | visualizer/x'))).toEqual(bare)
+  expect(pickOf(blocked('pick: A,B | visualizer/x | | '))).toEqual(bare)
+  expect(pickOf(blocked('pick: A,B | visualizer/x | A'))).toEqual({ ...bare, recommended: 'A' })
+})
+
+test('pickOf is lenient about case, bullets, quotes, backticks and spacing', () => {
+  const want = { options: ['A', 'B'], path: 'visualizer/x', recommended: 'A', tester: 'Ploy' }
+  expect(pickOf(blocked('  - `PICK:  A , B|visualizer/x/ | A | Ploy`  '))).toEqual(want)
+  expect(pickOf(blocked('1) "Pick: A B | \'visualizer/x\' | \'A\' | Ploy"'))).toEqual(want)
+})
+
+test('pickOf uses the last pick line and ignores other evidence', () => {
+  expect(pickOf(blocked('pick: A,B | visualizer/old', 'Which page?', 'pick: C,D | visualizer/new'))).toMatchObject({ options: ['C', 'D'], path: 'visualizer/new' })
+})
+
+test('pickOf is null without a pick line, for a pass, or for a repo ask', () => {
+  expect(pickOf(blocked('Which page?', 'repo: api'))).toBeNull()
+  expect(pickOf(run('done', [attempt({ result: { outcome: 'pass', summary: 'ok', evidence: [PICK] } })]))).toBeNull()
+})
+
+test('pickOf rejects what it cannot show', () => {
+  const invalid = (line: string) => expect(pickOf(blocked(line))).toEqual({ invalid: expect.any(String) })
+  invalid('pick:')
+  invalid('pick: A | visualizer/x')
+  invalid('pick: A,B,C,D,E,F,G | visualizer/x')
+  invalid('pick: A,A | visualizer/x')
+  invalid('pick: a,B | visualizer/x')
+  invalid('pick: A,B1234567890123456 | visualizer/x')
+  invalid('pick: A,B | ')
+  invalid('pick: A,B | mockups/x')
+  invalid('pick: A,B | /visualizer/x')
+  invalid('pick: A,B | visualizer/../secrets')
+  invalid('pick: A,B | visualizer/')
+  invalid('pick: A,B | visualizer/x | C')
+})
+
+test('questionsOf leaves pick lines out, like repo lines', () => {
+  expect(questionsOf(blocked('Which page?', PICK, '- `Pick: A,B | visualizer/x`', 'repo: api'))).toEqual(['Which page?'])
 })

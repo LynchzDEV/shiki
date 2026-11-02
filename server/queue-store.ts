@@ -9,14 +9,16 @@ import { atomicJson } from './workflows'
 
 export const QUEUE_FILE = 'queue.json'
 
-export type QueueState = 'queued' | 'building' | 'waiting-info' | 'ready' | 'failed'
+export type QueueState = 'queued' | 'building' | 'waiting-info' | 'waiting-pick' | 'ready' | 'failed'
+
+export type QueuePick = { options: string[]; path: string; recommended: string | null; tester: string | null; summary: string }
 
 export type QueueItem = {
   id: string; source: string; externalId: string; title: string; url: string; repo: string; flowId: string | null
   state: QueueState; worktree: string | null; contextPath: string | null; answerPaths: string[]
   runIds: string[]; currentRunId: string | null; questions: string[]; lastSeenId: string | null; error: string | null
   createdAt: number; updatedAt: number; repos?: string[]; repoReruns?: number
-  realBaseline?: Record<string, string>; realChanged?: string[]
+  realBaseline?: Record<string, string>; realChanged?: string[]; pick?: QueuePick
 }
 
 export type NewQueueItem = Pick<QueueItem, 'source' | 'externalId' | 'title' | 'url' | 'repo' | 'flowId' | 'repos'>
@@ -32,11 +34,17 @@ export type QueueStore = RunEvents & {
   toFront(id: string): Promise<void>
 }
 
-const STATES = new Set<string>(['queued', 'building', 'waiting-info', 'ready', 'failed'])
+const STATES = new Set<string>(['queued', 'building', 'waiting-info', 'waiting-pick', 'ready', 'failed'])
 const isText = (value: unknown): value is string => typeof value === 'string'
 const isTextOrNull = (value: unknown): boolean => value === null || typeof value === 'string'
 const isTexts = (value: unknown): boolean => Array.isArray(value) && value.every(isText)
 const isTextRecord = (value: unknown): boolean => typeof value === 'object' && value !== null && !Array.isArray(value) && Object.values(value).every(isText)
+
+function isPick(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false
+  const pick = value as Record<string, unknown>
+  return isTexts(pick.options) && isText(pick.path) && isText(pick.summary) && isTextOrNull(pick.recommended) && isTextOrNull(pick.tester)
+}
 
 function isItem(value: unknown): value is QueueItem {
   if (typeof value !== 'object' || value === null) return false
@@ -49,6 +57,7 @@ function isItem(value: unknown): value is QueueItem {
     && (item.repos === undefined || isRepoList(item.repos))
     && (item.realBaseline === undefined || isTextRecord(item.realBaseline))
     && (item.realChanged === undefined || isTexts(item.realChanged))
+    && (item.pick === undefined || isPick(item.pick))
     && (item.repoReruns === undefined || (Number.isInteger(item.repoReruns) && (item.repoReruns as number) >= 0))
 }
 
@@ -117,6 +126,7 @@ export function createQueueStore(path: string, clock: () => number = Date.now): 
       const current = items.find(item => item.id === id)
       if (current === undefined) throw new Error(`No queue item ${id}`)
       const next: QueueItem = { ...current, ...definedFields(patch), updatedAt: clock() }
+      if ('pick' in patch && patch.pick === undefined) delete next.pick
       await save(items.map(item => (item.id === id ? next : item)))
       return next
     },

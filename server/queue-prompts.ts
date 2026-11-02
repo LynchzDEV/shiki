@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 
-import type { QueueItem } from './queue-store'
+import type { QueueItem, QueuePick } from './queue-store'
 import type { SourceReply } from './queue-source'
 import type { WorkflowRun } from './workflow-runner'
 
@@ -21,10 +21,12 @@ export function branchLabel(item: Pick<QueueItem, 'title' | 'externalId' | 'sour
 }
 
 const REPO_REQUEST = /^repo:\s*(\S.*)$/i
+const PICK_LINE = /^pick:\s*(.*)$/i
 const QUOTES = /^[`'"]+|[`'"]+$/g
+const BULLET = /^(?:[-*•>]|\d+[.)])\s*/
 
 function requestedRepos(line: string): string[] | null {
-  const bare = line.replace(/^(?:[-*•>]|\d+[.)])\s*/, '').replace(QUOTES, '').trim()
+  const bare = line.replace(BULLET, '').replace(QUOTES, '').trim()
   const match = REPO_REQUEST.exec(bare)
   if (match === null) return null
   return match[1]!.split(/[\s,]+/).map(name => name.replace(QUOTES, '')).filter(name => name !== '')
@@ -61,8 +63,10 @@ function blockedEvidence(run: RunView): string[] {
   return last.result.evidence.map(line => line.trim()).filter(line => line !== '')
 }
 
+const pickBody = (line: string): string | null => PICK_LINE.exec(line.replace(BULLET, '').replace(QUOTES, '').trim())?.[1] ?? null
+
 export function questionsOf(run: RunView): string[] {
-  return blockedEvidence(run).filter(line => requestedRepos(line) === null)
+  return blockedEvidence(run).filter(line => requestedRepos(line) === null && pickBody(line) === null)
 }
 
 export function repoRequestsOf(run: RunView): string[] {
@@ -74,4 +78,34 @@ export function answersMarkdown(questions: string[], replies: SourceReply[], ima
   const answered = replies.map(reply => `### ${reply.author}\n\n${reply.text}`).join('\n\n')
   const pictures = images.length > 0 ? `\n## Images\n\n${images.map(path => `- ${path}`).join('\n')}\n` : ''
   return `# Answers from the requester\n\n## Questions asked\n\n${asked}\n\n## Replies\n\n${answered}\n${pictures}`
+}
+
+const OPTION_ID = /^[A-Z][A-Za-z0-9]{0,15}$/
+const MOCKUP_ROOT = 'visualizer/'
+const MIN_OPTIONS = 2
+const MAX_OPTIONS = 6
+
+export type PickRequest = Omit<QueuePick, 'summary'>
+export type PickInvalid = { invalid: string }
+
+function pickProblem(options: string[], path: string, recommended: string | null): string | null {
+  if (options.length < MIN_OPTIONS || options.length > MAX_OPTIONS) return `give ${MIN_OPTIONS} to ${MAX_OPTIONS} options`
+  const bad = options.find(id => !OPTION_ID.test(id))
+  if (bad !== undefined) return `bad option id ${bad}`
+  if (new Set(options).size !== options.length) return 'option ids must be unique'
+  if (path.startsWith('/') || !path.startsWith(MOCKUP_ROOT) || path.length === MOCKUP_ROOT.length || path.split('/').includes('..')) return `the folder must be relative and inside ${MOCKUP_ROOT}`
+  if (recommended !== null && !options.includes(recommended)) return `recommended ${recommended} is not an option`
+  return null
+}
+
+export function pickOf(run: RunView): PickRequest | PickInvalid | null {
+  const bodies = blockedEvidence(run).map(pickBody).filter((body): body is string => body !== null)
+  const body = bodies.at(-1)
+  if (body === undefined) return null
+  const [ids = '', folder = '', recommended = '', tester = ''] = body.split('|').map(part => part.trim().replace(QUOTES, '').trim())
+  const options = ids.split(/[\s,]+/).map(id => id.replace(QUOTES, '')).filter(id => id !== '')
+  const path = folder.replace(/\/+$/, '')
+  const problem = pickProblem(options, path, recommended === '' ? null : recommended)
+  if (problem !== null) return { invalid: problem }
+  return { options, path, recommended: recommended === '' ? null : recommended, tester: tester === '' ? null : tester }
 }
