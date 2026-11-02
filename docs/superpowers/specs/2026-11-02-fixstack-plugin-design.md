@@ -249,3 +249,13 @@ Jobs 1, 2 and 3 are independent and run in parallel. This repo is Shikidan itsel
 - Waiting on the tester's reply before Deploy prod (decided: Shikidan's reviews unlock it).
 - More than one card building at once.
 - A ClickUp post after the production deploy (v1 posts only at UAT).
+
+## v1 build adjustments (2026-11-02, while dispatching)
+
+These override the sections above for the first version:
+
+- **Pick line** carries an optional 4th field, the proposed tester: `pick: A,B,C | visualizer/<slug>/ | <recommended> | <tester>`. When a pick line is present, nothing is posted to the source, including other questions in the same result; they show in the Pick panel instead.
+- **DoD template** is shipped inside the plugin (`skills/fixstack-steps/dod.md`, fetched from the ClickUp doc on 2026-11-02). `source.page` and the per-run fresh fetch are deferred.
+- **Land stages** run as host processes with a per-stage log file (`<config>/queue-land/<item>/<stage>.log`) shown in the Queue row, not as cockpit jobs.
+- **Stage and check commands** call the plugin's scripts as `bash -c 'exec "$HOME/.claude/skills/fixstack-ship/<script>"'`. No `{{skill:…}}` placeholder.
+- **Mockup route** answers with `Content-Security-Policy: sandbox allow-scripts`, so AI-written HTML never runs with Shikidan's origin.
