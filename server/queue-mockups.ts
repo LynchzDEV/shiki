@@ -8,7 +8,8 @@ const TYPES: Record<string, string> = {
 const HEADERS = { 'Content-Security-Policy': 'sandbox allow-scripts', 'X-Content-Type-Options': 'nosniff' }
 
 async function insideFile(worktree: string, requested: string): Promise<string | null> {
-  const segments = requested.split('/')
+  let segments: string[]
+  try { segments = requested.split('/').map(decodeURIComponent) } catch { return null }
   if (segments.some(part => part === '' || part.startsWith('.') || part.includes('\0') || part.includes('\\'))) return null
   const root = join(worktree, 'visualizer')
   if ((await lstat(root)).isSymbolicLink()) return null

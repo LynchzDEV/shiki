@@ -351,6 +351,9 @@ describe('mockup files', () => {
     await writeFile(join(tree, 'visualizer', 'demo', 'index.html'), '<h1>demo</h1>')
     await writeFile(join(tree, 'visualizer', 'demo', 'a.css'), 'h1{}')
     await writeFile(join(tree, 'visualizer', 'demo', 'blob.bin'), 'x')
+    await writeFile(join(tree, 'visualizer', 'demo', 'a b.html'), '<p>spaced</p>')
+    await mkdir(join(tree, 'visualizer', 'หน้าแรก'), { recursive: true })
+    await writeFile(join(tree, 'visualizer', 'หน้าแรก', 'index.html'), '<p>thai</p>')
     await writeFile(join(tree, 'visualizer', 'demo', '.secret'), 'no')
     await writeFile(join(tree, 'secret.txt'), 'no')
     await writeFile(join(outside, 'loot.txt'), 'no')
@@ -381,6 +384,12 @@ describe('mockup files', () => {
     sealed(html)
     expect((await files('{id}/files/demo/a.css')).headers.get('content-type')).toBe('text/css; charset=utf-8')
     expect((await files('{id}/files/demo/blob.bin')).headers.get('content-type')).toBe('application/octet-stream')
+  })
+
+  test('names with spaces or Thai letters are served, bad encodings are 404', async () => {
+    expect(await (await files('{id}/files/demo/a%20b.html')).text()).toBe('<p>spaced</p>')
+    expect(await (await files(`{id}/files/${encodeURIComponent('หน้าแรก')}/index.html`)).text()).toBe('<p>thai</p>')
+    expect((await files('{id}/files/demo/%E0%A4%A.html')).status).toBe(404)
   })
 
   test('answers 404, still sealed, for everything it refuses', async () => {
