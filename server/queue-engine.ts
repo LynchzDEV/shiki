@@ -278,6 +278,7 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
   const pick = (id: string, choice: PickChoice): Promise<QueueItem> => serial(async () => {
     const item = found(store, id)
     if (item.state !== 'waiting-pick' || item.pick === undefined) throw stateRefusal(item.state)
+    if (runningInStudio(item)) throw new QueueRefusal('It is running in Studio now', 409)
     if (!item.pick.options.includes(choice.option)) throw new QueueRefusal(`Not an option: ${choice.option}`, 409)
     if (item.worktree === null) throw new QueueRefusal('It has no workspace', 409)
     const tester = (choice.tester ?? '').trim().slice(0, MAX_TESTER)

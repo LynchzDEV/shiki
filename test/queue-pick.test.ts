@@ -39,7 +39,7 @@ async function building() {
     runs.set(runId, run)
     await engine.onRunSettled(run)
   }
-  return { engine, store, item, other, posted, alerts, block }
+  return { engine, store, item, other, posted, alerts, block, runs }
 }
 
 test('a run blocked with a pick line parks the item in waiting-pick and posts nothing', async () => {
@@ -116,4 +116,12 @@ test('requeue works on a waiting-pick item and drops its pick', async () => {
   const h = await parkedPick()
   await h.engine.requeue(h.item.id)
   expect('pick' in h.store.get(h.item.id)!).toBe(false)
+})
+
+test('a pick is refused while the run is running in Studio', async () => {
+  const h = await building()
+  await h.block('run-1', [PICK])
+  h.runs.set('run-1', { ...h.runs.get('run-1')!, status: 'running' })
+  await expect(h.engine.pick(h.item.id, { option: 'B' })).rejects.toMatchObject({ message: 'It is running in Studio now', status: 409 })
+  expect(h.store.get(h.item.id)!.state).toBe('waiting-pick')
 })
