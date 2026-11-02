@@ -319,6 +319,17 @@ export function createLand(deps: LandDeps) {
       }
     },
 
+    async log(id: string, name: string): Promise<string> {
+      stageOf(found(id), name)
+      try {
+        const bytes = await readFile(landLogPath(id, name))
+        return bytes.subarray(Math.max(0, bytes.length - LOG_BYTES)).toString('utf8')
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new QueueRefusal('No log yet', 404)
+        throw error
+      }
+    },
+
     async idle(): Promise<void> {
       while (inflight.size > 0) await Promise.all([...inflight])
     },

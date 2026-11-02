@@ -205,4 +205,37 @@ describe('shiki queue with several repos', () => {
     expect(h.out().split('\n').find(line => line.includes('s1'))).toContain('-')
     expect(h.out().split('\n').find(line => line.includes('p1'))).toContain('plan picks')
   })
+
+  const waiting = { id: 'q1', state: 'awaiting-stage', land: { stage: 'prod', stages: { prod: { status: 'waiting', preflight: { exitCode: 0, markdown: '| repo |\n|---|\n| api |\n\nSafety: prod' } } } } }
+  const listing = (call: Call) => (call.method === 'GET' && call.path === '/api/queue' ? Response.json({ items: [waiting] }) : undefined)
+
+  test('report prints the item report as plain text', async () => {
+    const h = harness((call) => (call.path === '/api/queue/q1/report' ? new Response('# Login copy\n', { headers: { 'content-type': 'text/markdown' } }) : undefined))
+    expect(await main(['queue', 'report', 'q1'], h.deps)).toBe(0)
+    expect(routesOf(h.calls)).toEqual(['GET /api/queue/q1/report'])
+    expect(h.out()).toBe('# Login copy\n')
+  })
+
+  test('land shows the preflight and does not start without --yes', async () => {
+    const h = harness(listing)
+    expect(await main(['queue', 'land', 'q1', 'prod'], h.deps)).toBe(0)
+    expect(routesOf(h.calls)).toEqual(['GET /api/queue'])
+    expect(h.out()).toContain('Safety: prod')
+    expect(h.out()).toContain('Run again with --yes to start prod.')
+  })
+
+  test('land with --yes prints the preflight first, then starts the stage with confirm', async () => {
+    const h = harness((call) => (call.method === 'POST' ? Response.json({ item: { id: 'q1' } }) : listing(call)))
+    expect(await main(['queue', 'land', 'q1', 'prod', '--yes'], h.deps)).toBe(0)
+    expect(routesOf(h.calls)).toEqual(['GET /api/queue', 'POST /api/queue/q1/land/prod/start'])
+    expect(h.calls[1]?.body).toEqual({ confirm: true })
+    expect(h.out().indexOf('Safety: prod')).toBeLessThan(h.out().indexOf('Started prod.'))
+  })
+
+  test('land on an unknown item is a usage error', async () => {
+    const h = harness(() => Response.json({ items: [] }))
+    expect(await main(['queue', 'land', 'zz', 'prod', '--yes'], h.deps)).not.toBe(0)
+    expect(h.calls.every((call) => call.method === 'GET')).toBe(true)
+    expect(h.err()).toContain('no queue item zz')
+  })
 })

@@ -11,7 +11,7 @@ import { queueTree, type QueueTree } from '../queue-tree'
 import { eventStreamResponse, type RunEvents } from '../run-events'
 
 type Status = { status?: number | string }
-type QueueEngineRoutes = Pick<QueueEngine, 'add' | 'requeue' | 'pick' | 'checkReplies' | 'remove' | 'move' | 'checkedAt' | 'subscribeChecks'> & Partial<Pick<QueueEngine, 'preparing'>>
+type QueueEngineRoutes = Pick<QueueEngine, 'add' | 'requeue' | 'pick' | 'checkReplies' | 'remove' | 'move' | 'checkedAt' | 'subscribeChecks' | 'startStage' | 'refreshPreflight' | 'retryStage' | 'landLog' | 'report'> & Partial<Pick<QueueEngine, 'preparing'>>
 export type QueueRunLookup = { get(id: string): QueueStepRun | undefined; subscribe(listener: () => void): () => void }
 const NO_RUNS: QueueRunLookup = { get: () => undefined, subscribe: () => () => {} }
 
@@ -24,6 +24,7 @@ const addSchema = z.object({
   position: z.enum(['end', 'next']).optional(),
 })
 const pickSchema = z.object({ option: z.string().min(1).max(16), tester: z.string().max(200).optional(), note: z.string().max(4000).optional() })
+const confirmSchema = z.object({ confirm: z.literal(true) })
 const moveSchema = z.object({ to: z.number().int().min(0) })
 const NO_ITEM = 'No such queue item'
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error))
@@ -68,6 +69,8 @@ async function folderRepos(path: unknown, set: Status) {
   return { path: listing.path, isRepo: listing.isRepo, repos: listing.repos, skipped: listing.skipped }
 }
 
+const explainMissing = (error: unknown): string => message(error)
+const text = (body: string, type: string): Response => new Response(body, { headers: { 'content-type': `${type}; charset=utf-8` } })
 const isConflict = (error: unknown): boolean => error instanceof QueueRefusal && error.status === 409
 const removeExplanation = (error: unknown): string => (isConflict(error) ? 'Stop its run in Studio first' : NO_ITEM)
 const moveExplanation = (error: unknown): string => (isConflict(error) ? message(error) : NO_ITEM)
@@ -110,6 +113,14 @@ export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: 
       return refusing(set, async () => ({ item: await engine.pick(params.id, parsed.data) }))
     })
     .get('/queue/:id/files/*', ({ params }) => mockupResponse(store.get(params.id)?.worktree ?? null, params['*']))
+    .post('/api/queue/:id/land/retry', ({ params, set }) => refusing(set, async () => ({ item: await engine.retryStage(params.id) }), explainMissing))
+    .post('/api/queue/:id/land/:stage/start', ({ params, body, set }) => {
+      if (!confirmSchema.safeParse(body).success) { set.status = 400; return { error: 'Send { "confirm": true } to start this stage' } }
+      return refusing(set, async () => ({ item: await engine.startStage(params.id, params.stage) }), explainMissing)
+    })
+    .post('/api/queue/:id/land/:stage/preflight', ({ params, set }) => refusing(set, async () => ({ item: await engine.refreshPreflight(params.id, params.stage) }), explainMissing))
+    .get('/api/queue/:id/land/:stage/log', ({ params, set }) => refusing(set, async () => text(await engine.landLog(params.id, params.stage), 'text/plain'), explainMissing))
+    .get('/api/queue/:id/report', ({ params, set }) => refusing(set, async () => text(await engine.report(params.id), 'text/markdown'), explainMissing))
     .post('/api/queue/:id/requeue', ({ params, set }) => requeueItem(store, engine, params.id, set))
     .delete('/api/queue/:id', ({ params, set }) => refusing(set, async () => { await engine.remove(params.id); return { ok: true } }, removeExplanation))
 }

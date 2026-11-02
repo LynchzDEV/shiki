@@ -68,6 +68,26 @@ function addBody(ctx: Context): Json {
   }
 }
 
+function preflightOf(list: unknown, id: string, stage: string): Json {
+  const item = records(list, 'items').find((entry) => entry.id === id)
+  if (item === undefined) throw new UsageError(`no queue item ${id}`)
+  const preflight = field(field(field(field(item, 'land'), 'stages'), stage), 'preflight')
+  return preflight !== null && typeof preflight === 'object' ? (preflight as Json) : {}
+}
+
+async function landStage(ctx: Context): Promise<void> {
+  const id = arg(ctx, 'id')
+  const stage = arg(ctx, 'stage')
+  const preflight = preflightOf(await ctx.client.get('/api/queue'), id, stage)
+  const shown = `${typeof preflight.markdown === 'string' ? preflight.markdown.trimEnd() : ''}\n`
+  if (!flag(ctx, 'yes')) {
+    emit(ctx, { stage, preflight }, () => `${shown}Run again with --yes to start ${stage}.\n`)
+    return
+  }
+  if (!ctx.json) ctx.out(shown)
+  emit(ctx, await ctx.client.post(itemPath(ctx, `/land/${segment(stage)}/start`), { confirm: true }), () => `Started ${stage}.\n`)
+}
+
 export const queueCommands: Command[] = [
   {
     path: ['queue', 'list'],
@@ -119,6 +139,19 @@ export const queueCommands: Command[] = [
     args: ['id'],
     summary: 'Remove an item that is not building',
     run: async (ctx) => emit(ctx, await ctx.client.del(itemPath(ctx)), () => 'Removed.\n'),
+  },
+  {
+    path: ['queue', 'report'],
+    args: ['id'],
+    summary: 'Show the report of an item: its runs and every land stage',
+    run: async (ctx) => ctx.out(await ctx.client.getText(itemPath(ctx, '/report'))),
+  },
+  {
+    path: ['queue', 'land'],
+    args: ['id', 'stage'],
+    options: { yes: { type: 'boolean', description: 'start the stage (without it: show its preflight only)' } },
+    summary: 'Show the preflight of a waiting land stage and, with --yes, start it',
+    run: landStage,
   },
   {
     path: ['queue', 'check'],

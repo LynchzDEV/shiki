@@ -6,6 +6,7 @@ import { blockedSummary, pickOf, questionsOf, repoRequestsOf, runRequest, SETTLE
 import { adoptionProblem, grantRepos, movedRealRepos, movedText, realRepoStates, reposToOffer, SINGLE_REPO_ASK } from './queue-repo-asks'
 import { refuseLinkedQueueFolders } from './queue-files'
 import { createLand, type Land } from './queue-land'
+import { buildReport } from './queue-report'
 import { QueueRefusal } from './queue-refusal'
 import { message, replyCheck } from './queue-replies'
 import type { QueueSource } from './queue-source'
@@ -52,6 +53,8 @@ export type QueueEngine = {
   refreshPreflight(id: string, stage: string): Promise<QueueItem>
   retryStage(id: string): Promise<QueueItem>
   landIdle(): Promise<void>
+  landLog(id: string, stage: string): Promise<string>
+  report(id: string): Promise<string>
   checkedAt(): number | null
   preparing(): string | null
   subscribeChecks(listener: () => void): () => void
@@ -361,6 +364,8 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
     refreshPreflight: (id, stage) => serial(() => land.refreshPreflight(id, stage)),
     retryStage: id => serial(() => land.retryStage(id)),
     landIdle: land.idle,
+    landLog: land.log,
+    report: async id => buildReport(found(store, id), runId => deps.runner.get(runId)),
     onRunSettled: run => serial(async () => { await settle(run); await startNext() }),
     checkReplies,
     checkedAt: () => lastCheckedAt,
