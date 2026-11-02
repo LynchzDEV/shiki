@@ -5,6 +5,8 @@ import { backUpAnswers, dropAnswerBackups, restoreAnswers } from './queue-answer
 import { blockedSummary, pickOf, questionsOf, repoRequestsOf, runRequest, SETTLED, type RunView } from './queue-prompts'
 import { adoptionProblem, grantRepos, movedRealRepos, movedText, realRepoStates, reposToOffer, SINGLE_REPO_ASK } from './queue-repo-asks'
 import { refuseLinkedQueueFolders } from './queue-files'
+import { createLand, type Land } from './queue-land'
+import { QueueRefusal } from './queue-refusal'
 import { message, replyCheck } from './queue-replies'
 import type { QueueSource } from './queue-source'
 import { workspaceRepos } from './repo-workspace'
@@ -46,6 +48,10 @@ export type QueueEngine = {
   remove(id: string): Promise<void>
   move(id: string, to: number): Promise<void>
   checkReplies(): Promise<{ checked: number; resumed: number }>
+  startStage(id: string, stage: string): Promise<QueueItem>
+  refreshPreflight(id: string, stage: string): Promise<QueueItem>
+  retryStage(id: string): Promise<QueueItem>
+  landIdle(): Promise<void>
   checkedAt(): number | null
   preparing(): string | null
   subscribeChecks(listener: () => void): () => void
@@ -55,12 +61,7 @@ const MAX_RUN_LABEL = 120
 const REQUEUEABLE: ReadonlySet<QueueItem['state']> = new Set(['failed', 'ready', 'waiting-info', 'waiting-pick'])
 const RETRIED_FROM = REQUEUEABLE
 
-export class QueueRefusal extends Error {
-  constructor(message: string, readonly status: 404 | 409) {
-    super(message)
-    this.name = 'QueueRefusal'
-  }
-}
+export { QueueRefusal }
 
 export class SourceFailure extends Error {
   constructor(message: string) {
@@ -91,7 +92,7 @@ type QueueSteps = {
   startNext(): Promise<void>
 }
 
-function queueSteps(deps: QueueEngineDeps, onPreparing: (id: string | null) => void): QueueSteps {
+function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string | null) => void): QueueSteps {
   const { store } = deps
 
   async function fail(item: QueueItem, reason: string): Promise<void> {
@@ -160,6 +161,8 @@ function queueSteps(deps: QueueEngineDeps, onPreparing: (id: string | null) => v
 
   async function settleState(item: QueueItem, run: RunView): Promise<void> {
     if (run.status !== 'done') return askOrFail(item, run)
+    const stages = run.workflow?.land ?? []
+    if (stages.length > 0) return land.begin(item, stages, run.workflow?.plugin)
     const ready = await store.update(item.id, { state: 'ready', currentRunId: null, error: null, questions: [] })
     deps.needsYou(ready, 'Built and ready for review')
   }
@@ -225,7 +228,8 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
   const checkListeners = new Set<() => void>()
   const tell = (): void => { for (const listener of checkListeners) listener() }
   let preparingId: string | null = null
-  const { fail, settle, startNext } = queueSteps(deps, (id) => { preparingId = id; tell() })
+  const land = createLand(deps)
+  const { fail, settle, startNext } = queueSteps(deps, land, (id) => { preparingId = id; tell() })
   let lane: Promise<unknown> = Promise.resolve()
   const serial = <T>(work: () => Promise<T>): Promise<T> => {
     const result = lane.then(work)
@@ -293,7 +297,8 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
   })
 
   const remove = (id: string): Promise<void> => serial(async () => {
-    if (found(store, id).state === 'building') throw stateRefusal('building')
+    const { state } = found(store, id)
+    if (state === 'building' || state === 'landing') throw stateRefusal(state)
     await store.remove(id)
     await dropAnswerBackups(deps.backupDir(id)).catch(error => console.error('queue answer backups not removed', error))
   })
@@ -339,6 +344,7 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
         if (run === undefined) await fail(item, 'Its run is gone')
         else if (SETTLED.has(run.status)) await settle(run)
       }
+      await land.recover()
       await startNext()
     })
   }
@@ -351,6 +357,10 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
     move,
     recover,
     kick: () => serial(startNext),
+    startStage: (id, stage) => serial(() => land.startStage(id, stage)),
+    refreshPreflight: (id, stage) => serial(() => land.refreshPreflight(id, stage)),
+    retryStage: id => serial(() => land.retryStage(id)),
+    landIdle: land.idle,
     onRunSettled: run => serial(async () => { await settle(run); await startNext() }),
     checkReplies,
     checkedAt: () => lastCheckedAt,

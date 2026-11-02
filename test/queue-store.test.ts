@@ -139,3 +139,25 @@ test('a queue.json from before waiting-pick loads unchanged, and a malformed pic
   expect(loaded[0]).toEqual(store.get(a.id)!)
   expect(b.id).not.toBe(a.id)
 })
+
+test('a queue.json written before land stages existed loads unchanged, and land progress survives a new instance', async () => {
+  const store = createQueueStore(path)
+  const a = await store.add(item('a'), 'end')
+  const oldFile = JSON.parse(await readFile(path, 'utf8'))
+  expect(oldFile.items[0]).not.toHaveProperty('land')
+  expect(createQueueStore(path).get(a.id)).toEqual(a)
+  const plan = [{ id: 'uat', run: 'auto' as const, command: { command: 'ship.sh', args: [], timeoutSeconds: 3600 }, env: {} }]
+  await store.update(a.id, { state: 'awaiting-stage', land: { stage: 'uat', stages: { uat: { status: 'waiting', preflight: { exitCode: 0, markdown: 'ok' } } }, plan } })
+  expect(createQueueStore(path).get(a.id)).toMatchObject({ state: 'awaiting-stage', land: { stage: 'uat', stages: { uat: { preflight: { markdown: 'ok' } } } } })
+})
+
+test('an item with a malformed land record is left out', async () => {
+  const store = createQueueStore(path)
+  const a = await store.add(item('a'), 'end')
+  const file = JSON.parse(await readFile(path, 'utf8'))
+  file.items[0].land = { stage: 5 }
+  await writeFile(path, JSON.stringify(file))
+  const logged = spyOn(console, 'error').mockImplementation(() => {})
+  expect(createQueueStore(path).get(a.id)).toBeUndefined()
+  logged.mockRestore()
+})

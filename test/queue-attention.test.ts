@@ -85,3 +85,15 @@ test('a sweep keeps the alert of an item waiting for a pick', async () => {
   await raiseQueueAlert(attention, item, 'Pick a design variant')
   expect(await sweepQueueAlerts(store, attention)).toBe(0)
 })
+
+test('alerts for a stage waiting on a person and for a landed item stay until the item moves on', async () => {
+  const store = createQueueStore(join(dir, 'queue.json'))
+  const attention = createAttentionStore(join(dir, 'attention.json'))
+  const waiting = await store.update((await store.add(task('a'), 'end')).id, { state: 'awaiting-stage' })
+  const landed = await store.update((await store.add(task('b'), 'end')).id, { state: 'landed' })
+  await raiseQueueAlert(attention, waiting, 'Deploy prod is ready')
+  await raiseQueueAlert(attention, landed, 'Landed')
+  expect(await sweepQueueAlerts(store, attention)).toBe(0)
+  await store.update(waiting.id, { state: 'landing' })
+  expect(await sweepQueueAlerts(store, attention)).toBe(1)
+})
