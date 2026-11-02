@@ -21,6 +21,7 @@ export function readWorkflowDraft(log: string, agents: string[], approvedNodes: 
   const output = messages.at(-1)?.trim().replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '')
   let draft: WorkflowDraft
   try { draft = draftSchema.parse(JSON.parse(output ?? '')) } catch { throw new Error('The AI did not return a valid workflow. Try describing the steps more explicitly.') }
+  if (draft.workflow.land.length > 0) throw new Error('Land stages can only be added by hand')
   const errors = validateWorkflow(draft.workflow)
   if (errors.length) throw new Error(`The proposed workflow needs correction: ${errors.join('; ')}`)
   for (const node of draft.workflow.nodes) {

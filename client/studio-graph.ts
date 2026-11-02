@@ -26,7 +26,7 @@ export function removeWorkflowStep(graph: Workflow, id: string): Workflow {
 export function workflowTemplates(defaultFlow: Workflow): Workflow[] {
   return [defaultFlow,...[{id:'research',name:'Research & summarize',steps:['research','review']},{id:'quality',name:'Test & review',steps:['test','review']}].map(template=>{
     const nodes=template.steps.map((id,index)=>({...taskPreset(id),id:`${template.id}-${index}`,position:{x:index*280,y:100}}))
-    return {id:`template-${template.id}`,name:template.name,entry:nodes[0]!.id,nodes,edges:[{source:nodes[0]!.id,target:nodes[1]!.id,outcome:'pass' as const}]}
+    return {id:`template-${template.id}`,name:template.name,entry:nodes[0]!.id,nodes,edges:[{source:nodes[0]!.id,target:nodes[1]!.id,outcome:'pass' as const}],land:[]}
   })]
 }
 export type Provider = { id: string; name: string; models: string[]; builtin?: boolean; family?: string | null }

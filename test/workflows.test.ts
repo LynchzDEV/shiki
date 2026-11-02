@@ -212,3 +212,41 @@ test('plugin flows are listed, readable and read-only', async () => {
   const { revision: _revision, createdAt: _createdAt, plugin: _plugin, ...graph } = pluginFlow
   await expect(store.save(graph, pluginFlow.revision)).rejects.toThrow('This flow comes from the card-pipeline plugin; save it under a new id to change it')
 })
+
+const landed = (land: unknown[]) => ({ ...defaultWorkflow(), land })
+const auto = { id: 'uat', run: 'auto', command: { command: 'ship.sh' } }
+const button = { id: 'prod', run: 'button', label: 'Deploy prod', command: { command: 'ship.sh' }, preflight: { command: 'check.sh' } }
+
+test('a flow without land stages keeps the revision it had before land existed', () => {
+  expect(draftRevision(defaultWorkflow()).revision).toBe('d91a841cdee32b2315bd26ce')
+  expect(draftRevision(landed([auto])).revision).not.toBe('d91a841cdee32b2315bd26ce')
+})
+
+test('land stages accept an auto and a button stage with their defaults', () => {
+  expect(validateWorkflow(landed([auto, button]))).toEqual([])
+  const parsed = workflowSchema.parse(landed([auto, button]))
+  expect(parsed.land[0]).toMatchObject({ env: {}, command: { args: [], timeoutSeconds: 3600 } })
+  expect(workflowSchema.parse(defaultWorkflow()).land).toEqual([])
+})
+
+test('land stage rules: unique ids, button needs a label, preflight only on button, auto has no label', () => {
+  expect(validateWorkflow(landed([auto, auto])).join(' ')).toContain('unique')
+  expect(validateWorkflow(landed([{ ...button, label: undefined }])).join(' ')).toContain('needs a label')
+  expect(validateWorkflow(landed([{ ...auto, preflight: { command: 'x' } }])).join(' ')).toContain('only a button stage can have a preflight')
+  expect(validateWorkflow(landed([{ ...auto, label: 'Ship' }])).join(' ')).toContain('auto stage has no label')
+})
+
+test('land stage limits: at most 4 stages, timeout up to 2 hours, env values must be setting references', () => {
+  expect(validateWorkflow(landed([1, 2, 3, 4, 5].map(n => ({ ...auto, id: `s${n}` }))))).not.toEqual([])
+  expect(validateWorkflow(landed([{ ...auto, command: { command: 'x', timeoutSeconds: 7201 } }]))).not.toEqual([])
+  expect(validateWorkflow(landed([{ ...auto, command: { command: 'x', timeoutSeconds: 7200 } }]))).toEqual([])
+  expect(validateWorkflow(landed([{ ...auto, env: { TOKEN: 'plain' } }]))).not.toEqual([])
+  expect(validateWorkflow(landed([{ ...auto, env: { TOKEN: 'setting:stagingLogin' } }]))).toEqual([])
+})
+
+test('a saved flow that is not from a plugin cannot reference plugin settings', async () => {
+  const store = createWorkflowStore(dir)
+  await expect(store.save({ ...landed([{ ...auto, env: { TOKEN: 'setting:stagingLogin' } }]), id: 'mine' })).rejects.toThrow('Setting references need a plugin flow')
+  const saved = await store.save({ ...landed([auto, button]), id: 'mine' })
+  expect(saved.land.map(stage => stage.id)).toEqual(['uat', 'prod'])
+})

@@ -82,3 +82,9 @@ test('native drafting uses read-only Codex and disables Claude tools',async()=>{
   expect(claude.args[claude.args.indexOf('--tools')+1]).toBe('')
   expect(claude.args).toContain('--strict-mcp-config')
 })
+
+test('an AI-drafted flow with land stages is rejected', () => {
+  const land = [{ id: 'uat', run: 'auto', command: { command: 'ship.sh' } }]
+  expect(() => readWorkflowDraft(log({ ...answer(), workflow: { ...answer().workflow, land } }), ['claude', 'codex'])).toThrow('Land stages can only be added by hand')
+  expect(readWorkflowDraft(log(answer()), ['claude', 'codex']).workflow.land).toEqual([])
+})

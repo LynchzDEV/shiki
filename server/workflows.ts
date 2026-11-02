@@ -11,6 +11,13 @@ export const SESSION_ENGINE = 'session'
 export const identifier = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/)
 const text = z.string().trim().min(1).max(32000)
 export const commandSchema = z.object({ command: z.string().min(1).max(1024), args: z.array(z.string().max(16000)).max(100).default([]), timeoutSeconds: z.number().int().min(1).max(3600).default(300) })
+const stageCommand = commandSchema.extend({ timeoutSeconds: z.number().int().min(1).max(7200).default(3600) })
+export const landStageSchema = z.object({
+  id: identifier, run: z.enum(['auto', 'button']), label: z.string().trim().min(1).max(40).optional(),
+  command: stageCommand, preflight: stageCommand.optional(),
+  env: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), z.string().regex(/^setting:[a-zA-Z0-9_-]{1,64}$/)).default({}),
+})
+export type LandStage = z.infer<typeof landStageSchema>
 export const mcpSchema = z.object({ name: identifier, command: z.string().min(1).max(1024), args: z.array(z.string().max(4096)).max(50).default([]), env: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/)).default({}) })
 export const nodeSchema = z.object({
   id: identifier, title: z.string().trim().min(1).max(120), instructions: text,
@@ -27,6 +34,7 @@ export const workflowSchema = z.object({
   id: identifier, name: z.string().trim().min(1).max(120), entry: identifier,
   nodes: z.array(nodeSchema).min(1).max(64),
   edges: z.array(z.object({ source: identifier, target: identifier, outcome: z.enum(['pass', 'fail', 'blocked']) })).max(192),
+  land: z.array(landStageSchema).max(4).default([]),
 })
 export type Workflow = z.infer<typeof workflowSchema>
 export type WorkflowNode = Workflow['nodes'][number]
@@ -192,12 +200,23 @@ function analyzeForks(graph: Workflow): { sections: ForkSection[]; errors: strin
 
 export function forkSections(graph: Workflow): ForkSection[] { return analyzeForks(graph).sections }
 
+function landErrors(land: LandStage[]): string[] {
+  const errors: string[] = []
+  if (new Set(land.map(stage => stage.id)).size !== land.length) errors.push('Land stage IDs must be unique')
+  for (const stage of land) {
+    if (stage.run === 'button' && stage.label === undefined) errors.push(`Land stage ${stage.id}: a button stage needs a label`)
+    if (stage.run === 'auto' && stage.label !== undefined) errors.push(`Land stage ${stage.id}: an auto stage has no label`)
+    if (stage.run === 'auto' && stage.preflight !== undefined) errors.push(`Land stage ${stage.id}: only a button stage can have a preflight`)
+  }
+  return errors
+}
+
 export function validateWorkflow(value: unknown): string[] {
   const parsed = workflowSchema.safeParse(value)
   if (!parsed.success) return parsed.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`)
   const graph = parsed.data
   const nodes = new Map(graph.nodes.map(node => [node.id, node]))
-  const errors: string[] = []
+  const errors: string[] = landErrors(graph.land)
   if (nodes.size !== graph.nodes.length) errors.push('Node IDs must be unique')
   if (!nodes.has(graph.entry)) errors.push('Entry node does not exist')
   const edges = new Map<string, string>()
@@ -250,7 +269,11 @@ export function validateWorkflow(value: unknown): string[] {
   return [...new Set(errors)]
 }
 
-function hash(value: unknown): string { return createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 24) }
+function hash(value: unknown): string {
+  const { land, ...rest } = value as { land?: unknown[] }
+  const hashed = Array.isArray(land) && land.length === 0 ? rest : value
+  return createHash('sha256').update(JSON.stringify(hashed)).digest('hex').slice(0, 24)
+}
 
 export function draftRevision(value: unknown): WorkflowRevision {
   const errors = validateWorkflow(value)
@@ -315,6 +338,7 @@ export function createWorkflowStore(base = configDir(), options: WorkflowStoreOp
       if (builtIn(graph.id)) throw new Error('This flow is built in; save it under a new id to change it')
       const fromPlugin = await pluginFlow(graph.id)
       if (fromPlugin) throw new Error(`This flow comes from the ${fromPlugin.plugin} plugin; save it under a new id to change it`)
+      if (graph.land.some(stage => Object.keys(stage.env).length > 0)) throw new Error('Setting references need a plugin flow')
       let current: WorkflowRevision | undefined
       try { current = await get(graph.id) } catch (error) { if ((error as Error).message !== 'Workflow not found') throw error }
       if (current && current.revision !== expectedRevision) throw new Error('Workflow changed; reload before saving')
