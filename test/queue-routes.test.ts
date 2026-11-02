@@ -392,6 +392,11 @@ describe('mockup files', () => {
     expect((await files('{id}/files/demo/%E0%A4%A.html')).status).toBe(404)
   })
 
+  test('an encoded slash cannot smuggle a dotfile past the segment checks', async () => {
+    expect((await files('{id}/files/demo%2F.secret')).status).toBe(404)
+    expect((await files('{id}/files/demo%2Fa.css')).status).toBe(404)
+  })
+
   test('answers 404, still sealed, for everything it refuses', async () => {
     const refused = [
       '{id}/files/demo/missing.html', '{id}/files/demo', '{id}/files/%2e%2e/secret.txt', '{id}/files/demo/%2e%2e/%2e%2e/secret.txt',

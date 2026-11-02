@@ -10,7 +10,7 @@ const HEADERS = { 'Content-Security-Policy': 'sandbox allow-scripts', 'X-Content
 async function insideFile(worktree: string, requested: string): Promise<string | null> {
   let segments: string[]
   try { segments = requested.split('/').map(decodeURIComponent) } catch { return null }
-  if (segments.some(part => part === '' || part.startsWith('.') || part.includes('\0') || part.includes('\\'))) return null
+  if (segments.some(part => part === '' || part.startsWith('.') || part.includes('\0') || part.includes('\\') || part.includes('/'))) return null
   const root = join(worktree, 'visualizer')
   if ((await lstat(root)).isSymbolicLink()) return null
   const realRoot = await realpath(root)
