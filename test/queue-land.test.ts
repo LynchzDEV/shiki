@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { setServerSetting } from '../server/plugins/settings'
+import { saveInstalled } from '../server/plugins/store'
 import { createQueueEngine, QueueRefusal, type QueueEngineDeps } from '../server/queue-engine'
 import { landLogPath } from '../server/queue-land'
 import type { RunView } from '../server/queue-prompts'
@@ -20,6 +21,13 @@ afterEach(async () => {
   delete process.env.SKD_CONFIG_DIR
   await rm(dir, { recursive: true, force: true })
 })
+
+async function installFixstack(keys: string[]): Promise<void> {
+  await saveInstalled({
+    id: 'fixstack', name: 'Fixstack', version: '1.0.0', description: 'test', runtime: 'trusted', source: { repo: 'r', ref: 'v1' }, commit: 'c', permissions: {},
+    settingsFields: keys.map(key => ({ key, label: key, type: 'text' as const })), enabled: true, installedAt: 'now', updatedAt: 'now',
+  })
+}
 
 async function script(name: string, body: string): Promise<string> {
   const path = join(dir, 'bin', name)
@@ -106,10 +114,11 @@ test('an auto stage runs on the host with the item environment and its log is pr
   expect(((await stat(join(done.worktree!, '.mission-control', 'land'))).mode & 0o777).toString(8)).toBe('700')
 })
 
-test('stage env entries resolve from the contributing plugin settings and a missing one fails the stage without leaking values', async () => {
+test('stage env entries resolve from the contributing plugin settings, an unset one is empty and an undeclared one fails the stage', async () => {
   const h = harness()
   const dump = join(dir, 'env.txt')
   const up = await script('up.sh', `echo "$STAGING_LOGIN" > ${dump}`)
+  await installFixstack(['stagingLogin', 'absent'])
   await setServerSetting('fixstack', 'stagingLogin', 'hunter2')
   const withSetting = stage('uat', up, { env: { STAGING_LOGIN: 'setting:stagingLogin' } })
   const first = await h.ship([withSetting], '1', 'fixstack')
@@ -118,8 +127,12 @@ test('stage env entries resolve from the contributing plugin settings and a miss
   expect((await readFile(dump, 'utf8')).trim()).toBe('hunter2')
   const second = await h.ship([stage('uat', up, { env: { STAGING_LOGIN: 'setting:absent' } })], '2', 'fixstack')
   await h.engine.landIdle()
-  expect(h.item(second)).toMatchObject({ state: 'failed', error: expect.stringContaining('Setting absent of fixstack is not set') })
-  expect(JSON.stringify(h.item(second))).not.toContain('hunter2')
+  expect(h.item(second).state).toBe('landed')
+  expect((await readFile(dump, 'utf8')).trim()).toBe('')
+  const third = await h.ship([stage('uat', up, { env: { STAGING_LOGIN: 'setting:undeclared' } })], '3', 'fixstack')
+  await h.engine.landIdle()
+  expect(h.item(third)).toMatchObject({ state: 'failed', error: expect.stringContaining('Setting undeclared is not declared by fixstack') })
+  expect(JSON.stringify(h.item(third))).not.toContain('hunter2')
 })
 
 test('a non-zero exit fails the item with the last 40 log lines', async () => {
@@ -438,6 +451,7 @@ test('a queue file saved before runId existed still loads', async () => {
 
 test('a stage secret echoed by the stage never reaches the stored error, the stored preflight or the log route', async () => {
   const h = harness()
+  await installFixstack(['stagingLogin'])
   await setServerSetting('fixstack', 'stagingLogin', 'hunter2-hunter2')
   const leaky = await script('leaky.sh', 'echo "login is $STAGING_LOGIN"\nexit 1')
   const flight = await script('flight.sh', 'echo "using $STAGING_LOGIN"')

@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { readLogTail } from './jobs'
 import { logSecrets, redactAll } from './log-redaction'
 import { getSetting } from './plugins/settings'
+import { getInstalled } from './plugins/store'
 import { QueueRefusal } from './queue-refusal'
 import { message } from './queue-replies'
 import type { QueueSource } from './queue-source'
@@ -166,9 +167,9 @@ export function createLand(deps: LandDeps) {
       const key = reference.slice('setting:'.length)
       const plugin = item.land?.plugin
       if (plugin === undefined) throw new Error('Setting references need a plugin flow')
-      const value = await getSetting(plugin, key)
-      if (value === null || value === '') throw new Error(`Setting ${key} of ${plugin} is not set`)
-      resolved[variable] = value
+      const declared = (await getInstalled(plugin))?.settingsFields.some(field => field.key === key)
+      if (declared !== true) throw new Error(`Setting ${key} is not declared by ${plugin}`)
+      resolved[variable] = (await getSetting(plugin, key)) ?? ''
     }
     const repos = item.repos === undefined || item.repos.length === 0 ? [basename(item.repo)] : item.repos
     return {
