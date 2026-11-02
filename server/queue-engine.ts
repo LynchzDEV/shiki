@@ -265,7 +265,7 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
     const item = found(store, id)
     if (!REQUEUEABLE.has(item.state)) throw stateRefusal(item.state)
     if (runningInStudio(item)) throw new QueueRefusal('It is running in Studio now', 409)
-    await store.update(id, { state: 'queued', error: null, currentRunId: null, pick: undefined, questions: [], repoReruns: item.repoReruns === undefined ? undefined : 0, realChanged: item.realChanged === undefined ? undefined : [] })
+    await store.update(id, { state: 'queued', error: null, currentRunId: null, pick: undefined, land: undefined, questions: [], repoReruns: item.repoReruns === undefined ? undefined : 0, realChanged: item.realChanged === undefined ? undefined : [] })
     await store.move(id, store.list().length)
     await startNext()
     return found(store, id)

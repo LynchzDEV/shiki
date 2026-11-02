@@ -326,7 +326,7 @@ test('a restart turns a landing item into a failed one to retry; waiting and lan
   const landedId = await h.ship([stage('uat', ship)], '2')
   await h.engine.landIdle()
   const landing = await h.store.add({ source: 'clickup-board', externalId: '3', title: 'Task 3', url: 'u', repo: '/repo', flowId: null }, 'end')
-  await h.store.update(landing.id, { state: 'landing', worktree: dir, land: { stage: 'uat', stages: { uat: { status: 'running' } }, plan: [stage('uat', ship)] } })
+  await h.store.update(landing.id, { state: 'landing', worktree: dir, runIds: ['r1'], land: { stage: 'uat', stages: { uat: { status: 'running' } }, plan: [stage('uat', ship)], runId: 'r1' } })
   await h.engine.recover()
   expect(h.item(landing.id)).toMatchObject({ state: 'failed', error: 'Shikidan restarted during uat; use Retry stage', land: { stages: { uat: { status: 'failed' } } } })
   expect(h.item(waiting).state).toBe('awaiting-stage')
@@ -398,4 +398,40 @@ test('a button stage marked failed by a restart also needs a new confirmation on
   await h.engine.landIdle()
   expect(h.item(id).state).toBe('awaiting-stage')
   expect(await Bun.file(prodRuns).exists()).toBe(false)
+})
+
+test('a rebuild after a failed stage drops the old land state and Retry refuses until a passing run lands again', async () => {
+  const h = harness()
+  const prodRuns = join(dir, 'uat-runs')
+  const uat = await script('uat.sh', `echo x >> ${prodRuns}\nexit 1`)
+  const id = await h.ship([stage('uat', uat)])
+  await h.engine.landIdle()
+  expect(h.item(id).land!.runId).toBe('run-1')
+  await h.engine.requeue(id)
+  expect(h.item(id).land).toBeUndefined()
+  const rebuild = h.item(id).currentRunId!
+  h.runs.set(rebuild, { ...h.runs.get(rebuild)!, status: 'failed', error: 'build broke' })
+  await h.engine.onRunSettled(h.runs.get(rebuild)!)
+  expect(h.item(id).state).toBe('failed')
+  await expect(h.engine.retryStage(id)).rejects.toThrow('There is no stage to retry')
+  expect((await readFile(prodRuns, 'utf8')).trim().split('\n')).toHaveLength(1)
+})
+
+test('retry refuses a failed stage whose run is no longer the latest', async () => {
+  const h = harness()
+  const uat = await script('uat.sh', 'exit 1')
+  const id = await h.ship([stage('uat', uat)])
+  await h.engine.landIdle()
+  await h.store.update(id, { runIds: [...h.item(id).runIds, 'run-9'] })
+  await expect(h.engine.retryStage(id)).rejects.toMatchObject({ message: 'This item was rebuilt since that stage; it lands again after a passing run', status: 409 })
+})
+
+test('a queue file saved before runId existed still loads', async () => {
+  const h = harness()
+  const uat = await script('uat.sh', 'exit 0')
+  const id = await h.ship([button('prod', uat)])
+  const saved = JSON.parse(await readFile(join(dir, 'queue.json'), 'utf8'))
+  delete saved.items[0].land.runId
+  await writeFile(join(dir, 'queue.json'), JSON.stringify(saved))
+  expect(createQueueStore(join(dir, 'queue.json')).get(id)).toMatchObject({ state: 'awaiting-stage' })
 })

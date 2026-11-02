@@ -2,7 +2,7 @@ export type QueueState = 'queued' | 'building' | 'waiting-info' | 'waiting-pick'
 
 export type QueuePickView = { options: string[]; path: string; recommended: string | null; tester: string | null; summary: string }
 export type LandStageView = { status: string; preflight?: { exitCode: number; markdown: string } }
-export type LandView = { stage: string; message?: string; plan: Array<{ id: string; label?: string }>; stages: Record<string, LandStageView> }
+export type LandView = { stage: string; runId?: string; message?: string; plan: Array<{ id: string; label?: string }>; stages: Record<string, LandStageView> }
 
 export type QueueItemView = {
   id: string; source: string; externalId: string; title: string; url: string; flowId: string | null
@@ -95,7 +95,7 @@ export function stageLabel(land: LandView, id: string): string {
 }
 
 const stagePill = (item: QueueItemView): string | undefined => (item.state === 'landing' && item.land !== undefined ? `Shipping: ${stageLabel(item.land, item.land.stage)}` : undefined)
-const failedAtStage = (item: QueueItemView): boolean => item.state === 'failed' && item.land !== undefined
+const failedAtStage = (item: QueueItemView): boolean => item.state === 'failed' && item.land !== undefined && item.land.runId === item.runIds.at(-1)
 const firstLine = (text: string): string => text.split('\n')[0]!
 
 function heading(context: QueueContext): HTMLElement {
@@ -282,10 +282,10 @@ function readStages(value: unknown): Record<string, LandStageView> {
 
 function readLand(value: unknown): { land: LandView } | null {
   if (typeof value !== 'object' || value === null) return null
-  const { stage, message, plan, stages } = value as Record<string, unknown>
+  const { stage, message, plan, stages, runId } = value as Record<string, unknown>
   if (!isText(stage) || !Array.isArray(plan)) return null
   const named = plan.filter((entry): entry is Record<string, unknown> => typeof entry === 'object' && entry !== null && isText((entry as Record<string, unknown>).id))
-  return { land: { stage, ...(isText(message) ? { message } : {}), plan: named.map(entry => ({ id: String(entry.id), ...(isText(entry.label) ? { label: entry.label } : {}) })), stages: readStages(stages) } }
+  return { land: { stage, ...(isText(runId) ? { runId } : {}), ...(isText(message) ? { message } : {}), plan: named.map(entry => ({ id: String(entry.id), ...(isText(entry.label) ? { label: entry.label } : {}) })), stages: readStages(stages) } }
 }
 
 function readItem(value: unknown): QueueItemView | null {

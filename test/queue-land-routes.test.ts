@@ -47,7 +47,7 @@ async function setup() {
   await mkdir(join(worktree, '.mission-control', 'land'), { recursive: true })
   const park = async (plan: LandStage[], patch: Partial<QueueItem>): Promise<QueueItem> => {
     const added = await store.add({ source: 'clickup-board', externalId: '1', title: 'Fix the badge', url: 'https://x/t/1', repo: '/repo', flowId: null }, 'end')
-    return store.update(added.id, { worktree, runIds: ['run-1'], land: { stage: plan[0]!.id, stages: {}, plan }, ...patch })
+    return store.update(added.id, { worktree, runIds: ['run-1'], land: { stage: plan[0]!.id, stages: {}, plan, runId: 'run-1' }, ...patch })
   }
   return { store, engine, call, post, park, worktree }
 }

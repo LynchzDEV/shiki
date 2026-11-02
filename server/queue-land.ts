@@ -271,7 +271,8 @@ export function createLand(deps: LandDeps) {
 
   return {
     async begin(item: QueueItem, plan: LandStage[], plugin?: string): Promise<void> {
-      const land: LandProgress = { stage: plan[0]!.id, stages: {}, plan, ...(plugin === undefined ? {} : { plugin }) }
+      const runId = item.runIds.at(-1)
+      const land: LandProgress = { stage: plan[0]!.id, stages: {}, plan, ...(plugin === undefined ? {} : { plugin }), ...(runId === undefined ? {} : { runId }) }
       await store.update(item.id, { currentRunId: null, error: null, questions: [], land })
       await enter(item.id, plan[0]!.id)
     },
@@ -302,6 +303,7 @@ export function createLand(deps: LandDeps) {
       const item = found(id)
       const name = item.land?.stage
       if (item.state !== 'failed' || name === undefined) throw new QueueRefusal('There is no stage to retry', 409)
+      if (item.land!.runId !== item.runIds.at(-1)) throw new QueueRefusal('This item was rebuilt since that stage; it lands again after a passing run', 409)
       if (item.land!.stages[name]?.status !== 'ok') {
         if (stageOf(item, name).run === 'button') await awaitButton(id, name)
         else await begin(id, name)

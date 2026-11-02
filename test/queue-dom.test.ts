@@ -548,7 +548,7 @@ const flight = (exitCode: number, markdown: string) => ({ stage: 'prod', stages:
 const awaiting = item({ id: 'a1', state: 'awaiting-stage', title: 'Waiting one', runIds: ['r-a1'], land: flight(0, '| repo | ahead |\n|---|---|\n| api | 2 |\n\nSafety: prod') } as Partial<QueueItem>)
 const blocked = item({ id: 'a2', state: 'awaiting-stage', title: 'Blocked one', runIds: ['r-a2'], land: flight(2, 'behind main') } as Partial<QueueItem>)
 const landed = item({ id: 'd1', state: 'landed', title: 'Done one', runIds: ['r-d1'], land: { stage: 'prod', stages: { prod: { status: 'ok' } }, plan: stagePlan } } as Partial<QueueItem>)
-const stuck = item({ id: 'x1', state: 'failed', title: 'Stuck one', runIds: ['r-x1'], error: 'uat failed (exit 3)\nline 49\nline 50', land: { stage: 'uat', stages: { uat: { status: 'failed' } }, plan: stagePlan } } as Partial<QueueItem>)
+const stuck = item({ id: 'x1', state: 'failed', title: 'Stuck one', runIds: ['r-x1'], error: 'uat failed (exit 3)\nline 49\nline 50', land: { stage: 'uat', stages: { uat: { status: 'failed' } }, plan: stagePlan, runId: 'r-x1' } } as Partial<QueueItem>)
 const shipping = [landing, awaiting, blocked, landed, stuck]
 
 test('land states show their pill, their one main button and a Report button', () => {
@@ -562,6 +562,12 @@ test('land states show their pill, their one main button and a Report button', (
   expect(actions('x1')).toEqual(['Retry stage', 'Requeue', 'Open run', 'Report'])
   expect(row('x1').querySelector('.q-meta')?.textContent).toContain('uat failed (exit 3)')
   expect(row('x1').querySelector('.q-land-error')?.textContent).toBe('line 49\nline 50')
+})
+
+test('a failed item rebuilt since its stage failed offers no Retry stage', () => {
+  const rebuilt = item({ id: 'x2', state: 'failed', title: 'Rebuilt one', runIds: ['r-1', 'r-2'], error: 'Run failed', land: { stage: 'uat', stages: { uat: { status: 'failed' } }, plan: stagePlan, runId: 'r-1' } } as Partial<QueueItem>)
+  const view = queue.renderQueue([rebuilt], context())
+  expect([...rows(view)[0]!.querySelectorAll('.q-acts button')].map(button => button.textContent)).not.toContain('Retry stage')
 })
 
 test('Retry stage posts to the land retry route', async () => {

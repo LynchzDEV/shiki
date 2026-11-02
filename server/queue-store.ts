@@ -17,7 +17,7 @@ export type LandStageState = {
   startedAt?: number; endedAt?: number; exitCode?: number | null; posted?: string
   preflight?: { exitCode: number; markdown: string }
 }
-export type LandProgress = { stage: string; stages: Record<string, LandStageState>; message?: string; plan: LandStage[]; plugin?: string }
+export type LandProgress = { stage: string; stages: Record<string, LandStageState>; message?: string; plan: LandStage[]; plugin?: string; runId?: string }
 
 export type QueueItem = {
   id: string; source: string; externalId: string; title: string; url: string; repo: string; flowId: string | null
@@ -69,7 +69,7 @@ function isItem(value: unknown): value is QueueItem {
 }
 
 const isRecord = (value: unknown): boolean => typeof value === 'object' && value !== null && !Array.isArray(value)
-const isLand = (value: unknown): boolean => isRecord(value) && isText((value as Record<string, unknown>).stage) && isRecord((value as Record<string, unknown>).stages) && Array.isArray((value as Record<string, unknown>).plan)
+const isLand = (value: unknown): boolean => isRecord(value) && isText((value as Record<string, unknown>).stage) && ((value as Record<string, unknown>).runId === undefined || isText((value as Record<string, unknown>).runId)) && isRecord((value as Record<string, unknown>).stages) && Array.isArray((value as Record<string, unknown>).plan)
 
 const isMissingFile = (error: unknown): boolean => (error as NodeJS.ErrnoException | null)?.code === 'ENOENT'
 
@@ -137,6 +137,7 @@ export function createQueueStore(path: string, clock: () => number = Date.now): 
       if (current === undefined) throw new Error(`No queue item ${id}`)
       const next: QueueItem = { ...current, ...definedFields(patch), updatedAt: clock() }
       if ('pick' in patch && patch.pick === undefined) delete next.pick
+      if ('land' in patch && patch.land === undefined) delete next.land
       await save(items.map(item => (item.id === id ? next : item)))
       return next
     },
