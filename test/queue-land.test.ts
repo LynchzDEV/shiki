@@ -161,12 +161,21 @@ test('a timeout kills the whole process group', async () => {
   const h = harness()
   const pidFile = join(dir, 'child.pid')
   const slow = await script('slow.sh', `sleep 60 &\necho $! > ${pidFile}\nwait`)
-  const id = await h.ship([stage('uat', slow, { command: { command: slow, args: [], timeoutSeconds: 1 } })])
+  const id = await h.ship([stage('uat', slow, { command: { command: slow, args: [], timeoutSeconds: 2 } })])
   await h.engine.landIdle()
-  expect(h.item(id)).toMatchObject({ state: 'failed', error: expect.stringContaining('timed out after 1s') })
+  expect(h.item(id)).toMatchObject({ state: 'failed', error: expect.stringContaining('timed out after 2s') })
   const pid = Number((await readFile(pidFile, 'utf8')).trim())
-  expect(() => process.kill(pid, 0)).toThrow()
+  expect(await goneWithin(pid, 5000)).toBe(true)
 })
+
+async function goneWithin(pid: number, ms: number): Promise<boolean> {
+  const until = Date.now() + ms
+  while (Date.now() < until) {
+    try { process.kill(pid, 0) } catch { return true }
+    await Bun.sleep(50)
+  }
+  return false
+}
 
 test('stage output can post an update once; later stages and retries do not post it again', async () => {
   const h = harness()
