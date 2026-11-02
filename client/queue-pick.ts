@@ -23,8 +23,9 @@ export function createPickDialog(toast: (text: string) => void): PickDialog {
   const dialog = el('dialog', { class: 'access-dialog flat q-pick-dialog', 'aria-labelledby': 'queue-pick-title' },
     el('header', { class: 'dialog-heading' }, el('div', {}, title, el('p', { class: 'muted' }, 'Choose the design to build. Nothing is posted to the source.')), el('form', { method: 'dialog' }, close)),
     stage, summary, asked,
-    el('div', { class: 'field-stack' }, el('label', { class: 'mk-field' }, 'Tag on ClickUp', tester), el('label', { class: 'mk-field' }, 'Note', note)),
-    error, options) as HTMLDialogElement
+    el('div', { class: 'q-pick-foot' },
+      el('div', { class: 'field-stack' }, el('label', { class: 'mk-field' }, 'Tag on ClickUp', tester), el('label', { class: 'mk-field' }, 'Note', note)),
+      error, options)) as HTMLDialogElement
 
   const showError = (text: string): void => { error.textContent = text; error.hidden = text === '' }
 
