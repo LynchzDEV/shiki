@@ -1,9 +1,11 @@
-export type QueueState = 'queued' | 'building' | 'waiting-info' | 'ready' | 'failed'
+export type QueueState = 'queued' | 'building' | 'waiting-info' | 'waiting-pick' | 'ready' | 'failed'
+
+export type QueuePickView = { options: string[]; path: string; recommended: string | null; tester: string | null; summary: string }
 
 export type QueueItemView = {
   id: string; source: string; externalId: string; title: string; url: string; flowId: string | null
   state: QueueState; runIds: string[]; questions: string[]; error: string | null; updatedAt: number
-  repo?: string; repos?: string[]; realChanged?: string[]; currentRunId?: string; step?: QueueStepView; preparing?: true
+  repo?: string; repos?: string[]; realChanged?: string[]; currentRunId?: string; step?: QueueStepView; preparing?: true; pick?: QueuePickView
 }
 
 export type QueueStepView = { title: string; attempt: number; maxAttempts: number }
@@ -18,11 +20,12 @@ export type QueueContext = {
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
 const LINE = 'Items from your sources, built one at a time. Nothing reaches the remote until you land it.'
-const STATES: readonly QueueState[] = ['building', 'queued', 'waiting-info', 'ready', 'failed']
+const STATES: readonly QueueState[] = ['building', 'queued', 'waiting-info', 'waiting-pick', 'ready', 'failed']
 const PILL: Record<QueueState, { s: string; label: string; count: string; icon?: string }> = {
   building: { s: 'running', label: 'Building', count: 'building' },
   queued: { s: 'queued', label: 'Queued', count: 'queued' },
   'waiting-info': { s: 'waiting', label: 'Waiting info', count: 'waiting', icon: 'q-clock' },
+  'waiting-pick': { s: 'waiting', label: 'Pick a variant', count: 'to pick', icon: 'q-clock' },
   ready: { s: 'done', label: 'Ready', count: 'ready' },
   failed: { s: 'failed', label: 'Failed', count: 'failed' },
 }
@@ -134,6 +137,7 @@ function progressText(item: QueueItemView, items: readonly QueueItemView[], now:
     const count = item.questions.length
     return `Asked ${count} question${count === 1 ? '' : 's'} · ${ageText(item.updatedAt, now)}`
   }
+  if (item.state === 'waiting-pick') return `${item.pick?.options.length ?? 0} variants to choose from · ${ageText(item.updatedAt, now)}`
   if (item.state === 'ready') return `Built · ${ageText(item.updatedAt, now)}`
   return item.error ?? 'Failed'
 }
@@ -147,6 +151,10 @@ function actions(item: QueueItemView, now: number): HTMLElement {
     if (watchRunId(item) !== undefined) parts.push(button('Watch', 'connection-button primary', { ...id, 'data-act': 'watch', 'aria-label': `Watch ${item.title}` }, 'eye-icon'))
   }
   if (waitingInLine(item)) parts.push(button('Remove', 'text-button q-remove', { ...id, 'data-act': 'remove' }))
+  if (item.state === 'waiting-pick') {
+    parts.push(button('Requeue', 'text-button', { ...id, 'data-act': 'requeue' }))
+    parts.push(button('Pick', 'connection-button primary', { ...id, 'data-act': 'pick', 'aria-label': `Pick a variant for ${item.title}` }))
+  }
   if (item.state === 'waiting-info') parts.push(button('Requeue', 'text-button', { ...id, 'data-act': 'requeue' }))
   if (item.state === 'ready') {
     parts.push(button('Requeue', 'text-button', { ...id, 'data-act': 'requeue' }))
@@ -230,6 +238,13 @@ function readStep(value: unknown): { step: QueueStepView } | null {
   return { step: { title, attempt, maxAttempts } }
 }
 
+function readPick(value: unknown): { pick: QueuePickView } | null {
+  if (typeof value !== 'object' || value === null) return null
+  const { options, path, recommended, tester, summary } = value as Record<string, unknown>
+  if (!isTexts(options) || !isText(path) || !isText(summary)) return null
+  return { pick: { options, path, summary, recommended: isText(recommended) ? recommended : null, tester: isText(tester) ? tester : null } }
+}
+
 function readItem(value: unknown): QueueItemView | null {
   if (typeof value !== 'object' || value === null) return null
   const entry = value as Record<string, unknown>
@@ -245,6 +260,7 @@ function readItem(value: unknown): QueueItemView | null {
     ...(isText(entry.currentRunId) ? { currentRunId: entry.currentRunId } : {}),
     ...(entry.preparing === true ? { preparing: true as const } : {}),
     ...(readStep(entry.step) ?? {}),
+    ...(readPick(entry.pick) ?? {}),
   }
 }
 

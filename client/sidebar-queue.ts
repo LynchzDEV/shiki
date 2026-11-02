@@ -7,6 +7,7 @@ const QUEUE_DOT: Record<QueueState, { s: string; label: string }> = {
   building: { s: 'running', label: 'Building' },
   queued: { s: 'queued', label: 'Queued' },
   'waiting-info': { s: 'waiting', label: 'Waiting info' },
+  'waiting-pick': { s: 'waiting', label: 'Pick a variant' },
   ready: { s: 'done', label: 'Ready' },
   failed: { s: 'failed', label: 'Failed' },
 }

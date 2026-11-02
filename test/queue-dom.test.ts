@@ -482,3 +482,62 @@ test('a drag that ends outside the screen still lets go', async () => {
   rowOf('q1').dispatchEvent(over)
   expect(over.defaultPrevented).toBe(false)
 })
+
+const picking = item({ id: 'p1', state: 'waiting-pick', title: 'Login button wording', questions: ['Which tenant?'], runIds: ['r-p1'], pick: { options: ['A', 'B', 'C'], path: 'visualizer/login', recommended: 'B', tester: 'Ploy', summary: '**Three** variants' } } as Partial<QueueItem>)
+const pickDialog = () => doc.querySelector('dialog.q-pick') as HTMLDialogElement
+const openPick = async (reply: () => Response = () => new Response('<h1>x</h1>')) => {
+  replies.set('GET /queue/p1/files/login/index.html', reply)
+  send([picking])
+  await flush()
+  click(buttonNamed('Pick', rowOf('p1')))
+  await flush()
+}
+
+test('a waiting-pick row shows the Pick a variant pill and a Pick button', () => {
+  const view = queue.renderQueue([picking], context())
+  expect(view.querySelector('.q-row .pill-state')?.textContent).toBe('Pick a variant')
+  expect(view.querySelector('.q-meta > span:last-child')?.textContent).toBe('3 variants to choose from · 1h ago')
+  expect(buttonNamed('Pick', view)).toBeDefined()
+})
+
+test('Pick opens the mockup in a sandboxed frame, the summary, the questions and one button per option', async () => {
+  await openPick()
+  const frame = pickDialog().querySelector('iframe') as HTMLIFrameElement
+  expect(pickDialog().open).toBe(true)
+  expect(frame.getAttribute('src')).toBe('/queue/p1/files/login/index.html')
+  expect(frame.getAttribute('sandbox')).toBe('allow-scripts')
+  expect(pickDialog().querySelector('.q-pick-summary strong')?.textContent).toBe('Three')
+  expect(pickDialog().querySelector('.q-pick-asked')?.textContent).toContain('Which tenant?')
+  expect([...pickDialog().querySelectorAll('.q-pick-options button')].map(button => button.textContent)).toEqual(['A', 'B (recommended)', 'C'])
+  expect(pickDialog().querySelector('.q-pick-options .primary')?.textContent).toBe('B (recommended)')
+  expect((pickDialog().querySelector('[name="tester"]') as HTMLInputElement).value).toBe('Ploy')
+})
+
+test('a mockup that is missing says so instead of showing an empty frame', async () => {
+  await openPick(() => new Response('Not found', { status: 404 }))
+  expect(pickDialog().querySelector('iframe')).toBeNull()
+  expect(pickDialog().querySelector('.q-pick-stage')?.textContent).toBe("Mockup files not found in this item's workspace")
+})
+
+test('choosing an option posts it with the tester and note, then closes with a toast', async () => {
+  await openPick()
+  ;(pickDialog().querySelector('[name="tester"]') as HTMLInputElement).value = ' Mint '
+  ;(pickDialog().querySelector('[name="note"]') as HTMLTextAreaElement).value = 'wide one'
+  replies.set('POST /api/queue/p1/pick', () => Response.json({ item: { id: 'p1' } }))
+  click(buttonNamed('B (recommended)', pickDialog()))
+  await flush()
+  expect(calls.find(entry => entry.method === 'POST')).toMatchObject({ url: '/api/queue/p1/pick', body: { option: 'B', tester: 'Mint', note: 'wide one' } })
+  expect(pickDialog().open).toBe(false)
+  expect(toasts).toEqual(['Picked B for Login button wording'])
+})
+
+test('a refused pick shows the server message inline and keeps the dialog open', async () => {
+  await openPick()
+  replies.set('POST /api/queue/p1/pick', () => Response.json({ error: 'It is queued now' }, { status: 409 }))
+  click(buttonNamed('A', pickDialog()))
+  await flush()
+  expect(pickDialog().open).toBe(true)
+  expect(pickDialog().querySelector('.q-add-error')?.textContent).toContain('It is queued now')
+  expect(buttonNamed('A', pickDialog()).hasAttribute('disabled')).toBe(false)
+  expect(toasts).toEqual([])
+})

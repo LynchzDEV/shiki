@@ -19,7 +19,7 @@ const WORKING = 'Working on the next commit'
 const NO_COMMITS = 'No commits yet'
 const MAIN_INK = 'var(--muted)'
 const INK: Record<QueueState, string> = {
-  queued: 'var(--muted)', building: 'var(--accent)', 'waiting-info': 'var(--text-soft)', ready: 'var(--green-ink)', failed: 'var(--red-ink)',
+  queued: 'var(--muted)', building: 'var(--accent)', 'waiting-info': 'var(--text-soft)', 'waiting-pick': 'var(--text-soft)', ready: 'var(--green-ink)', failed: 'var(--red-ink)',
 }
 
 const laneX = (lane: number): number => 14 + lane * LANE_GAP

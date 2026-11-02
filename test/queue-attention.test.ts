@@ -77,3 +77,11 @@ test('a failed sweep is logged, never left unhandled', async () => {
     process.off('unhandledRejection', onUnhandled)
   }
 })
+
+test('a sweep keeps the alert of an item waiting for a pick', async () => {
+  const store = createQueueStore(join(dir, 'queue.json'))
+  const attention = createAttentionStore(join(dir, 'attention.json'))
+  const item = await store.update((await store.add(task('a'), 'end')).id, { state: 'waiting-pick' })
+  await raiseQueueAlert(attention, item, 'Pick a design variant')
+  expect(await sweepQueueAlerts(store, attention)).toBe(0)
+})

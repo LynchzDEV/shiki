@@ -1384,6 +1384,13 @@ a.q-src:hover { color: var(--accent); }
 .q-add .mk-seg button { box-shadow: none; }
 .q-add .mk-seg button[aria-pressed="true"] { box-shadow: var(--raised); }
 .q-add-error { margin: 0 0 14px; font-size: 13px; line-height: 1.5; color: var(--danger); white-space: pre-wrap; }
+.q-pick { width: min(1100px, 94vw); max-height: 94vh; overflow: auto; }
+.q-pick-stage { margin-bottom: 16px; }
+.q-pick-frame { display: block; width: 100%; height: 70vh; border: 1px solid var(--line); border-radius: var(--r-md); background: #fff; }
+.q-pick-summary { margin-bottom: 14px; font-size: 13.5px; max-height: 24vh; overflow: auto; }
+.q-pick-asked { margin-bottom: 14px; font-size: 13px; }
+.q-pick-asked ul { margin: 6px 0 0; padding-left: 18px; }
+.q-pick-options { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
 .q-add-foot { display: flex; justify-content: flex-end; gap: 10px; }
 .q-folder-check { display: block; margin-top: 6px; color: var(--muted); font-size: 12px; }
 .q-folder-check[hidden] { display: none; }
