@@ -67,7 +67,7 @@ The graph routes one step at a time using pass/fail/blocked. Unconnected pass fi
 Implementation work must pass plan -> verify-plan -> implement -> review. Review must use a different model family. Generic research or testing tasks may use kind task. Do not disguise code implementation as a generic task.
 Use the configured role defaults unless the user requests a connected AI. Available connections: ${JSON.stringify(catalog)}. Role defaults: ${JSON.stringify(roles)}.
 Never invent tool commands, environment variables, file paths, skills, or checks. Preserve only exact attachments from the supplied workflow. Keep new attachments empty and describe missing setup in the setup array. For a new workflow use id draft. For edits preserve the workflow id and existing node IDs where possible.
-Current workflow: ${JSON.stringify(input.workflow ?? null)}
+Current workflow: ${JSON.stringify(input.workflow === undefined ? null : { ...input.workflow, land: [] })}
 User request: ${JSON.stringify(input.description)}`
       if (prompt.length > 180000) throw new Error('This workflow is too large for AI editing. Edit individual steps on the canvas instead.')
       await mkdir(root, { recursive: true, mode: 0o700 })

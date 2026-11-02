@@ -88,3 +88,14 @@ test('an AI-drafted flow with land stages is rejected', () => {
   expect(() => readWorkflowDraft(log({ ...answer(), workflow: { ...answer().workflow, land } }), ['claude', 'codex'])).toThrow('Land stages can only be added by hand')
   expect(readWorkflowDraft(log(answer()), ['claude', 'codex']).workflow.land).toEqual([])
 })
+
+test('the current workflow sent to the AI carries no land stages', async () => {
+  let prompt = ''
+  const resolver: EngineResolver = params => { prompt = params.prompt; return { cmd: 'echo', args: [log(answer())], env: {} } }
+  const builder = createWorkflowBuilder({ manager, resolver, store: createWorkflowStore(config), home })
+  const land = [{ id: 'prod', run: 'button', command: { command: 'ship-secret-command.sh', args: [], timeoutSeconds: 30 }, env: {} }]
+  const started = await builder.start({ description: 'Tidy it', workflow: { ...classicWorkflow(), land } })
+  expect(prompt).toContain('"land":[]')
+  expect(prompt).not.toContain('ship-secret-command.sh')
+  await manager.killJob(started.id)
+})
