@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { defaultWorkflow, validateWorkflow } from '../server/workflows'
 import { classicWorkflow } from './support/classic-workflow'
-import { agentHelp, agentIcon, agentLabel, insertWorkflowStep, runNote, showsModelFields, kindIcon, nodeRunStates, roleOptions, roleWord, rolesBody, removeWorkflowStep, taskPreset, validRoleName, workflowTemplates } from '../client/studio-graph'
+import { agentChoice, agentFromChoice, agentHelp, agentIcon, agentLabel, roleChoice, insertWorkflowStep, runNote, showsModelFields, kindIcon, nodeRunStates, roleOptions, roleWord, rolesBody, removeWorkflowStep, taskPreset, validRoleName, workflowTemplates } from '../client/studio-graph'
 
 test('adding a custom step keeps the following review connected and preserves failure routes',()=>{
   const graph=classicWorkflow()
@@ -83,6 +83,18 @@ test('validRoleName accepts a new name and rejects reserved, duplicate and malfo
   expect(validRoleName('-x',[])).toBe(false)
   expect(validRoleName('a'.repeat(64),[])).toBe(true)
   expect(validRoleName('a'.repeat(65),[])).toBe(false)
+})
+
+test('the step picker shows a pinned AI by its id and an unpinned step by its role',()=>{
+  expect(agentChoice({role:'execute',engine:'codex'})).toBe('codex')
+  expect(agentChoice({role:'builder'})).toBe(roleChoice('builder'))
+  expect(roleChoice('builder')).not.toBe(agentChoice({role:'execute',engine:'builder'}))
+})
+
+test('picking a role drops the pinned AI and model; picking an AI keeps the current role',()=>{
+  expect(agentFromChoice(roleChoice('builder'),{role:'execute',engine:'codex'})).toEqual({role:'builder'})
+  expect(agentFromChoice('glm',{role:'builder'})).toEqual({role:'builder',engine:'glm'})
+  expect(agentFromChoice('session',{role:'plan'})).toEqual({role:'plan',engine:'session'})
 })
 
 test('rolesBody sends every role from the last read plus edits, drops removed roles and keeps autoReview',()=>{

@@ -8,7 +8,7 @@ import type { RunStatus, WorkflowRun } from '../server/workflow-runner'
 import type { DraftJob, WorkflowDraft } from '../server/workflow-builder'
 import { api, openRun } from './studio-api'
 import { Connections, StepAttachments, type ConnectionList } from './studio-settings'
-import { agentHelp, agentIcon, agentLabel, IN_SESSION, insertWorkflowStep, kindIcon, nodeRunStates, roleWord, removeWorkflowStep, runNote, showsModelFields, stepPresets, taskPreset, workflowTemplates, type NodeRunState, type Provider } from './studio-graph'
+import { agentChoice, agentFromChoice, agentHelp, agentIcon, agentLabel, IN_SESSION, roleChoice, insertWorkflowStep, kindIcon, nodeRunStates, roleOptions, roleWord, removeWorkflowStep, runNote, showsModelFields, stepPresets, taskPreset, workflowTemplates, type NodeRunState, type Provider, type RoleOption } from './studio-graph'
 
 type TaskNode = Node<WorkflowNode & { agentLabel: string; branches: Outcome[]; runState?: NodeRunState; runSince?: number }, 'task'>
 type Screen = 'home' | 'templates' | 'editor' | 'connections' | 'runs' | 'rules'
@@ -21,6 +21,7 @@ const purposeLabels = { task: 'Custom task', plan: 'Plan work', 'verify-plan': '
 const NAV: Array<[Screen, string]> = [['home', 'Workflows'], ['connections', 'Manage AIs'], ['runs', 'Runs'], ['rules', 'Rules']]
 const EXAMPLES: Array<[string, string]> = [['Plan, implement, review', 'Plan the work, verify the plan, then implement and get an independent review using my configured AIs.'], ['Research and verify', 'Research my question, then have another AI check the sources and findings.']]
 const SUGGESTIONS = ['Add a testing step before the final review', 'Use a different AI to review the work']
+const ROLE_HELP = 'Uses the AI set for this role in Settings. Falls back to the fallback AI when it cannot run.'
 const Icon = ({ id }: { id: string }) => <svg aria-hidden="true"><use href={`#${id}`} /></svg>
 
 const runLabels: Record<NodeRunState, string> = { passed: 'Passed', running: 'Running', failed: 'Needs attention', waiting: 'Waiting' }
@@ -81,6 +82,7 @@ function Studio() {
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
   const [list, setList] = useState<ConnectionList>({ builtins: ['claude', 'glm', 'codex'], connections: [], presets: [], models: {} })
   const [providers, setProviders] = useState<Provider[]>([])
+  const [roles, setRoles] = useState<RoleOption[] | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const [dirty, setDirty] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -124,12 +126,23 @@ function Studio() {
   function load(value: WorkflowRevision, edited = false) { setGraph(value); setNodes(nodesFor(value)); setEdges(graphEdges(value)); setSelected(null); setDirty(edited); setPromptPreview(''); setRevisions([]); fit() }
   function draft(): Workflow { return { id: graph!.id, name: graph!.name, entry: graph!.entry, nodes: nodes.map(node => { const { agentLabel: _label, branches: _branches, ...spec } = node.data; return { ...spec, position: node.position } }), edges: edges.map(edge => ({ source: edge.source, target: edge.target, outcome: (edge.sourceHandle ?? 'pass') as Outcome })), land: graph!.land ?? [] } }
   function markDirty() { setGraph(current => current?.id === 'default' ? fresh({ ...current, name: `${current.name} copy` }) : current); setDirty(true); setError(''); setPromptPreview('') }
+  function pickAgent(node: WorkflowNode, value: string) {
+    if (value === 'connect') return go('connections')
+    // server/workflows.ts types role as plan|execute|review until the server half widens it to any role name
+    patch({ agent: agentFromChoice(value, node.agent) as WorkflowNode['agent'] })
+  }
   function patch(patch: Partial<WorkflowNode>) { if (disabled) return; markDirty(); setNodes(current => current.map(node => node.id === selected ? { ...node, data: { ...node.data, ...patch, ...(patch.agent ? { agentLabel: label({ agent: patch.agent }) } : {}) } } : node)) }
   function adopt(value: Workflow) { markDirty(); setGraph(current => current ? { ...current, entry: value.entry } : current); setNodes(nodesFor(value)); setEdges(graphEdges(value)); fit() }
   function addStep(id: string) { if (disabled || !graph) return; const step = taskPreset(id); adopt(insertWorkflowStep(draft(), step, selected ?? undefined)); setSelected(step.id); setPanel('step') }
   function wire(source: string, outcome: Outcome, target: string, replacing?: string) { if (disabled) return; const value = draft(); const replaced = (edge: Workflow['edges'][number]) => edge.source === source && edge.outcome === outcome && (outcome !== 'pass' || edge.target === target || edge.target === replacing); value.edges = [...value.edges.filter(edge => !replaced(edge)), ...(target ? [{ source, outcome, target }] : [])]; adopt(value) }
   async function action(task: () => Promise<void>) { setBusy(true); setError(''); try { await task() } catch (error) { setError((error as Error).message) } finally { setBusy(false) } }
-  const refreshConnections = useCallback(async () => { setList(await api<ConnectionList>('/connections')); const result = await fetch('/api/providers').then(response => response.json()) as { providers: Provider[] }; setProviders(result.providers ?? []) }, [])
+  const refreshConnections = useCallback(async () => {
+    setList(await api<ConnectionList>('/connections'))
+    const result = await fetch('/api/providers').then(response => response.json()) as { providers: Provider[] }
+    setProviders(result.providers ?? [])
+    const response = await fetch('/api/roles')
+    if (response.ok) setRoles(roleOptions(await response.json() as Record<string, unknown>))
+  }, [])
   const refreshWorkflows = useCallback(async () => { const result = await api<{ workflows: WorkflowRevision[]; selected: WorkflowRevision; design: boolean }>('/workflows'); setWorkflows(result.workflows); setDefaultFlow(result.selected); setDesign(result.design); return result }, [])
   const refreshRuns = useCallback(async () => setRuns((await api<{ runs: RunSummary[] }>('/runs')).runs), [])
   useEffect(() => { let active = true; Promise.all([refreshWorkflows(), refreshConnections(), api<PolicyRevision>('/policy'), api<{ draft: DraftJob | null }>('/drafts')]).then(([, , policy, drafting]) => { if (active) { setPolicy(policy); setPolicyText(policy.template); if (drafting.draft) setDraftJob(drafting.draft) } }).catch(error => setError(error.message)); return () => { active = false } }, [])
@@ -252,7 +265,12 @@ function Studio() {
           {panel === 'step' && (current ? <fieldset disabled={disabled} className="step-editor"><h2>Edit step</h2>
             <label>Step name<input value={current.title} onChange={event => patch({ title: event.target.value })} /></label>
             <label>What should happen?<textarea rows={6} value={current.instructions} onChange={event => patch({ instructions: event.target.value })} /></label>
-            <label>Who should do it?<select value={current.agent.engine ?? ''} onChange={event => event.target.value === 'connect' ? go('connections') : patch({ agent: event.target.value ? { role: current.agent.role, engine: event.target.value } : { role: current.agent.role } })}><option value="">Chat decides</option><option value={IN_SESSION}>In Session</option>{providerOptions}{current.agent.engine && current.agent.engine !== IN_SESSION && !providers.some(provider => provider.id === current.agent.engine) && <option value={current.agent.engine}>Unavailable · {current.agent.engine}</option>}<option value="connect">+ Connect another AI</option></select><small className="muted">{agentHelp(current.agent.engine)}</small></label>
+            <label>Who should do it?<select value={agentChoice(current.agent)} onChange={event => pickAgent(current, event.target.value)}>
+              <optgroup label="Role">{roles?.map(role => <option key={role.name} value={roleChoice(role.name)}>{roleWord(role.name)} · {label({ agent: { role: 'execute', engine: role.engine } })}</option>)}{!current.agent.engine && !roles?.some(role => role.name === current.agent.role) && <option value={roleChoice(current.agent.role)}>{roles ? `Missing role · ${current.agent.role}` : roleWord(current.agent.role)}</option>}</optgroup>
+              <option value={IN_SESSION}>In Session</option>
+              <optgroup label="A specific AI">{providerOptions}{current.agent.engine && current.agent.engine !== IN_SESSION && !providers.some(provider => provider.id === current.agent.engine) && <option value={current.agent.engine}>Unavailable · {current.agent.engine}</option>}</optgroup>
+              <option value="connect">+ Connect another AI</option>
+            </select><small className="muted">{current.agent.engine ? agentHelp(current.agent.engine) : ROLE_HELP}</small></label>
             <details><summary>Tools, skills & checks{current.skills.length + current.mcpServers.length + current.checks.length ? ` (${current.skills.length + current.mcpServers.length + current.checks.length})` : ''}</summary><StepAttachments node={current} onChange={patch} /></details>
             <details><summary>More options</summary>
               <label>Task purpose<select value={current.kind} onChange={event => patch({ kind: event.target.value as WorkflowNode['kind'] })}>{Object.entries(purposeLabels).map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></label>

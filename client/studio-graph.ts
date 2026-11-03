@@ -72,6 +72,13 @@ export function roleOptions(roles: Record<string, unknown>): RoleOption[] {
 export function validRoleName(name: string, existing: readonly string[]): boolean {
   return ROLE_NAME.test(name) && !RESERVED_KEYS.has(name) && !existing.includes(name)
 }
+const ROLE_CHOICE = 'role:'
+export type AgentPick = { role: string; engine?: string }
+export function agentChoice(agent: AgentPick): string { return agent.engine ?? `${ROLE_CHOICE}${agent.role}` }
+export function roleChoice(name: string): string { return `${ROLE_CHOICE}${name}` }
+export function agentFromChoice(value: string, current: AgentPick): AgentPick {
+  return value.startsWith(ROLE_CHOICE) ? { role: value.slice(ROLE_CHOICE.length) } : { role: current.role, engine: value }
+}
 export function rolesBody(read: Record<string, unknown>, roles: readonly RoleOption[], fallback: RoleAssignment | null): Record<string, unknown> {
   const shown = new Set(roleOptions(read).map(role => role.name))
   const unshown = Object.entries(read).filter(([name]) => !shown.has(name))

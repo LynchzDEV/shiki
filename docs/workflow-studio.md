@@ -29,7 +29,7 @@ The designer uses existing job logs and cancellation. A generation can be stoppe
 
 Use **Add step** to search editable presets or select **Custom task**. Every step has free-form instructions and an AI assignment. Select a step and choose **Add next step** to insert a task while preserving the following step. Drag to arrange the canvas or connect the handles. **Connections & more options** provides labeled outcome routes, model selection, attempt limits, and task purpose. One outcome follows one path. Loops stop at the node's maximum visit count, with an overall limit of 256 node executions.
 
-**Who should do it?** offers **Use default** or one entry per connected AI. The helper text names the AI currently assigned by the step's planning, execution, or review default. Choosing an AI directly keeps that assignment when role defaults change.
+**Who should do it?** lists the roles first, each as `<Role> · <its AI>` from **Manage AIs → Roles**, then **In Session**, then **A specific AI** with one entry per connected AI. A step on a role uses whatever AI that role has in Settings, and the fallback AI when that AI cannot run. Picking a specific AI pins the step to it and keeps the step's role. A step whose role no longer exists shows **Missing role · `<name>`** until you pick another, so nothing changes silently.
 
 The **New terminal** form has a **Workflow** selector, shared with **Resume**. **Default workflow** selects your saved default; choose another saved workflow for that terminal alone. If your saved default is custom, **pstack Feature** still offers the built-in default. Each terminal shows its workflow name and version below its header, including in split views and after refreshing the page.
 
