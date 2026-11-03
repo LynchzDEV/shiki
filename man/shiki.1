@@ -536,6 +536,11 @@ Choose a design variant for an item waiting on a pick.
 names who to tag and
 .B \-\-note
 adds a note for the next run.
+When the flow's plugin has its
+.B autoPick
+setting on, the queue takes the recommended variant itself, alerts
+.RI "Auto-picked " option
+and keeps building; a pick with no recommended variant still waits for you.
 .TP
 .BI "shiki queue remove " id
 Remove an item that is not building.

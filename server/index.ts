@@ -33,6 +33,7 @@ import { modelsRoutes } from './routes/models'
 import { providersRoutes } from './routes/providers'
 import { pluginsRoutes } from './routes/plugins'
 import { defaultRuntimes } from './plugins/runtimes'
+import { getSetting } from './plugins/settings'
 import { isWorktreeOf, prepareWorktree } from './job-worktrees'
 import { getInstalled } from './plugins/store'
 import { createQueueEngine, type QueueEngine } from './queue-engine'
@@ -233,6 +234,7 @@ export async function createApp(): Promise<Elysia> {
     pluginFiles: pluginId => join(configDir(), 'plugin-data', pluginId, 'files'),
     backupDir: itemId => join(configDir(), 'queue-files', itemId),
     needsYou: (item, reason) => { void raiseQueueAlert(attention, item, reason).catch(error => console.error('Queue alert failed', error)) },
+    autoPick: async id => (await getSetting(id, 'autoPick')) === 'true',
   })
   watchQueueAlerts(queueStore, attention)
   const bootQueue = queueEngine

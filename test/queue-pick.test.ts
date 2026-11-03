@@ -14,7 +14,7 @@ afterEach(async () => { await rm(dir, { recursive: true, force: true }) })
 
 const PICK = 'pick: A,B,C | visualizer/login | B | Ploy'
 
-async function building() {
+async function building(autoPick?: QueueEngineDeps['autoPick']) {
   const store = createQueueStore(join(dir, 'queue.json'))
   const runs = new Map<string, RunView>()
   const posted: string[][] = []
@@ -30,12 +30,13 @@ async function building() {
     pluginFiles: () => join(dir, 'plugin-data'),
     backupDir: itemId => join(dir, 'queue-files', itemId),
     needsYou: (_item, reason) => { alerts.push(reason) },
+    ...(autoPick === undefined ? {} : { autoPick }),
   }
   const engine = createQueueEngine(deps)
   const item = await engine.add({ source: 'clickup-board', externalId: '1', repo: '/repo' })
   const other = await engine.add({ source: 'clickup-board', externalId: '2', repo: '/repo' })
-  const block = async (runId: string, evidence: string[], output = '') => {
-    const run: RunView = { id: runId, status: 'blocked', error: null, attempts: [{ nodeId: 'mockups', number: 1, jobId: 'j', status: 'settled', prompt: '', startedAt: 1, endedAt: 2, result: { outcome: 'blocked', summary: 'Three variants', evidence }, checks: [], output, workspace: null, tokenId: 't', pathId: 'main', from: [] }] }
+  const block = async (runId: string, evidence: string[], output = '', workflow?: RunView['workflow']) => {
+    const run: RunView = { id: runId, ...(workflow === undefined ? {} : { workflow }), status: 'blocked', error: null, attempts: [{ nodeId: 'mockups', number: 1, jobId: 'j', status: 'settled', prompt: '', startedAt: 1, endedAt: 2, result: { outcome: 'blocked', summary: 'Three variants', evidence }, checks: [], output, workspace: null, tokenId: 't', pathId: 'main', from: [] }] }
     runs.set(runId, run)
     await engine.onRunSettled(run)
   }
@@ -206,4 +207,53 @@ test('a variant named none is a bad pick line', async () => {
   const h = await building()
   await h.block('run-1', ['pick: A,None | visualizer/login'])
   expect(h.store.get(h.item.id)).toMatchObject({ state: 'failed', error: 'Bad pick line: none is reserved for "none of these"' })
+})
+
+const FLOW = { plugin: 'fixstack' }
+
+test('with autoPick on, a pick with a recommendation is taken and the card goes back to building', async () => {
+  const asked: string[] = []
+  const h = await building(async (pluginId) => { asked.push(pluginId); return true })
+  await h.block('run-1', ['Which page?', PICK], 'step log', FLOW)
+  expect(asked).toEqual(['fixstack'])
+  const item = h.store.get(h.item.id)!
+  expect(item).toMatchObject({ state: 'building', currentRunId: 'run-2', runIds: ['run-1', 'run-2'], questions: [] })
+  expect('pick' in item).toBe(false)
+  const path = join(item.worktree!, '.shikidan', 'queue', 'clickup-board', 'pick.md')
+  expect(await readFile(path, 'utf8')).toBe('# Design pick\n\nOption: B\nTester: (not set)\nNote: Auto-picked the recommended option (autoPick is on in fixstack settings)\n')
+  expect(item.answerPaths).toEqual([path])
+  expect(h.alerts).toEqual(['Auto-picked B'])
+  expect(h.store.get(h.other.id)!.state).toBe('queued')
+})
+
+test('with autoPick off the card waits for a person', async () => {
+  const h = await building(async () => false)
+  await h.block('run-1', [PICK], 'step log', FLOW)
+  expect(h.store.get(h.item.id)).toMatchObject({ state: 'waiting-pick', pick: { recommended: 'B' } })
+  expect(h.alerts).toEqual(['Pick a design variant'])
+})
+
+test('no recommendation never auto-picks', async () => {
+  const asked: string[] = []
+  const h = await building(async (pluginId) => { asked.push(pluginId); return true })
+  await h.block('run-1', ['pick: A,B,C | visualizer/login'], 'step log', FLOW)
+  expect(h.store.get(h.item.id)).toMatchObject({ state: 'waiting-pick', pick: { recommended: null } })
+  expect(h.alerts).toEqual(['Pick a design variant'])
+})
+
+test('a run from no plugin flow never auto-picks', async () => {
+  const asked: string[] = []
+  const h = await building(async (pluginId) => { asked.push(pluginId); return true })
+  await h.block('run-1', [PICK])
+  expect(asked).toEqual([])
+  expect(h.store.get(h.item.id)!.state).toBe('waiting-pick')
+})
+
+test('an auto-pick that cannot be written parks the card for a person instead', async () => {
+  const h = await building(async () => { throw new Error('settings unreadable') })
+  const quiet = spyOn(console, 'error').mockImplementation(() => {})
+  await h.block('run-1', [PICK], 'step log', FLOW)
+  quiet.mockRestore()
+  expect(h.store.get(h.item.id)).toMatchObject({ state: 'waiting-pick', pick: { recommended: 'B' } })
+  expect(h.alerts).toEqual(['Pick a design variant'])
 })

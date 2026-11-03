@@ -30,6 +30,7 @@ export type QueueEngineDeps = {
   pluginFiles(pluginId: string): string
   backupDir(itemId: string): string
   needsYou(item: QueueItem, reason: string): void
+  autoPick?(pluginId: string): Promise<boolean>
   now?: () => number
 }
 
@@ -84,6 +85,22 @@ async function fromSource<T>(work: () => Promise<T>): Promise<T> {
   } catch (error) {
     throw new SourceFailure(message(error))
   }
+}
+
+const MAX_TESTER = 200
+const MAX_NOTE = 4000
+
+async function writePick(deps: QueueEngineDeps, item: QueueItem, worktree: string, choice: PickChoice): Promise<void> {
+  const none = choice.option === NO_PICK
+  const tester = oneLine((choice.tester ?? '').slice(0, MAX_TESTER))
+  const note = oneLine((choice.note ?? '').slice(0, MAX_NOTE))
+  const markdown = `# Design pick\n\nOption: ${choice.option}\nTester: ${tester || '(not set)'}\nNote: ${note || '(none)'}\n${none ? noPickMarkdown(choice.feedback ?? '') : stillOpenMarkdown(choice.answers ?? [])}`
+  const restored = await worktreeRestorer(deps)({ ...item, worktree })
+  await refuseLinkedQueueFolders(restored, item.source)
+  const path = await deps.writeContext(item.source, { name: 'pick', markdown }, restored)
+  await backUpAnswers(deps.backupDir(item.id), path, markdown)
+  await deps.store.update(item.id, { state: 'queued', worktree: restored, answerPaths: [...item.answerPaths.filter(entry => !PICK_FILE.test(basename(entry))), path], pick: undefined, questions: [], currentRunId: null, error: null })
+  await deps.store.toFront(item.id)
 }
 
 const stateRefusal = (state: QueueItem['state']): QueueRefusal => new QueueRefusal(`It is ${state} now`, 409)
@@ -143,6 +160,7 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
     const picked = pickOf(run)
     if (picked !== null && 'invalid' in picked) return fail(item, `Bad pick line: ${picked.invalid}`)
     if (picked !== null) {
+      if (picked.recommended !== null && await autoPicked(item, picked.recommended, run.workflow?.plugin)) return
       const parked = await store.update(item.id, { state: 'waiting-pick', pick: { ...picked, summary: blockedSummary(run) }, questions, currentRunId: null })
       deps.needsYou(parked, 'Pick a design variant')
       return
@@ -154,6 +172,19 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
     } catch (error) {
       await fail(item, `Could not post the questions: ${message(error)}`)
     }
+  }
+
+  async function autoPicked(item: QueueItem, option: string, plugin: string | undefined): Promise<boolean> {
+    if (plugin === undefined || item.worktree === null) return false
+    try {
+      if (!await deps.autoPick?.(plugin)) return false
+      await writePick(deps, item, item.worktree, { option, tester: '', note: `Auto-picked the recommended option (autoPick is on in ${plugin} settings)` })
+    } catch (error) {
+      console.error(`Queue item ${item.id} auto-pick failed`, error)
+      return false
+    }
+    deps.needsYou(store.get(item.id) ?? item, `Auto-picked ${option}`)
+    return true
   }
 
   async function withRecordedRepos(item: QueueItem): Promise<QueueItem | { fail: string }> {
@@ -303,10 +334,6 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
     return found(store, id)
   })
 
-  const restore = worktreeRestorer(deps)
-  const MAX_TESTER = 200
-  const MAX_NOTE = 4000
-
   const pick = (id: string, choice: PickChoice): Promise<QueueItem> => serial(async () => {
     const item = found(store, id)
     if (item.state !== 'waiting-pick' || item.pick === undefined) throw stateRefusal(item.state)
@@ -316,20 +343,12 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
     if (none && (choice.feedback ?? '').trim() === '') throw new QueueRefusal('Say what should change', 400)
     if (!none && choice.feedback !== undefined) throw new QueueRefusal('Feedback is only for none of these', 400)
     if (item.worktree === null) throw new QueueRefusal('It has no workspace', 409)
-    const tester = oneLine((choice.tester ?? '').slice(0, MAX_TESTER))
-    const note = oneLine((choice.note ?? '').slice(0, MAX_NOTE))
-    const markdown = `# Design pick\n\nOption: ${choice.option}\nTester: ${tester || '(not set)'}\nNote: ${note || '(none)'}\n${none ? noPickMarkdown(choice.feedback ?? '') : stillOpenMarkdown(choice.answers ?? [])}`
     try {
-      const worktree = await restore({ ...item, worktree: item.worktree })
-      await refuseLinkedQueueFolders(worktree, item.source)
-      const path = await deps.writeContext(item.source, { name: 'pick', markdown }, worktree)
-      await backUpAnswers(deps.backupDir(item.id), path, markdown)
-      await store.update(id, { state: 'queued', worktree, answerPaths: [...item.answerPaths.filter(entry => !PICK_FILE.test(basename(entry))), path], pick: undefined, questions: [], error: null })
+      await writePick(deps, item, item.worktree, choice)
     } catch (error) {
       if (error instanceof WorktreeGone) throw new QueueRefusal(error.message, 409)
       throw error
     }
-    await store.toFront(id)
     await startNext()
     return found(store, id)
   })

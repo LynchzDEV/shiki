@@ -105,6 +105,7 @@ The sidebar on the left lists your chats and live terminals, grouped by Today, Y
 
 - **Isolated** plugins run under the macOS sandbox: they reach only the hosts they declared, read only their own bundle and data folder, never see your other secrets, and draw their screen in a locked frame. Isolated plugins that use the network need Bun 1.2.23 or newer (`bun upgrade`).
 - **Trusted** plugins load straight into Shikidan and get full access, so installing one asks you to confirm you trust it.
+- A plugin that runs card-queue flows can offer an **Auto-pick the recommended design** switch (`autoPick`, off by default). On, the queue takes the variant the mockup step recommends and keeps building instead of waiting for you to pick.
 - A plugin can open the launcher for a chat or terminal, never start one on its own. Its task context is saved in the session folder under `.shikidan/` (kept out of git through `.git/info/exclude`).
 
 Write your own: start from [skd-plugin-template](https://github.com/LynchzDEV/skd-plugin-template) and the [skd-plugin-sdk](https://github.com/LynchzDEV/skd-plugin-sdk) guide. Design: `docs/superpowers/specs/2026-10-04-plugins-marketplace-design.md`.
