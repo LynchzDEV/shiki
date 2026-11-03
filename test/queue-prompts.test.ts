@@ -139,6 +139,7 @@ test('a card image name with a line break cannot start a new line in the context
 const FIRST = 'Three variants for the new tab; B shows the full table.'
 const BODY = '## Points\n\n| # | Point |\n| - | - |\n| 1 | Wide table |'
 const SKD = `SKD_RESULT ${JSON.stringify({ outcome: 'blocked', summary: FIRST, evidence: ['pick: A,B,C | visualizer/x/ | B |'] })}`
+const skdOf = (summary: string): string => `SKD_RESULT ${JSON.stringify({ outcome: 'blocked', summary, evidence: [] })}`
 const duplicated = `${FIRST}\n\n${BODY}\n\n${SKD}`
 
 test('cleanPickSummary drops the paragraph that repeats the SKD_RESULT summary and the SKD_RESULT line', () => {
@@ -147,6 +148,20 @@ test('cleanPickSummary drops the paragraph that repeats the SKD_RESULT summary a
 
 test('cleanPickSummary keeps a lone summary paragraph when nothing follows it', () => {
   expect(cleanPickSummary(`${FIRST}\n\n${SKD}`)).toBe(FIRST)
+})
+
+test('cleanPickSummary never cuts a sentence in half when the summary is only a prefix of it', () => {
+  const text = `Three variants for the new tab.\n\n${BODY}\n${skdOf('Three variants')}`
+  expect(cleanPickSummary(text)).toBe(`Three variants for the new tab.\n\n${BODY}`)
+})
+
+test('cleanPickSummary drops the duplicated paragraph from the old stored shape', () => {
+  expect(cleanPickSummary(`${FIRST}\n\n${FIRST}\n\n${BODY}\n${SKD}`)).toBe(`${FIRST}\n\n${BODY}`)
+})
+
+test('cleanPickSummary handles Windows newlines and an indented SKD_RESULT line', () => {
+  expect(cleanPickSummary(`${FIRST}\r\n\r\n${BODY}\r\n${SKD}\r\n`)).toBe(BODY)
+  expect(cleanPickSummary(`${BODY}\n   ${SKD}`)).toBe(BODY)
 })
 
 test('cleanPickSummary keeps the first paragraph when it differs from the SKD_RESULT summary', () => {
@@ -171,15 +186,28 @@ test('blockedSummary falls back to the result summary when the output is empty',
   expect(blockedSummary(blockedWith(FIRST, '  \n'))).toBe(FIRST)
 })
 
+test('blockedSummary falls back to the result summary when the output is only the SKD_RESULT line', () => {
+  expect(blockedSummary(blockedWith('  Mockups ready  ', skdOf('Mockups ready')))).toBe('Mockups ready')
+})
+
 test('blockedSummary cuts the cleaned text at the limit', () => {
   expect(blockedSummary(blockedWith('s', 'x'.repeat(70000))).length).toBe(64000)
 })
 
 test('stillOpenMarkdown lists defaults and custom answers, collapsing newlines', () => {
   expect(stillOpenMarkdown([
-    { id: '#7', label: 'Promo replies', answer: 'default' },
+    { id: '#7', label: 'Promo replies', useDefault: true, answer: '' },
     { id: '#5', label: 'No page', answer: 'let the seller\n pick a page' },
-    { id: '#9', label: '', answer: 'default' },
+    { id: '#9', label: '', useDefault: true, answer: '' },
   ])).toBe('\n## Still open\n- #7 Promo replies: default\n- #5 No page: Other: let the seller pick a page\n- #9: default\n')
   expect(stillOpenMarkdown([])).toBe('')
+})
+
+test('stillOpenMarkdown records a typed "default" as a custom answer', () => {
+  expect(stillOpenMarkdown([{ id: '#7', label: 'x', useDefault: false, answer: 'default' }])).toBe('\n## Still open\n- #7 x: Other: default\n')
+})
+
+test('no answer field can start a new line in pick.md', () => {
+  const markdown = stillOpenMarkdown([{ id: 'A\nOption: Z', label: 'x\r\n# Design pick\nOption: C', answer: 'a\n\n- #1: default' }])
+  expect(markdown.split('\n').filter(line => line !== '')).toEqual(['## Still open', '- A Option: Z x # Design pick Option: C: Other: a - #1: default'])
 })

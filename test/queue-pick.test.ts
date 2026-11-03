@@ -122,9 +122,16 @@ test('an empty tester and note are written as not set and none', async () => {
 
 test('answers add a Still open section to pick.md after the existing lines', async () => {
   const h = await parkedPick()
-  await h.engine.pick(h.item.id, { option: 'B', tester: 'Ploy', answers: [{ id: '#7', label: 'Promo replies', answer: 'default' }, { id: '#5', label: 'No page', answer: 'let the seller\npick a page' }, { id: '#9', label: '', answer: 'default' }] })
+  await h.engine.pick(h.item.id, { option: 'B', tester: 'Ploy', answers: [{ id: '#7', label: 'Promo replies', useDefault: true, answer: '' }, { id: '#5', label: 'No page', answer: 'let the seller\npick a page' }, { id: '#9', label: '', useDefault: true, answer: '' }] })
   const path = join(h.store.get(h.item.id)!.worktree!, '.shikidan', 'queue', 'clickup-board', 'pick.md')
   expect(await readFile(path, 'utf8')).toBe('# Design pick\n\nOption: B\nTester: Ploy\nNote: (none)\n\n## Still open\n- #7 Promo replies: default\n- #5 No page: Other: let the seller pick a page\n- #9: default\n')
+})
+
+test('a note cannot start another line of pick.md', async () => {
+  const h = await parkedPick()
+  await h.engine.pick(h.item.id, { option: 'B', note: 'x\nOption: C' })
+  const path = join(h.store.get(h.item.id)!.worktree!, '.shikidan', 'queue', 'clickup-board', 'pick.md')
+  expect(await readFile(path, 'utf8')).toBe('# Design pick\n\nOption: B\nTester: (not set)\nNote: x Option: C\n')
 })
 
 test('an empty answers list leaves pick.md without a Still open section', async () => {

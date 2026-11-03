@@ -2,7 +2,7 @@ import { basename, join } from 'node:path'
 
 import type { TaskContext } from './plugins/context-files'
 import { backUpAnswers, dropAnswerBackups, restoreAnswers } from './queue-answers'
-import { blockedSummary, cardImagesMarkdown, pickOf, questionsOf, repoRequestsOf, runRequest, SETTLED, stillOpenMarkdown, type PickAnswer, type RunView } from './queue-prompts'
+import { blockedSummary, cardImagesMarkdown, pickOf, questionsOf, repoRequestsOf, runRequest, SETTLED, oneLine, stillOpenMarkdown, type PickAnswer, type RunView } from './queue-prompts'
 import { adoptionProblem, grantRepos, movedRealRepos, movedText, realRepoStates, reposToOffer, SINGLE_REPO_ASK } from './queue-repo-asks'
 import { importCardImages, queueFolder, refuseLinkedQueueFolders } from './queue-files'
 import { createLand, PICK_FILE, type Land } from './queue-land'
@@ -282,8 +282,8 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
     if (runningInStudio(item)) throw new QueueRefusal('It is running in Studio now', 409)
     if (!item.pick.options.includes(choice.option)) throw new QueueRefusal(`Not an option: ${choice.option}`, 409)
     if (item.worktree === null) throw new QueueRefusal('It has no workspace', 409)
-    const tester = (choice.tester ?? '').trim().slice(0, MAX_TESTER)
-    const note = (choice.note ?? '').trim().slice(0, MAX_NOTE)
+    const tester = oneLine((choice.tester ?? '').slice(0, MAX_TESTER))
+    const note = oneLine((choice.note ?? '').slice(0, MAX_NOTE))
     const markdown = `# Design pick\n\nOption: ${choice.option}\nTester: ${tester || '(not set)'}\nNote: ${note || '(none)'}\n${stillOpenMarkdown(choice.answers ?? [])}`
     try {
       const worktree = await restore({ ...item, worktree: item.worktree })

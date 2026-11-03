@@ -359,13 +359,16 @@ test('POST pick accepts answers and refuses too many, a long id or an empty answ
   const parked = await items.add(newItem, 'end')
   await items.update(parked.id, { state: 'waiting-pick' })
   const url = `/api/queue/${parked.id}/pick`
-  const entry = (n: number) => ({ id: `#${n}`, label: 'Label', answer: 'default' })
+  const entry = (n: number) => ({ id: `#${n}`, label: 'Label', useDefault: true, answer: '' })
   expect((await post(app, url, { option: 'B', answers: [{ id: '#7', label: '', answer: 'x' }] })).status).toBe(200)
   expect(seen).toEqual([{ id: '#7', label: '', answer: 'x' }])
   expect((await post(app, url, { option: 'B', answers: Array.from({ length: 21 }, (_, n) => entry(n)) })).status).toBe(400)
   expect((await post(app, url, { option: 'B', answers: [{ ...entry(1), id: 'x'.repeat(17) }] })).status).toBe(400)
-  expect((await post(app, url, { option: 'B', answers: [{ ...entry(1), answer: '' }] })).status).toBe(400)
+  expect((await post(app, url, { option: 'B', answers: [{ ...entry(1), useDefault: false, answer: '' }] })).status).toBe(400)
   expect((await post(app, url, { option: 'B', answers: [{ ...entry(1), answer: 'x'.repeat(1001) }] })).status).toBe(400)
+  expect((await post(app, url, { option: 'B', answers: [{ ...entry(1), id: 'a\nb' }] })).status).toBe(400)
+  expect((await post(app, url, { option: 'B', answers: [{ ...entry(1), label: 'a\rb' }] })).status).toBe(400)
+  expect((await post(app, url, { option: 'B', tester: 'Ploy\nOption: C' })).status).toBe(400)
   expect((await post(app, url, { option: 'B', answers: [{ ...entry(1), label: 'x'.repeat(201) }] })).status).toBe(400)
 })
 

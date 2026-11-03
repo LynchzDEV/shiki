@@ -68,7 +68,8 @@ const blockedEvidence = (run: RunView): string[] => lastBlocked(run)?.result?.ev
 
 const MAX_SUMMARY = 64000
 
-const SKD_LINE = /^SKD_RESULT\b/
+const SKD_LINE = /^\s*SKD_RESULT\b/
+const PARAGRAPH_BREAK = /^[ \t]*\r?\n[ \t]*\r?\n/
 
 function resultSummary(lines: string[]): string {
   for (const line of lines) {
@@ -86,24 +87,26 @@ export function cleanPickSummary(text: string): string {
   const lines = text.split('\n')
   const body = lines.filter(line => !SKD_LINE.test(line)).join('\n').trim()
   const summary = resultSummary(lines)
-  const rest = summary !== '' && body.startsWith(summary) ? body.slice(summary.length) : ''
-  return rest.trim() !== '' && /^\s/.test(rest) ? rest.trim() : body
+  if (summary === '' || !body.startsWith(summary)) return body
+  const rest = body.slice(summary.length)
+  return PARAGRAPH_BREAK.test(rest) ? rest.trim() : body
 }
 
 export function blockedSummary(run: RunView): string {
   const last = lastBlocked(run)
-  const output = last?.output ?? ''
-  const text = output.trim() !== '' ? output : last?.result?.summary ?? ''
-  return cleanPickSummary(text).slice(0, MAX_SUMMARY)
+  const cleaned = cleanPickSummary(last?.output ?? '')
+  return (cleaned !== '' ? cleaned : (last?.result?.summary ?? '').trim()).slice(0, MAX_SUMMARY)
 }
 
-export type PickAnswer = { id: string; label: string; answer: string }
+export type PickAnswer = { id: string; label: string; answer: string; useDefault?: boolean }
+
+export const oneLine = (text: string): string => text.replace(/\s*[\r\n]+\s*/g, ' ').trim()
 
 export function stillOpenMarkdown(answers: readonly PickAnswer[]): string {
   if (answers.length === 0) return ''
-  const lines = answers.map(({ id, label, answer }) => {
-    const heading = label === '' ? id : `${id} ${label}`
-    return `- ${heading}: ${answer === 'default' ? 'default' : `Other: ${answer.replace(/\s*[\r\n]+\s*/g, ' ').trim()}`}`
+  const lines = answers.map(({ id, label, answer, useDefault }) => {
+    const heading = oneLine(label) === '' ? oneLine(id) : `${oneLine(id)} ${oneLine(label)}`
+    return `- ${heading}: ${useDefault === true ? 'default' : `Other: ${oneLine(answer)}`}`
   })
   return `\n## Still open\n${lines.join('\n')}\n`
 }
