@@ -96,7 +96,8 @@ export function answersMarkdown(questions: string[], replies: SourceReply[], ima
 
 export function cardImagesMarkdown(outcomes: CardImageOutcome[]): string {
   if (outcomes.length === 0) return ''
-  const lines = outcomes.map(outcome => ('copied' in outcome ? `- ${outcome.name}: ${outcome.copied}` : `- ${outcome.name}: not copied (${outcome.failed})`))
+  const oneLine = (text: string): string => text.replace(/[\r\n]+/g, ' ')
+  const lines = outcomes.map(outcome => ('copied' in outcome ? `- ${oneLine(outcome.name)}: ${outcome.copied}` : `- ${oneLine(outcome.name)}: not copied (${oneLine(outcome.failed)})`))
   return `\n\n## Downloaded images\n\n${lines.join('\n')}\n`
 }
 

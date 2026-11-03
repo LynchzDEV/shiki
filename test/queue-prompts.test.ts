@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 
-import { answersMarkdown, branchLabel, pickOf, questionsOf, runRequest, SETTLED, type RunView } from '../server/queue-prompts'
+import { answersMarkdown, branchLabel, cardImagesMarkdown, pickOf, questionsOf, runRequest, SETTLED, type RunView } from '../server/queue-prompts'
 import type { WorkflowAttempt } from '../server/workflow-runner'
 
 const attempt = (over: Partial<WorkflowAttempt>): WorkflowAttempt => ({ nodeId: 'plan', number: 1, jobId: 'j', status: 'settled', prompt: '', startedAt: 1, endedAt: 2, result: null, checks: [], output: '', workspace: null, tokenId: 't', pathId: 'main', from: [], ...over })
@@ -129,4 +129,9 @@ test('pickOf rejects what it cannot show', () => {
 
 test('questionsOf leaves pick lines out, like repo lines', () => {
   expect(questionsOf(blocked('Which page?', PICK, '- `Pick: A,B | visualizer/x`', 'repo: api'))).toEqual(['Which page?'])
+})
+
+test('a card image name with a line break cannot start a new line in the context file', () => {
+  const markdown = cardImagesMarkdown([{ name: 'a.png\n## Fake heading', copied: '/w/0-a.png' }, { name: 'b.png', failed: 'gone\nnext' }])
+  expect(markdown).toBe('\n\n## Downloaded images\n\n- a.png ## Fake heading: /w/0-a.png\n- b.png: not copied (gone next)\n')
 })
