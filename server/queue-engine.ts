@@ -66,6 +66,7 @@ export type QueueEngine = {
 export type QueuePause = { reason: string; until: number }
 
 const MAX_RUN_LABEL = 120
+const MAX_AUTO_PICKS = 2
 const PAUSE_BACKOFF_MS = [5, 15, 60].map(minutes => minutes * 60_000)
 const MAX_TIMER_MS = 2 ** 31 - 1
 const REQUEUEABLE: ReadonlySet<QueueItem['state']> = new Set(['failed', 'ready', 'waiting-info', 'waiting-pick'])
@@ -176,7 +177,7 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
   }
 
   async function autoPicked(item: QueueItem, option: string, plugin: string | undefined): Promise<boolean> {
-    if (plugin === undefined || item.worktree === null) return false
+    if (plugin === undefined || item.worktree === null || (item.autoPicks ?? 0) >= MAX_AUTO_PICKS) return false
     try {
       if (!await deps.autoPick?.(plugin)) return false
       await writePick(deps, item, item.worktree, { option, tester: '', note: `Auto-picked the recommended option (autoPick is on in ${plugin} settings)` })
@@ -184,7 +185,8 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
       console.error(`Queue item ${item.id} auto-pick failed`, error)
       return false
     }
-    deps.needsYou(store.get(item.id) ?? item, `Auto-picked ${option}`)
+    const picked = await store.update(item.id, { autoPicks: (item.autoPicks ?? 0) + 1 })
+    deps.needsYou(picked, `Auto-picked ${option}`)
     return true
   }
 

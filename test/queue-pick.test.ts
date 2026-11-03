@@ -226,6 +226,16 @@ test('with autoPick on, a pick with a recommendation is taken and the card goes 
   expect(h.store.get(h.other.id)!.state).toBe('queued')
 })
 
+test('a card is auto-picked at most twice, then waits for a person', async () => {
+  const h = await building(async () => true)
+  await h.block('run-1', [PICK], 'step log', FLOW)
+  await h.block('run-2', [PICK], 'step log', FLOW)
+  expect(h.store.get(h.item.id)).toMatchObject({ state: 'building', currentRunId: 'run-3', autoPicks: 2 })
+  await h.block('run-3', [PICK], 'step log', FLOW)
+  expect(h.store.get(h.item.id)).toMatchObject({ state: 'waiting-pick', pick: { recommended: 'B' } })
+  expect(h.alerts).toEqual(['Auto-picked B', 'Auto-picked B', 'Pick a design variant'])
+})
+
 test('with autoPick off the card waits for a person', async () => {
   const h = await building(async () => false)
   await h.block('run-1', [PICK], 'step log', FLOW)

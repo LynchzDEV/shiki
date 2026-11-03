@@ -24,7 +24,7 @@ export type QueueItem = {
   state: QueueState; worktree: string | null; contextPath: string | null; answerPaths: string[]
   runIds: string[]; currentRunId: string | null; questions: string[]; lastSeenId: string | null; error: string | null
   createdAt: number; updatedAt: number; repos?: string[]; repoReruns?: number
-  realBaseline?: Record<string, string>; realChanged?: string[]; pick?: QueuePick; land?: LandProgress
+  realBaseline?: Record<string, string>; realChanged?: string[]; pick?: QueuePick; land?: LandProgress; autoPicks?: number
 }
 
 export type NewQueueItem = Pick<QueueItem, 'source' | 'externalId' | 'title' | 'url' | 'repo' | 'flowId' | 'repos'>
