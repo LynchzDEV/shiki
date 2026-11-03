@@ -763,8 +763,8 @@ export function createJobManager(options: JobManagerOptions = {}): JobManager {
         ...(params.images === undefined ? {} : { images: params.images }),
         ...chatContext,
       })
-    } catch {
-      return { ok: false, status: 400, error: 'engine resolver failed' }
+    } catch (error) {
+      return { ok: false, status: 400, error: `engine resolver failed: ${error instanceof Error ? error.message : String(error)}` }
     }
 
     let workspace: Pick<JobRecord, 'worktree' | 'baseRepo' | 'baseBranch'> = { worktree: null, baseRepo: params.baseRepo ?? null, baseBranch: null }

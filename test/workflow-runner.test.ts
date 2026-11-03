@@ -281,11 +281,11 @@ test('when nothing can run, the step settles with the real reason, never Interru
   const [attempt] = blocked.attempts
   expect(attempt!.status).toBe('settled')
   expect(attempt!.tried).toEqual(['claude', 'codex'])
-  expect(attempt!.result!.summary.startsWith('glm unavailable: engine resolver failed')).toBe(true)
+  expect(attempt!.result!.summary).toBe('glm unavailable: engine resolver failed: no binary')
   expect(attempt!.result!.summary).not.toContain('Interrupted')
   expect(blocked.error).toBe(attempt!.result!.summary)
   expect(blocked.unavailable).toMatchObject({ engine: 'glm', until: null })
-  expect(blocked.unavailable!.reason).toContain('engine resolver failed')
+  expect(blocked.unavailable!.reason).toBe('engine resolver failed: no binary')
   broken = false
   await runner.retry(run.id)
   const done = await finished(run.id)

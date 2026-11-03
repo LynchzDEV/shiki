@@ -125,6 +125,15 @@ describe('job lifecycle', () => {
     expect(seen).toEqual([undefined, true])
   })
 
+  test('a resolver that throws keeps its real error after the engine resolver failed prefix', async () => {
+    const repo = join(home, 'repo')
+    await initGitRepo(repo)
+    const manager = createJobManager({ home })
+    const throwing: EngineResolver = () => { throw new Error('glm engine requested but zaiAuthToken is not configured') }
+    const result = await manager.createJob({ engine: 'glm', cwd: repo, prompt: 'hi', label: 'glm' }, throwing)
+    expect(result).toEqual({ ok: false, status: 400, error: 'engine resolver failed: glm engine requested but zaiAuthToken is not configured' })
+  })
+
   test('a job runs to completion and is recorded as done', async () => {
     const repo = join(home, 'repo')
     await initGitRepo(repo)
