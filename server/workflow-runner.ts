@@ -493,8 +493,11 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
     await launch(run, node, attempt, token)
   }
   async function launch(run: WorkflowRun, node: WorkflowNode, attempt: WorkflowAttempt, token: WorkflowToken): Promise<null> {
+    const halted = () => stopping.has(run.id) || (run.status !== 'running' && run.status !== 'paused')
+    if (halted()) return null
     const agent = run.agents[node.id]!
     const down = await availability(agent)
+    if (halted()) return null
     if (down) return recoverStep(run, node, attempt, token, down.reason)
     if (agent.sameFamily) attempt.sameFamily = true
     const result = await deps.manager.createJob(stepJob(run, node, attempt, token, attempt.prompt), deps.resolver)

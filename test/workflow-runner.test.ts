@@ -337,6 +337,20 @@ test('retry re-resolves agents from current Settings', async () => {
   await finished(run.id)
 })
 
+test('a stop that lands while a crashed step is being recovered never starts another job', async () => {
+  let spawns = 0
+  const store = await build(({ engine }) => { if (engine === 'glm') { spawns += 1; throw new Error('glm will not start') } return { cmd: '/bin/echo', args: [report()], env: {} } })
+  await store.save({ ...withoutSession(), id: 'stop-in-recovery' })
+  let runId = ''
+  down = engine => { if (engine === 'glm' && spawns === 1) void runner.stop(runId); return null }
+  const started = await runner.start({ workflowId: 'stop-in-recovery', cwd: repo, request: 'Implement', label: 'stop-in-recovery' })
+  runId = started.id
+  const done = await finished(started.id)
+  expect(done.status).toBe('stopped')
+  expect(spawns).toBe(1)
+  expect(stepJobs().filter(job => job.workflowNodeId === 'execute')).toHaveLength(0)
+})
+
 test('same model family through different engine names cannot perform cross-family review', async () => {
   const store = await build()
   const graph = classicWorkflow()
