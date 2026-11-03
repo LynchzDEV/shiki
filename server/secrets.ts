@@ -166,7 +166,7 @@ function readRoleAssignment(value: unknown, fallback: RoleAssignment): RoleAssig
 }
 
 function readExtraRoles(record: Record<string, unknown>): Record<string, RoleAssignment> {
-  const extras = Object.entries(record).filter(([name]) => !(name in DEFAULT_ROLES) && isRoleName(name)).slice(0, MAX_ROLES - 3)
+  const extras = Object.entries(record).filter(([name]) => !Object.hasOwn(DEFAULT_ROLES, name) && isRoleName(name)).slice(0, MAX_ROLES - 3)
   return Object.fromEntries(extras.flatMap(([name, value]) => {
     const role = readRoleAssignment(value, { engine: '', model: null })
     return role.engine === '' ? [] : [[name, role]]

@@ -71,6 +71,13 @@ describe('round trip', () => {
     expect(stored.zaiBaseUrl).toBe('https://example.test/anthropic')
   })
 
+  test('a role named like an object property survives a reload', async () => {
+    await Bun.write(configPath(CONFIG_FILE), JSON.stringify({ roles: { constructor: { engine: 'codex', model: null }, toString: 'claude' } }))
+    const { roles } = await readConfig()
+    expect(roles.constructor).toEqual({ engine: 'codex', model: null })
+    expect(roles.toString).toEqual({ engine: 'claude', model: null })
+  })
+
   test('roles persist and missing fields fall back per role', async () => {
     const roles = {
       plan: { engine: 'codex', model: 'gpt-5.1' },

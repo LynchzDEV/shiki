@@ -352,7 +352,7 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
     const { roles, fallback } = await readConfig()
     const connections = createConnectionStore(deps.base)
     return async (node, chatDefault) => {
-      const role = chatDefault ?? roles[node.agent.role] ?? fallback
+      const role = chatDefault ?? (Object.hasOwn(roles, node.agent.role) ? roles[node.agent.role] : undefined) ?? fallback
       if (!role && !node.agent.engine) throw new Error(`${node.title}: role "${node.agent.role}" is not defined in Settings`)
       const engine = node.agent.engine ?? role!.engine
       const builtin = BUILTIN_AGENTS.includes(engine as typeof BUILTIN_AGENTS[number])
