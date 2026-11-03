@@ -174,4 +174,14 @@ describe('flows', () => {
     expect(flows.map(flow => [flow.id, flow.name, flow.plugin])).toEqual([['card-pipeline--card-pipeline', 'Card pipeline: Card pipeline', 'card-pipeline']])
     expect(flows[0]!.revision).toMatch(/^[a-f0-9]{24}$/)
   })
+
+  test('a maxAttempts setting from 1 to 10 sets every step of the plugin flow, anything else keeps the flow numbers', async () => {
+    const plugin = { id: 'card-pipeline', name: 'Card pipeline', enabled: true, contributes: { flows: ['flows/card-pipeline.json'] } } as unknown as InstalledPlugin
+    const visits = async (value: string | null) => (await pluginFlows([plugin], () => pluginDir, async () => value))[0]!.nodes.map(node => node.maxVisits)
+    const own = await visits(null)
+    expect((await visits('5')).every(count => count === 5)).toBe(true)
+    expect(await visits('0')).toEqual(own)
+    expect(await visits('11')).toEqual(own)
+    expect(await visits('two')).toEqual(own)
+  })
 })

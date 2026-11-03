@@ -177,14 +177,23 @@ export async function checkFlows(folder: string, paths: string[]): Promise<strin
   return errors
 }
 
-export async function pluginFlows(plugins: InstalledPlugin[], folderOf: (id: string) => string = pluginFolder): Promise<PluginFlow[]> {
+const MAX_ATTEMPTS = /^(10|[1-9])$/
+
+async function maxAttemptsOf(pluginId: string, setting: (id: string, key: string) => Promise<string | null>): Promise<number | null> {
+  const value = (await setting(pluginId, 'maxAttempts').catch(() => null))?.trim() ?? ''
+  return MAX_ATTEMPTS.test(value) ? Number(value) : null
+}
+
+export async function pluginFlows(plugins: InstalledPlugin[], folderOf: (id: string) => string = pluginFolder, setting: (id: string, key: string) => Promise<string | null> = getSetting): Promise<PluginFlow[]> {
   const flows: PluginFlow[] = []
   for (const plugin of plugins) {
     if (!plugin.enabled) continue
+    const maxVisits = await maxAttemptsOf(plugin.id, setting)
     for (const path of plugin.contributes?.flows ?? []) {
       try {
         const graph = JSON.parse(await readFile(join(folderOf(plugin.id), path), 'utf8'))
-        const named = { ...graph, id: `${plugin.id}--${graph.id}`, name: `${plugin.name}: ${graph.name}`.slice(0, 120) }
+        const nodes = maxVisits === null || !Array.isArray(graph.nodes) ? graph.nodes : graph.nodes.map((node: Record<string, unknown>) => ({ ...node, maxVisits }))
+        const named = { ...graph, nodes, id: `${plugin.id}--${graph.id}`, name: `${plugin.name}: ${graph.name}`.slice(0, 120) }
         flows.push({ ...draftRevision(named), createdAt: 0, plugin: plugin.id })
       } catch (error) {
         console.error(`[plugins] ${plugin.id} flow ${path} is not usable:`, errorMessage(error))
