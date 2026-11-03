@@ -91,6 +91,9 @@ let previewBody: Record<string, unknown> = {}
 let updateResponses: Array<{ status: number; body: Record<string, unknown> }> = []
 let updateGate: Promise<void> | null = null
 let terminalCreate: (() => Response) | null = null
+let installReply: { status: number; body: Record<string, unknown> } | null = null
+let removeReplies: Array<{ status: number; body: Record<string, unknown> }> = []
+let toggleReplies: Array<{ status: number; body: Record<string, unknown> }> = []
 
 const providers = { providers: [{ id: 'claude', name: 'Claude', models: ['opus', 'sonnet'] }, { id: 'glm', name: 'GLM', models: ['glm-5.3'] }] }
 let catalogName = 'KlangTech marketplace'
@@ -114,6 +117,9 @@ const reply = (request: Sent): Response => {
     return marketplaceSyncOk ? Response.json({ marketplaces: [{ url: 'https://github.com/LynchzDEV/mc-marketplace' }] }) : Response.json({ error: "Couldn't reach this marketplace: no such host" }, { status: 400 })
   }
   if (method === 'POST' && url === '/api/plugins/preview') return Response.json(previewBody)
+  if (method === 'POST' && url === '/api/plugins/install' && installReply !== null) return Response.json(installReply.body, { status: installReply.status })
+  if (method === 'DELETE' && url === '/api/plugins/hello-board' && removeReplies.length > 0) { const next = removeReplies.shift()!; return Response.json(next.body, { status: next.status }) }
+  if (method === 'PATCH' && url === '/api/plugins/hello-board' && toggleReplies.length > 0) { const next = toggleReplies.shift()!; return Response.json(next.body, { status: next.status }) }
   if (method === 'POST' && url === '/api/plugins/hello-board/update') {
     const answer = (): Response => {
       const next = updateResponses.shift()
@@ -596,4 +602,178 @@ test('a marketplace that cannot be reached stops the update check with an inline
   expect(sent.map(request => request.url)).toEqual(['/api/plugins/marketplaces'])
   expect(byId('marketplace').textContent).toContain("Couldn't reach this marketplace")
   marketplaceSyncOk = true
+})
+
+const dependencyStep = (overrides: Record<string, unknown> = {}) => ({
+  id: 'board-core', minVersion: '1.7.0', status: 'install',
+  listing: { repo: 'https://github.com/LynchzDEV/mc-plugin-board-core', ref: 'v1.8.0', marketplace: 'https://github.com/LynchzDEV/mc-marketplace' },
+  preview: { manifest: { id: 'board-core', name: 'Board core', version: '1.8.0' }, commit: 'dep111', permissions: { network: ['api.example.com'], settings: true }, runtime: 'isolated' },
+  ...overrides,
+})
+
+async function openLinkDialog(requires: unknown[], main: Record<string, unknown> = {}): Promise<HTMLElement> {
+  addLinkReply = { status: 200, body: { kind: 'plugin', ref: 'v1.0.0', manifest: { id: 'needs-core', name: 'Needs core', version: '1.0.0' }, commit: 'main111', permissions: { sessions: ['chat'] }, runtime: 'isolated', requires, ...main } }
+  dispatchEvent(new CustomEvent('quiet:show', { detail: 'marketplace' }))
+  await flush(4)
+  if (byId('marketplace').querySelector('input[aria-label="Plugin or marketplace link"]') === null) buttonNamed('Add from a link', byId('marketplace')).click()
+  await flush()
+  ;(byId('marketplace').querySelector('input[aria-label="Plugin or marketplace link"]') as HTMLInputElement).value = 'https://github.com/LynchzDEV/mc-plugin-needs-core'
+  buttonNamed('Add', byId('marketplace')).click()
+  await flush(4)
+  return byId('marketplace').querySelector('.mk-dialog') as HTMLElement
+}
+
+test('a plugin that needs another lists it, counts it on the button and sends the steps back', async () => {
+  installReply = { status: 200, body: { plugin: {}, installedRequirements: ['board-core'] } }
+  const dialog = await openLinkDialog([dependencyStep()])
+  expect(dialog.textContent).toContain('It also needs')
+  expect(dialog.textContent).toContain('Board core v1.8.0')
+  expect(dialog.textContent).toContain('Will be installed')
+  expect(dialog.querySelector('.mk-req')!.textContent).toContain('api.example.com')
+  const install = buttonNamed('Install all (2)', dialog)
+  expect(install.disabled).toBe(false)
+  sent.length = 0
+  install.click()
+  await flush(4)
+  const request = sent.find(entry => entry.url === '/api/plugins/install')!
+  expect(request.body).toEqual({ repo: 'https://github.com/LynchzDEV/mc-plugin-needs-core', ref: 'v1.0.0', commit: 'main111', requirements: [{ id: 'board-core', action: 'install', commit: 'dep111' }] })
+  expect(byId('toast').textContent).toBe('Installed Needs core and Board core')
+  installReply = null
+})
+
+test('an outdated or turned-off requirement says what will happen to it, and steps already fine are not listed', async () => {
+  const dialog = await openLinkDialog([
+    dependencyStep({ id: 'board-old', status: 'update', installedVersion: '1.0.0', preview: { manifest: { id: 'board-old', name: 'Board old', version: '2.0.0' }, commit: 'old222', permissions: {}, runtime: 'isolated' } }),
+    { id: 'board-off', status: 'enable', installedVersion: '1.0.0', name: 'Board off' },
+    { id: 'board-fine', status: 'ok', installedVersion: '3.0.0' },
+  ])
+  expect(dialog.textContent).toContain('Will be updated from v1.0.0')
+  expect(dialog.textContent).toContain('Is turned off. It will be turned on')
+  expect(dialog.textContent).not.toContain('board-fine')
+  const install = buttonNamed('Install all (2)', dialog)
+  sent.length = 0
+  install.click()
+  await flush(4)
+  expect(sent.find(entry => entry.url === '/api/plugins/install')!.body!.requirements).toEqual([{ id: 'board-old', action: 'update', commit: 'old222' }, { id: 'board-off', action: 'enable' }])
+})
+
+test('a requirement that cannot be found says why and blocks the install', async () => {
+  const dialog = await openLinkDialog([{ id: 'board-gone', status: 'unavailable', reason: 'board-gone is not in your marketplaces. Add the marketplace that has it, or install it first.' }])
+  expect(dialog.querySelector('.mk-req .mk-fail')!.textContent).toBe('board-gone is not in your marketplaces. Add the marketplace that has it, or install it first.')
+  expect(buttonNamed('Install all (1)', dialog).disabled).toBe(true)
+  buttonNamed('Cancel', dialog).click()
+  await flush()
+})
+
+test('a plugin with nothing extra to install keeps the plain Install button and sends no requirements', async () => {
+  installReply = { status: 200, body: { plugin: {}, installedRequirements: [] } }
+  const dialog = await openLinkDialog([{ id: 'board-fine', status: 'ok', installedVersion: '3.0.0' }])
+  expect(dialog.textContent).not.toContain('It also needs')
+  sent.length = 0
+  buttonNamed('Install', dialog).click()
+  await flush(4)
+  expect('requirements' in sent.find(entry => entry.url === '/api/plugins/install')!.body!).toBe(false)
+  expect(byId('toast').textContent).toBe('Installed Needs core')
+  installReply = null
+})
+
+test('trust covers the whole set: one switch, worded for several plugins, and trust is sent', async () => {
+  installReply = { status: 200, body: { plugin: {}, installedRequirements: ['board-core'] } }
+  const trusted = dependencyStep({ preview: { manifest: { id: 'board-core', name: 'Board core', version: '1.8.0' }, commit: 'dep111', permissions: {}, runtime: 'trusted' } })
+  const dialog = await openLinkDialog([trusted], { runtime: 'trusted' })
+  expect(dialog.querySelectorAll('input[role="switch"]')).toHaveLength(1)
+  expect(dialog.querySelector('.switch-label')!.textContent).toBe('I trust these plugins')
+  const install = buttonNamed('Install all (2)', dialog)
+  expect(install.disabled).toBe(true)
+  ;(dialog.querySelector('input[role="switch"]') as HTMLInputElement).click()
+  expect(install.disabled).toBe(false)
+  sent.length = 0
+  install.click()
+  await flush(4)
+  expect(sent.find(entry => entry.url === '/api/plugins/install')!.body).toMatchObject({ trust: true })
+  installReply = null
+})
+
+test('a trusted requirement alone also needs the switch', async () => {
+  const trusted = dependencyStep({ preview: { manifest: { id: 'board-core', name: 'Board core', version: '1.8.0' }, commit: 'dep111', permissions: {}, runtime: 'trusted' } })
+  const dialog = await openLinkDialog([trusted])
+  expect(dialog.querySelector('.switch-label')!.textContent).toBe('I trust this plugin')
+  expect(buttonNamed('Install all (2)', dialog).disabled).toBe(true)
+  buttonNamed('Cancel', dialog).click()
+  await flush()
+})
+
+test('when the server says the steps changed, the dialog shows the new list and asks to check it again', async () => {
+  installReply = { status: 409, body: { needsRequirements: true, requirements: [dependencyStep({ preview: { manifest: { id: 'board-core', name: 'Board core', version: '1.9.0' }, commit: 'dep999', permissions: {}, runtime: 'isolated' } })] } }
+  const dialog = await openLinkDialog([dependencyStep()])
+  buttonNamed('Install all (2)', dialog).click()
+  await flush(4)
+  const again = byId('marketplace').querySelector('.mk-dialog') as HTMLElement
+  expect(again.textContent).toContain('Something changed since you reviewed it. Check the list again.')
+  expect(again.textContent).toContain('Board core v1.9.0')
+  installReply = null
+  sent.length = 0
+  buttonNamed('Install all (2)', again).click()
+  await flush(4)
+  expect(sent.find(entry => entry.url === '/api/plugins/install')!.body!.requirements).toEqual([{ id: 'board-core', action: 'install', commit: 'dep999' }])
+})
+
+test('an update that needs more lists it in the update area and sends the steps with the update', async () => {
+  installedPlugins = [helloPlugin]
+  marketplaceSyncOk = true
+  previewBody = { manifest: { id: 'hello-board', name: 'Hello board', version: '2.0.0', pluginApi: 1, runtime: 'isolated', permissions: { sessions: ['chat'] } }, commit: '222222', permissions: { sessions: ['chat'] }, runtime: 'isolated', requires: [dependencyStep()] }
+  updateResponses = []
+  dispatchEvent(new CustomEvent('quiet:show', { detail: 'marketplace' }))
+  await flush(4)
+  ;(byId('marketplace').querySelector('.connection-list [data-plugin="hello-board"]') as HTMLElement).click()
+  await flush()
+  sent.length = 0
+  buttonNamed('Check for update', byId('marketplace')).click()
+  await flush()
+  expect(sent.find(entry => entry.url === '/api/plugins/preview')!.body).toEqual({ repo: helloPlugin.source.repo, ref: 'v2.0.0', marketplace: helloPlugin.source.marketplace })
+  expect(byId('marketplace').textContent).toContain('It also needs')
+  expect(byId('marketplace').textContent).toContain('Board core v1.8.0')
+  sent.length = 0
+  buttonNamed('Update all (2)', byId('marketplace')).click()
+  await flush()
+  expect(sent.find(entry => entry.url === '/api/plugins/hello-board/update')!.body).toEqual({ ref: 'v2.0.0', commit: '222222', requirements: [{ id: 'board-core', action: 'install', commit: 'dep111' }] })
+  previewBody = {}
+})
+
+test('removing a plugin that others need asks first and goes ahead with force', async () => {
+  installedPlugins = [helloPlugin]
+  removeReplies = [{ status: 409, body: { error: 'Needs core need this plugin', dependents: [{ id: 'needs-core', name: 'Needs core' }] } }]
+  dispatchEvent(new CustomEvent('quiet:show', { detail: 'marketplace' }))
+  await flush(4)
+  ;(byId('marketplace').querySelector('.connection-list [data-plugin="hello-board"]') as HTMLElement).click()
+  await flush()
+  sent.length = 0
+  buttonNamed('Uninstall', byId('marketplace')).click()
+  await flush(4)
+  expect(byId('marketplace').querySelector('.mk-force')!.textContent).toContain('Needs core need this plugin. Remove anyway?')
+  expect(sent.filter(entry => entry.method === 'DELETE').map(entry => entry.body)).toEqual([{ keepData: true }])
+  sent.length = 0
+  buttonNamed('Remove anyway', byId('marketplace')).click()
+  await flush(4)
+  expect(sent.filter(entry => entry.method === 'DELETE').map(entry => entry.body)).toEqual([{ keepData: true, force: true }])
+})
+
+test('turning off a plugin that others need asks first, puts the switch back, and goes ahead with force', async () => {
+  installedPlugins = [helloPlugin]
+  toggleReplies = [{ status: 409, body: { error: 'Needs core need this plugin', dependents: [{ id: 'needs-core', name: 'Needs core' }] } }]
+  dispatchEvent(new CustomEvent('quiet:show', { detail: 'marketplace' }))
+  await flush(4)
+  ;(byId('marketplace').querySelector('.connection-list [data-plugin="hello-board"]') as HTMLElement).click()
+  await flush()
+  const enabled = [...byId('marketplace').querySelectorAll<HTMLLabelElement>('.connection-foot .switch-label')].find(label => label.textContent === 'Enabled')!.querySelector('input') as HTMLInputElement
+  sent.length = 0
+  enabled.click()
+  await flush(4)
+  expect(enabled.checked).toBe(true)
+  expect(byId('marketplace').querySelector('.mk-force')!.textContent).toContain('Needs core need this plugin. Turn off anyway?')
+  expect(sent.filter(entry => entry.method === 'PATCH').map(entry => entry.body)).toEqual([{ enabled: false }])
+  sent.length = 0
+  buttonNamed('Turn off anyway', byId('marketplace')).click()
+  await flush(4)
+  expect(sent.filter(entry => entry.method === 'PATCH').map(entry => entry.body)).toEqual([{ enabled: false, force: true }])
 })

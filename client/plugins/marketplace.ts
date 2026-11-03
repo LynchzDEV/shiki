@@ -1,11 +1,11 @@
 import { errorText, getJson, postJson } from '../shared'
-import type { CatalogEntry, CatalogPlugin, InstalledPlugin, PluginPermissions } from './types'
+import type { CatalogEntry, CatalogPlugin, InstalledPlugin, PluginPermissions, RequirementStep } from './types'
 
 type Listing = { plugin: CatalogPlugin; marketplace?: string }
 
 type Selection = { kind: 'installed'; id: string } | { kind: 'listing'; listing: Listing } | null
 
-type Preview = { manifest: { id: string; name: string; version: string }; commit: string; permissions: PluginPermissions; runtime: 'trusted' | 'isolated'; contributions: string[] }
+type Preview = { manifest: { id: string; name: string; version: string }; commit: string; permissions: PluginPermissions; runtime: 'trusted' | 'isolated'; contributions: string[]; requires: RequirementStep[] }
 
 const CONTRIBUTION_LINES = [
   { key: 'agents', line: (path: string) => `Add the agent ${path} to your engines` },
@@ -26,6 +26,50 @@ function needsTrust(preview: Preview): boolean {
   return preview.runtime === 'trusted' || preview.contributions.length > 0
 }
 
+const STEP_STATUSES = ['ok', 'enable', 'install', 'update', 'unavailable']
+
+const CHANGED_NOTE = 'Something changed since you reviewed it. Check the list again.'
+
+function stepsFrom(value: unknown): RequirementStep[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((entry): entry is RequirementStep => typeof entry?.id === 'string' && STEP_STATUSES.includes(entry?.status))
+}
+
+const pendingSteps = (steps: RequirementStep[]): RequirementStep[] => steps.filter(step => step.status !== 'ok')
+
+const hasBlockedStep = (steps: RequirementStep[]): boolean => steps.some(step => step.status === 'unavailable')
+
+const installCount = (steps: RequirementStep[]): number => 1 + steps.filter(step => step.status === 'install' || step.status === 'update').length
+
+function stepNeedsTrust(step: RequirementStep): boolean {
+  if (step.status !== 'install' && step.status !== 'update') return false
+  return step.preview.runtime === 'trusted' || contributionLines({ contributes: step.preview.contributes }).length > 0
+}
+
+function trustCount(preview: Preview): number {
+  return (needsTrust(preview) ? 1 : 0) + preview.requires.filter(stepNeedsTrust).length
+}
+
+function consentOf(steps: RequirementStep[]): Array<{ id: string; action: string; commit?: string }> {
+  return pendingSteps(steps).flatMap(step => {
+    if (step.status === 'install' || step.status === 'update') return [{ id: step.id, action: step.status, commit: step.preview.commit }]
+    return step.status === 'enable' ? [{ id: step.id, action: 'enable' }] : []
+  })
+}
+
+function joinNames(names: string[]): string {
+  return names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`
+}
+
+function appliedNames(steps: RequirementStep[], ids: unknown): string[] {
+  if (!Array.isArray(ids)) return []
+  return steps.flatMap(step => {
+    if (!ids.includes(step.id)) return []
+    if (step.status === 'install' || step.status === 'update') return [step.preview.manifest.name]
+    return step.status === 'enable' ? [step.name] : [step.id]
+  })
+}
+
 type InstallDraft = { listing: Listing; preview: Preview; error: string }
 
 type UpdateState = {
@@ -35,6 +79,7 @@ type UpdateState = {
   version: string
   added: string[]
   message: string
+  requires: RequirementStep[]
   given: { accept: boolean; trust: boolean }
 }
 
@@ -150,6 +195,72 @@ function sourceLine(repo: string, version: string | undefined, marketplace: stri
   line.innerHTML = icon('mk-link')
   line.append(text)
   return line
+}
+
+function stepTitle(step: RequirementStep): string {
+  if (step.status === 'install' || step.status === 'update') return `${step.preview.manifest.name} v${step.preview.manifest.version}`
+  if (step.status === 'enable') return `${step.name} v${step.installedVersion}`
+  return step.id + (step.minVersion === undefined ? '' : ` v${step.minVersion} or newer`)
+}
+
+function stepNote(step: RequirementStep): string {
+  if (step.status === 'install') return 'Will be installed'
+  if (step.status === 'update') return `Will be updated from v${step.installedVersion ?? ''}`
+  if (step.status === 'enable') return 'Is turned off. It will be turned on'
+  return ''
+}
+
+function requirementRow(step: RequirementStep): HTMLElement {
+  const row = document.createElement('div')
+  row.className = 'mk-req'
+  row.dataset.requirement = step.id
+  row.append(Object.assign(document.createElement('strong'), { textContent: stepTitle(step) }))
+  if (step.status === 'unavailable') {
+    row.append(Object.assign(document.createElement('p'), { className: 'mk-fail muted', textContent: step.reason }))
+    return row
+  }
+  row.append(Object.assign(document.createElement('p'), { className: 'muted connection-small', textContent: stepNote(step) }))
+  if (step.status === 'enable') return row
+  row.append(permList(step.preview.permissions, 'It asks for').querySelector('.mk-perm')!)
+  const lines = contributionLines({ contributes: step.preview.contributes })
+  if (lines.length > 0) {
+    const list = document.createElement('ul')
+    list.className = 'mk-perm'
+    for (const line of lines) list.append(Object.assign(document.createElement('li'), { textContent: line }))
+    row.append(list)
+  }
+  return row
+}
+
+function requirementsSection(steps: RequirementStep[]): HTMLElement | null {
+  const rows = pendingSteps(steps)
+  if (rows.length === 0) return null
+  const wrap = document.createElement('div')
+  wrap.className = 'connection-section'
+  wrap.append(Object.assign(document.createElement('h3'), { textContent: 'It also needs' }), ...rows.map(requirementRow))
+  return wrap
+}
+
+function trustSwitch(text: string): { label: HTMLLabelElement; input: HTMLInputElement } {
+  const label = document.createElement('label')
+  label.className = 'switch-label'
+  const input = document.createElement('input')
+  input.type = 'checkbox'
+  input.setAttribute('role', 'switch')
+  label.append(input, document.createTextNode(text))
+  return { label, input }
+}
+
+function forcePrompt(host: ParentNode, text: string, label: string, onConfirm: (element: HTMLButtonElement) => void): void {
+  host.querySelector?.('.mk-force')?.remove()
+  const row = document.createElement('div')
+  row.className = 'mk-force'
+  row.append(Object.assign(document.createElement('p'), { className: 'mk-fail muted', textContent: text }), button(label, 'connection-button', onConfirm))
+  ;(host as HTMLElement).append(row)
+}
+
+function isDependentsRefusal(response: Response, payload: { dependents?: unknown }): boolean {
+  return response.status === 409 && Array.isArray(payload.dependents)
 }
 
 function runNote(runtime: 'trusted' | 'isolated'): HTMLElement {
@@ -307,7 +418,7 @@ function addLinkForm(): HTMLElement {
       const runtime = result.data.runtime === 'trusted' ? 'trusted' : 'isolated'
       installDraft = {
         listing: { plugin: { id: manifest.id, repo: link, ref: String(result.data.ref), name: manifest.name, description: manifest.description ?? '', runtime } },
-        preview: { manifest: { id: manifest.id, name: manifest.name, version: manifest.version }, commit: String(result.data.commit ?? ''), permissions: result.data.permissions as PluginPermissions, runtime, contributions: contributionLines(result.data.manifest) },
+        preview: { manifest: { id: manifest.id, name: manifest.name, version: manifest.version }, commit: String(result.data.commit ?? ''), permissions: result.data.permissions as PluginPermissions, runtime, contributions: contributionLines(result.data.manifest), requires: stepsFrom(result.data.requires) },
         error: '',
       }
       render()
@@ -332,7 +443,7 @@ async function openInstallDraft(listing: Listing, target?: HTMLButtonElement): P
 }
 
 async function previewListing(listing: Listing): Promise<Preview | null> {
-  const result = await postJson('/api/plugins/preview', { repo: listing.plugin.repo, ref: listing.plugin.ref })
+  const result = await postJson('/api/plugins/preview', { repo: listing.plugin.repo, ref: listing.plugin.ref, ...(listing.marketplace === undefined ? {} : { marketplace: listing.marketplace }) })
   if (!result.ok) {
     failNote(`Could not preview: ${errorText(result)}${stepSuffix(result.data)}`)
     return null
@@ -345,11 +456,30 @@ async function previewListing(listing: Listing): Promise<Preview | null> {
     permissions: result.data.permissions as PluginPermissions,
     runtime: result.data.runtime === 'trusted' ? 'trusted' : 'isolated',
     contributions: contributionLines(result.data.manifest),
+    requires: stepsFrom(result.data.requires),
   }
+}
+
+function contributionWarning(lines: string[]): HTMLElement[] {
+  const warn = document.createElement('div')
+  warn.className = 'mk-warn'
+  warn.innerHTML = `${icon('mk-warn')}<div><strong>It adds work to your engines.</strong> Agents and skills run with your full access when a session or flow uses them.</div>`
+  const list = document.createElement('ul')
+  list.className = 'mk-perm'
+  for (const line of lines) list.append(Object.assign(document.createElement('li'), { textContent: line }))
+  return [warn, list]
+}
+
+function trustedWarning(): HTMLElement {
+  const warn = document.createElement('div')
+  warn.className = 'mk-warn'
+  warn.innerHTML = `${icon('mk-warn')}<div><strong>This plugin gets full access.</strong> It runs inside Shikidan, so it can read your files, your saved tokens, and reach any website. Only install it if you trust who made it.</div>`
+  return warn
 }
 
 function installDialog(): HTMLElement {
   const draft = installDraft!
+  const { preview } = draft
   const overlay = document.createElement('div')
   overlay.className = 'mk-dialog'
   const card = document.createElement('section')
@@ -357,53 +487,32 @@ function installDialog(): HTMLElement {
   head.className = 'dialog-heading'
   head.innerHTML = pluginLogo(draft.listing.plugin, 40)
   const intro = document.createElement('div')
-  intro.append(Object.assign(document.createElement('h2'), { textContent: `Install ${draft.preview.manifest.name}?` }))
+  intro.append(Object.assign(document.createElement('h2'), { textContent: `Install ${preview.manifest.name}?` }))
   const source = document.createElement('p')
   source.className = 'muted'
-  source.textContent = draft.listing.marketplace === undefined ? `${REPO_DISPLAY(draft.listing.plugin.repo)} · v${draft.preview.manifest.version}` : `from ${REPO_DISPLAY(draft.listing.marketplace)} · v${draft.preview.manifest.version}`
+  source.textContent = draft.listing.marketplace === undefined ? `${REPO_DISPLAY(draft.listing.plugin.repo)} · v${preview.manifest.version}` : `from ${REPO_DISPLAY(draft.listing.marketplace)} · v${preview.manifest.version}`
   intro.append(source)
   head.append(intro)
-  head.insertAdjacentHTML('beforeend', tag(draft.preview.runtime))
+  head.insertAdjacentHTML('beforeend', tag(preview.runtime))
   card.append(head)
-  let install: HTMLButtonElement
-  if (draft.preview.runtime === 'isolated') {
+  const label = pendingSteps(preview.requires).length > 0 ? `Install all (${installCount(preview.requires)})` : 'Install'
+  const install = button(label, 'connection-button primary', element => { void confirmInstall(element, card) })
+  if (preview.runtime === 'isolated') {
     card.append(Object.assign(document.createElement('p'), { className: 'connection-note', textContent: 'It will be able to:' }))
-    card.append(permList(draft.preview.permissions, 'It asks for').querySelector('.mk-perm')!)
+    card.append(permList(preview.permissions, 'It asks for').querySelector('.mk-perm')!)
     card.append(Object.assign(document.createElement('p'), { className: 'muted connection-small', textContent: 'It cannot read your files, your other secrets, or reach any other website.' }))
-    install = button('Install', 'connection-button primary', element => { void confirmInstall(element, card) })
-    if (draft.preview.contributions.length > 0) {
-      const warn = document.createElement('div')
-      warn.className = 'mk-warn'
-      warn.innerHTML = `${icon('mk-warn')}<div><strong>It adds work to your engines.</strong> Agents and skills run with your full access when a session or flow uses them.</div>`
-      const list = document.createElement('ul')
-      list.className = 'mk-perm'
-      for (const line of draft.preview.contributions) list.append(Object.assign(document.createElement('li'), { textContent: line }))
-      const trust = document.createElement('label')
-      trust.className = 'switch-label'
-      const trustInput = document.createElement('input')
-      trustInput.type = 'checkbox'
-      trustInput.setAttribute('role', 'switch')
-      install.disabled = true
-      trustInput.onchange = () => { install.disabled = !trustInput.checked }
-      trust.append(trustInput, document.createTextNode('I trust this plugin'))
-      card.append(warn, list, trust)
-    }
+    if (preview.contributions.length > 0) card.append(...contributionWarning(preview.contributions))
   } else {
-    const warn = document.createElement('div')
-    warn.className = 'mk-warn'
-    warn.innerHTML = `${icon('mk-warn')}<div><strong>This plugin gets full access.</strong> It runs inside Shikidan, so it can read your files, your saved tokens, and reach any website. Only install it if you trust who made it.</div>`
-    card.append(warn)
-    const trust = document.createElement('label')
-    trust.className = 'switch-label'
-    const trustInput = document.createElement('input')
-    trustInput.type = 'checkbox'
-    trustInput.setAttribute('role', 'switch')
-    install = button('Install', 'connection-button primary', element => { void confirmInstall(element, card) })
-    install.disabled = true
-    trustInput.onchange = () => { install.disabled = !(trustInput as HTMLInputElement).checked }
-    trust.append(trustInput, document.createTextNode('I trust this plugin'))
-    card.append(trust)
+    card.append(trustedWarning())
   }
+  const needs = requirementsSection(preview.requires)
+  if (needs !== null) card.append(needs)
+  const trusting = trustCount(preview)
+  const trust = trustSwitch(trusting > 1 ? 'I trust these plugins' : 'I trust this plugin')
+  const refresh = (): void => { install.disabled = hasBlockedStep(preview.requires) || (trusting > 0 && !trust.input.checked) }
+  trust.input.onchange = refresh
+  if (trusting > 0) card.append(trust.label)
+  refresh()
   if (draft.error !== '') card.append(Object.assign(document.createElement('p'), { className: 'mk-fail muted', textContent: draft.error }))
   const footer = document.createElement('footer')
   footer.append(button('Cancel', 'connection-button', () => { installDraft = null; render() }), install)
@@ -420,16 +529,22 @@ async function confirmInstall(target: HTMLButtonElement, scope: ParentNode): Pro
       repo: draft.listing.plugin.repo,
       ref: draft.listing.plugin.ref,
       commit: draft.preview.commit,
-      ...(needsTrust(draft.preview) ? { trust: true } : {}),
+      ...(trustCount(draft.preview) > 0 ? { trust: true } : {}),
       ...(draft.listing.marketplace === undefined ? {} : { marketplace: draft.listing.marketplace }),
+      ...(pendingSteps(draft.preview.requires).length > 0 ? { requirements: consentOf(draft.preview.requires) } : {}),
     })
+    if (!result.ok && result.data.needsRequirements === true) {
+      installDraft = { ...draft, preview: { ...draft.preview, requires: stepsFrom(result.data.requirements) }, error: CHANGED_NOTE }
+      render()
+      return null
+    }
     if (!result.ok) {
       installDraft = { ...draft, error: `${errorText(result)}${stepSuffix(result.data)}` }
       render()
       return null
     }
     installDraft = null
-    toast(`Installed ${draft.preview.manifest.name}`)
+    toast(`Installed ${joinNames([draft.preview.manifest.name, ...appliedNames(draft.preview.requires, result.data.installedRequirements)])}`)
     dispatchEvent(new Event('quiet:plugins-changed'))
     await reload()
     selected = { kind: 'installed', id: draft.preview.manifest.id }
@@ -522,7 +637,7 @@ function settingsSection(plugin: InstalledPlugin): HTMLElement {
 }
 
 async function checkForUpdate(plugin: InstalledPlugin): Promise<void> {
-  updateState = { status: 'checking', ref: plugin.source.ref, commit: '', version: '', added: [], message: '', given: { accept: false, trust: false } }
+  updateState = { status: 'checking', ref: plugin.source.ref, commit: '', version: '', added: [], message: '', requires: [], given: { accept: false, trust: false } }
   const mine = updateState
   render()
   const stillMine = (): boolean => updateState === mine
@@ -539,13 +654,13 @@ async function checkForUpdate(plugin: InstalledPlugin): Promise<void> {
       if (listing !== undefined && listing.repo === plugin.source.repo) mine.ref = listing.ref
     }
   }
-  const result = await postJson('/api/plugins/preview', { repo: plugin.source.repo, ref: mine.ref })
+  const result = await postJson('/api/plugins/preview', { repo: plugin.source.repo, ref: mine.ref, ...(plugin.source.marketplace === undefined ? {} : { marketplace: plugin.source.marketplace }) })
   if (!stillMine()) return
   if (!result.ok) { put({ status: 'error', message: `${errorText(result)}${stepSuffix(result.data)}` }); render(); return }
   const commit = String(result.data.commit ?? '')
   if (commit === plugin.commit) { put({ status: 'up-to-date' }); render(); return }
   const manifest = result.data.manifest as { version?: string } | undefined
-  put({ status: 'ready', commit, version: manifest?.version ?? 'a newer version' })
+  put({ status: 'ready', commit, version: manifest?.version ?? 'a newer version', requires: stepsFrom(result.data.requires) })
   render()
 }
 
@@ -560,9 +675,11 @@ async function runUpdate(plugin: InstalledPlugin, given: Partial<UpdateState['gi
     commit: state.commit,
     ...(merged.accept ? { accept: true } : {}),
     ...(merged.trust ? { trust: true } : {}),
+    ...(pendingSteps(state.requires).length > 0 ? { requirements: consentOf(state.requires) } : {}),
   })
   if (updateState === null || updateState.ref !== state.ref || updateState.commit !== state.commit) return
   if (!result.ok) {
+    if (result.data.needsRequirements === true) { updateState = { ...state, status: 'ready', requires: stepsFrom(result.data.requirements), message: CHANGED_NOTE, given: merged }; render(); return }
     if (result.data.needsConsent === true) { updateState = { ...state, status: 'consent', added: (result.data.added as string[] | undefined) ?? [], given: merged }; render(); return }
     if (result.data.needsTrust === true) { updateState = { ...state, status: 'trust', given: merged }; render(); return }
     updateState = { ...state, status: 'error', message: `${errorText(result)}${stepSuffix(result.data)}` }
@@ -571,7 +688,7 @@ async function runUpdate(plugin: InstalledPlugin, given: Partial<UpdateState['gi
   }
   const updated = result.data.plugin as InstalledPlugin | undefined
   updateState = updated?.restartRequired === true ? { ...state, status: 'restarting', given: merged } : { ...state, status: 'up-to-date', given: merged }
-  toast(`Updated ${plugin.name}`)
+  toast(`Updated ${joinNames([plugin.name, ...appliedNames(state.requires, result.data.installedRequirements)])}`)
   dispatchEvent(new Event('quiet:plugins-changed'))
   await reload()
   render()
@@ -634,7 +751,18 @@ function updateArea(plugin: InstalledPlugin): HTMLElement | null {
     wrap.append(trust, update)
     return wrap
   }
-  wrap.append(button(`Update to ${state.version}`, 'connection-button primary', () => void runUpdate(plugin, {})))
+  const needs = requirementsSection(state.requires)
+  if (needs !== null) wrap.append(needs)
+  if (state.message !== '') wrap.append(Object.assign(document.createElement('p'), { className: 'connection-note', textContent: state.message }))
+  const trusting = state.requires.some(stepNeedsTrust)
+  const trust = trustSwitch('I trust these plugins')
+  const label = pendingSteps(state.requires).length > 0 ? `Update all (${installCount(state.requires)})` : `Update to ${state.version}`
+  const update = button(label, 'connection-button primary', () => void runUpdate(plugin, trust.input.checked ? { trust: true } : {}))
+  const refresh = (): void => { update.disabled = hasBlockedStep(state.requires) || (trusting && !trust.input.checked) }
+  trust.input.onchange = refresh
+  if (trusting) wrap.append(trust.label)
+  refresh()
+  wrap.append(update)
   return wrap
 }
 
@@ -649,11 +777,15 @@ function uninstallArea(plugin: InstalledPlugin): HTMLElement {
   keepInput.setAttribute('role', 'switch')
   keepInput.checked = true
   keep.append(keepInput, document.createTextNode('Keep its data (settings and files)'))
-  const remove = button('Uninstall', 'connection-button', element => {
+  const attempt = (element: HTMLButtonElement, force: boolean): void => {
     void runBusy(element, 'Removing…', async () => {
-      const response = await fetch(`/api/plugins/${encodeURIComponent(plugin.id)}`, { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ keepData: (keepInput as HTMLInputElement).checked }) })
+      const response = await fetch(`/api/plugins/${encodeURIComponent(plugin.id)}`, { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ keepData: (keepInput as HTMLInputElement).checked, ...(force ? { force: true } : {}) }) })
       if (!response.ok) {
-        const payload = await response.json().catch(() => ({})) as { error?: string }
+        const payload = await response.json().catch(() => ({})) as { error?: string; dependents?: unknown }
+        if (isDependentsRefusal(response, payload)) {
+          forcePrompt(wrap, `${payload.error ?? 'Other plugins need this plugin'}. Remove anyway?`, 'Remove anyway', again => attempt(again, true))
+          return null
+        }
         return payload.error ?? 'Could not uninstall this plugin'
       }
       toast(`Removed ${plugin.name}`)
@@ -663,10 +795,30 @@ function uninstallArea(plugin: InstalledPlugin): HTMLElement {
       await openMarketplace()
       return null
     }, wrap)
-  })
+  }
+  const remove = button('Uninstall', 'connection-button', element => attempt(element, false))
   remove.style.color = 'var(--danger)'
   wrap.append(keep, remove)
   return wrap
+}
+
+async function toggleEnabled(plugin: InstalledPlugin, input: HTMLInputElement, pane: HTMLElement, force: boolean): Promise<void> {
+  const next = input.checked
+  const response = await fetch(`/api/plugins/${encodeURIComponent(plugin.id)}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: next, ...(force ? { force: true } : {}) }) })
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({})) as { error?: string; dependents?: unknown }
+    input.checked = !next
+    if (!next && isDependentsRefusal(response, payload)) {
+      forcePrompt(pane, `${payload.error ?? 'Other plugins need this plugin'}. Turn off anyway?`, 'Turn off anyway', () => { input.checked = false; void toggleEnabled(plugin, input, pane, true) })
+      return
+    }
+    toast(payload.error ?? 'That change did not go through')
+    return
+  }
+  toast(next ? `${plugin.name} is on` : `${plugin.name} is off`)
+  dispatchEvent(new Event('quiet:plugins-changed'))
+  await reload()
+  render()
 }
 
 function installedDetail(plugin: InstalledPlugin): HTMLElement {
@@ -694,22 +846,7 @@ function installedDetail(plugin: InstalledPlugin): HTMLElement {
   enabledInput.type = 'checkbox'
   enabledInput.setAttribute('role', 'switch')
   enabledInput.checked = plugin.enabled
-  enabledInput.onchange = () => {
-    void (async () => {
-      const next = (enabledInput as HTMLInputElement).checked
-      const response = await fetch(`/api/plugins/${encodeURIComponent(plugin.id)}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: next }) })
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({})) as { error?: string }
-        toast(payload.error ?? 'That change did not go through')
-        ;(enabledInput as HTMLInputElement).checked = !next
-        return
-      }
-      toast(next ? `${plugin.name} is on` : `${plugin.name} is off`)
-      dispatchEvent(new Event('quiet:plugins-changed'))
-      await reload()
-      render()
-    })()
-  }
+  enabledInput.onchange = () => { void toggleEnabled(plugin, enabledInput as HTMLInputElement, pane, false) }
   enabled.append(enabledInput, document.createTextNode('Enabled'))
   const spacer = document.createElement('span')
   spacer.style.flex = '1'

@@ -32,6 +32,23 @@ export type ScreenApi = {
   onTheme(cb: (theme: ThemeName) => void): Promise<void>
 }
 
+export type PluginRequirement = { id: string; version?: string }
+
+export type RequirementContributions = { agents?: string[]; skills?: string[]; flows?: string[] }
+
+type RequirementHead = { id: string; minVersion?: string }
+
+export type RequirementStep =
+  | (RequirementHead & { status: 'ok'; installedVersion: string })
+  | (RequirementHead & { status: 'enable'; installedVersion: string; name: string })
+  | (RequirementHead & {
+    status: 'install' | 'update'
+    installedVersion?: string
+    listing: { repo: string; ref: string; marketplace: string }
+    preview: { manifest: { id: string; name: string; version: string }; commit: string; permissions: PluginPermissions; runtime: 'trusted' | 'isolated'; contributes?: RequirementContributions }
+  })
+  | (RequirementHead & { status: 'unavailable'; reason: string })
+
 export type InstalledPlugin = {
   id: string
   name: string
@@ -46,6 +63,7 @@ export type InstalledPlugin = {
   server?: string
   screen?: string
   queueSource?: true
+  requires?: PluginRequirement[]
   enabled: boolean
   restartRequired?: boolean
   installedAt: string

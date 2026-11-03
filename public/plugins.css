@@ -43,6 +43,10 @@
 .mk-dialog footer { display: flex; justify-content: flex-end; gap: 10px; }
 .mk-dialog input:not([type="checkbox"]), .mk-dialog select { background: var(--field); border: 0; box-shadow: none; border-radius: var(--r-sm); corner-shape: var(--corner); color: var(--text); font: inherit; font-size: 13px; padding: 9px 11px; }
 .mk-fail { color: var(--danger); }
+.mk-req { display: grid; gap: 6px; padding: 12px 0; border-top: 1px solid var(--line); }
+.mk-req p { margin: 0; }
+.mk-force { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.mk-force p { margin: 0; }
 
 /* Plugin screen components, shared with the SDK ui.css */
 .mk-board-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 22px 0 18px; }
