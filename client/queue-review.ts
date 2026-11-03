@@ -72,7 +72,7 @@ export function createPickReview(toast: (text: string) => void): PickReview {
       const pick = item.pick
       if (pick === undefined || screen === null) return
       preview?.dispose()
-      const parsed = parsePickSummary(pick.summary)
+      const parsed = parsePickSummary(pick.summary, pick.options)
       const points = parsed.structured && parsed.points !== null ? renderPoints(parsed.points) : null
       const options = optionsOf(item, parsed)
       let decide: Decide

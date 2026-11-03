@@ -99,3 +99,39 @@ test('an option line without a subtitle bar is skipped', () => {
   if (!parsed.structured) throw new Error('expected structured')
   expect(parsed.options.map(option => option.id)).toEqual(['B'])
 })
+
+const IDS = ['A', 'B', 'C']
+
+test('options written as dash-separated bullets, numbered lines or bold ids are still options', () => {
+  const dashes = parsePickSummary('## Options\n- A — Narrow table\n- b - Wide panel\n- Z — not an option', IDS)
+  if (!dashes.structured) throw new Error('expected structured')
+  expect(dashes.options).toEqual([{ id: 'A', subtitle: 'Narrow table', description: '' }, { id: 'B', subtitle: 'Wide panel', description: '' }])
+  const bold = parsePickSummary('## Options\n1. **A** | Narrow | text\n2) Option B | Wide | text', IDS)
+  if (!bold.structured) throw new Error('expected structured')
+  expect(bold.options.map(option => option.id)).toEqual(['A', 'B'])
+})
+
+test('a known section that yields nothing is kept as markdown instead of dropped', () => {
+  const parsed = parsePickSummary('## Options\nA is narrow and B is wide.\n## Facts\nplain words', IDS)
+  if (!parsed.structured) throw new Error('expected structured')
+  expect(parsed.options).toEqual([])
+  expect(parsed.extra).toEqual([{ heading: 'Options', markdown: 'A is narrow and B is wide.' }, { heading: 'Facts', markdown: 'plain words' }])
+})
+
+test('a second Points section is joined to the first', () => {
+  const parsed = parsePickSummary('## Points\nfirst\n## Points\nsecond')
+  if (!parsed.structured) throw new Error('expected structured')
+  expect(parsed.points).toBe('first\nsecond')
+})
+
+test('a recommendation needs spaces around the dash and a real option id', () => {
+  const hyphen = parsePickSummary('## Recommendation\nMobile-first layout B reads best.', IDS)
+  if (!hyphen.structured) throw new Error('expected structured')
+  expect(hyphen.recommendation).toEqual({ option: null, reason: 'Mobile-first layout B reads best.' })
+  const unknown = parsePickSummary('## Recommendation\nZ — nope', IDS)
+  if (!unknown.structured) throw new Error('expected structured')
+  expect(unknown.recommendation).toEqual({ option: null, reason: 'Z — nope' })
+  const bold = parsePickSummary('## Recommendation\n**b** — reads best.', IDS)
+  if (!bold.structured) throw new Error('expected structured')
+  expect(bold.recommendation).toEqual({ option: 'B', reason: 'reads best.' })
+})

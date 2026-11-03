@@ -20,8 +20,9 @@ export type ParsedSummary =
   }
 
 const HEADING = /^##\s+(.+?)\s*$/
-const BULLET = /^\s*[-*]\s+(.*\S)\s*$/
-const RECOMMENDED = /^([A-Z][A-Za-z0-9]{0,15})\s*[—–-]\s*([\s\S]+)$/
+const BULLET = /^\s*(?:[-*]|\d+[.)])\s+(.*\S)\s*$/
+const RECOMMENDED = /^([A-Za-z][A-Za-z0-9]{0,15})\s+[—–-]\s+([\s\S]+)$/
+const DASHED = /^([A-Za-z][A-Za-z0-9]{0,15})\s+[—–-]\s+(.+)$/
 const KNOWN = new Set(['recommendation', 'options', 'points', 'still open', 'out of scope', 'facts', 'tag'])
 const squash = (text: string): string => text.replace(/\s+/g, ' ').trim()
 
@@ -45,10 +46,17 @@ function sections(markdown: string): ExtraSection[] {
 
 const bullets = (markdown: string): string[] => markdown.split('\n').map(line => BULLET.exec(line)?.[1]).filter((text): text is string => text !== undefined)
 
-function option(line: string): ReviewOption | null {
-  const [id = '', subtitle, ...rest] = line.split('|').map(squash)
-  if (id === '' || subtitle === undefined) return null
-  return { id, subtitle, description: rest.join(' | ') }
+const unbold = (text: string): string => text.replace(/\*\*/g, '')
+const canonical = (id: string, known: readonly string[]): string | null =>
+  known.length === 0 ? id : (known.find(entry => entry.toLowerCase() === id.toLowerCase()) ?? null)
+
+function option(line: string, known: readonly string[]): ReviewOption | null {
+  const text = unbold(line).replace(/^option\s+/i, '')
+  const dashed = text.includes('|') ? null : DASHED.exec(text)
+  const [id = '', subtitle, ...rest] = dashed === null ? text.split('|').map(squash) : [dashed[1]!, squash(dashed[2]!)]
+  const matched = canonical(id, known)
+  if (matched === null || matched === '' || subtitle === undefined) return null
+  return { id: matched, subtitle, description: rest.join(' | ') }
 }
 
 function openChoice(line: string): OpenChoice | null {
@@ -78,28 +86,38 @@ function tag(line: string): TagChip {
   return { name, role: role.toLowerCase() === 'watcher' ? 'watcher' : 'assignee' }
 }
 
-function recommendation(text: string): Recommendation | null {
-  const reason = text.trim()
+function recommendation(text: string, known: readonly string[]): Recommendation | null {
+  const reason = unbold(text).trim()
   if (reason === '') return null
   const match = RECOMMENDED.exec(reason)
-  return match === null ? { option: null, reason: squash(reason) } : { option: match[1]!, reason: squash(match[2]!) }
+  const id = match === null ? null : canonical(match[1]!, known)
+  return match === null || id === null ? { option: null, reason: squash(reason) } : { option: id, reason: squash(match[2]!) }
 }
 
-export function parsePickSummary(markdown: string): ParsedSummary {
+export function parsePickSummary(markdown: string, knownOptions: readonly string[] = []): ParsedSummary {
   const text = markdown.trim()
   const parts = sections(text)
-  const named = (name: string): string | undefined => parts.find(part => part.heading.toLowerCase() === name)?.markdown
-  if (!parts.some(part => KNOWN.has(part.heading.toLowerCase()))) return { structured: false, markdown: text }
-  const points = named('points')
-  return {
-    structured: true,
-    recommendation: recommendation(named('recommendation') ?? ''),
-    options: bullets(named('options') ?? '').map(option).filter((entry): entry is ReviewOption => entry !== null),
-    points: points === undefined || points === '' ? null : points,
-    open: bullets(named('still open') ?? '').map(openChoice).filter((entry): entry is OpenChoice => entry !== null),
-    outOfScope: bullets(named('out of scope') ?? ''),
-    facts: bullets(named('facts') ?? '').map(fact),
-    tags: bullets(named('tag') ?? '').map(tag),
-    extra: parts.filter(part => !KNOWN.has(part.heading.toLowerCase()) && part.markdown !== ''),
+  const isKnown = (heading: string): boolean => KNOWN.has(heading.toLowerCase())
+  if (!parts.some(part => isKnown(part.heading))) return { structured: false, markdown: text }
+  const named = (name: string): string => parts.filter(part => part.heading.toLowerCase() === name).map(part => part.markdown).filter(body => body !== '').join('\n')
+  const unparsed: ExtraSection[] = []
+  const entries = <T>(name: string, read: (line: string) => T | null): T[] => {
+    const body = named(name)
+    const found = bullets(body).map(read).filter((entry): entry is T => entry !== null)
+    if (body !== '' && found.length === 0) unparsed.push({ heading: parts.find(part => part.heading.toLowerCase() === name)!.heading, markdown: body })
+    return found
   }
+  const points = named('points')
+  const result = {
+    structured: true as const,
+    recommendation: recommendation(named('recommendation'), knownOptions),
+    options: entries('options', line => option(line, knownOptions)),
+    points: points === '' ? null : points,
+    open: entries('still open', openChoice),
+    outOfScope: entries('out of scope', line => line),
+    facts: entries('facts', fact),
+    tags: entries('tag', tag),
+  }
+  const extra = parts.filter(part => !isKnown(part.heading) && part.markdown !== '')
+  return { ...result, extra: [...unparsed, ...extra] }
 }
