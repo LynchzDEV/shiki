@@ -220,7 +220,7 @@ function requirementRow(step: RequirementStep): HTMLElement {
     return row
   }
   row.append(Object.assign(document.createElement('p'), { className: 'muted connection-small', textContent: stepNote(step) }))
-  if (step.status === 'enable') return row
+  if (step.status === 'ok' || step.status === 'enable') return row
   row.append(permList(step.preview.permissions, 'It asks for').querySelector('.mk-perm')!)
   const lines = contributionLines({ contributes: step.preview.contributes })
   if (lines.length > 0) {
