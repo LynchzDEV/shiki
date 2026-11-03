@@ -1538,6 +1538,8 @@ dialog, .access-dialog, .confirm-dialog { max-width: calc(100vw - 32px); max-hei
 .q-review .pk-opt input{accent-color:var(--accent);width:16px;height:16px;margin:0}
 .q-review .pk-opt img{width:92px;height:72px;object-fit:cover;object-position:top;border-radius:var(--r-sm);border:1px solid var(--line);background:var(--hi)}
 .q-review .pk-opt:has(input:checked){outline:2px solid var(--accent);outline-offset:0}
+.q-review .pk-opt.pk-none,.q-review .pk-d-left .pk-opt.pk-none{grid-template-columns:auto minmax(0,1fr)}
+.q-review .pk-feedback textarea{width:100%;min-height:96px}
 .q-review .pk-opt-text{display:grid;gap:2px;min-width:0}
 .q-review .pk-opt-t{display:flex;align-items:center;gap:8px}
 .q-review .pk-opt-t strong{font-size:16px}

@@ -3,11 +3,14 @@ import type { OpenChoice, ParsedSummary, ReviewOption } from './queue-review-par
 import { mockupUrl } from './queue-review-preview'
 import { el, type QueueItemView } from './queue-view'
 
-export type PickPayload = { option: string; tester: string; note: string; answers: Array<{ id: string; label: string; answer: string; useDefault: boolean }> }
+export const NO_PICK = 'none'
+export type PickPayload = { option: string; tester: string; note: string; answers?: Array<{ id: string; label: string; answer: string; useDefault: boolean }>; feedback?: string }
 export type Decide = {
   section: HTMLElement
   buildButton: HTMLButtonElement
   selected(): string
+  isNone(): boolean
+  feedback: HTMLTextAreaElement
   setSelected(id: string): void
   payload(): PickPayload
   setError(text: string): void
@@ -17,6 +20,7 @@ type DecideConfig = { item: QueueItemView; parsed: ParsedSummary; onSelect(id: s
 const MAX_ID = 16
 const MAX_LABEL = 200
 const MAX_ANSWER = 1000
+const MAX_FEEDBACK = 4000
 
 export function inline(markdown: string): Node[] {
   const paragraph = renderMarkdown(markdown).firstElementChild
@@ -37,6 +41,11 @@ function optionCard(item: QueueItemView, option: ReviewOption, described: boolea
     ...(option.subtitle === '' ? [] : [el('span', { class: 'pk-opt-sub' }, option.subtitle)]),
     ...(option.description === '' ? [] : [el('span', { class: 'pk-opt-d' }, ...inline(option.description))]))
   return el('label', { class: 'mk-card pk-opt' }, el('input', { type: 'radio', name: 'option', value: option.id, checked }), thumb, text)
+}
+
+function noneCard(checked: boolean): HTMLElement {
+  const text = el('span', { class: 'pk-opt-text' }, el('span', { class: 'pk-opt-t' }, el('strong', {}, 'None of these')), el('span', { class: 'pk-opt-sub' }, 'Ask for new designs'))
+  return el('label', { class: 'mk-card pk-opt pk-none' }, el('input', { type: 'radio', name: 'option', value: NO_PICK, checked }), text)
 }
 
 function openFieldset(choice: OpenChoice, index: number): HTMLElement {
@@ -66,9 +75,15 @@ export function createDecide({ item, parsed, onSelect, onBuild }: DecideConfig):
   const described = (id: string): boolean => parsed.structured && parsed.options.some(entry => entry.id === id)
 
   const radios = el('div', { class: 'pk-opts', role: 'radiogroup', 'aria-label': 'Design to build' },
-    ...options.map(option => optionCard(item, option, described(option.id), option.id === pick.recommended, option.id === selectedId)))
+    ...options.map(option => optionCard(item, option, described(option.id), option.id === pick.recommended, option.id === selectedId)),
+    noneCard(selectedId === NO_PICK))
   const radioOf = (id: string): HTMLInputElement | undefined => [...radios.querySelectorAll<HTMLInputElement>('input')].find(input => input.value === id)
-  radios.addEventListener('change', (event) => { if (event.target instanceof HTMLInputElement) onSelect(event.target.value) })
+  const feedback = el('textarea', { id: 'queue-review-feedback', name: 'feedback', rows: '4', placeholder: "e.g. keep B's table but put it in the drawer, and drop the badge", maxlength: String(MAX_FEEDBACK) }) as HTMLTextAreaElement
+  const feedbackBox = el('div', { class: 'pk-field pk-feedback', 'data-feedback': true, hidden: true }, el('div', { class: 'pk-lbl' }, el('label', { for: 'queue-review-feedback' }, 'What should change?')), feedback)
+  const openWrap = el('div', { 'data-open-wrap': true })
+  const isNone = (): boolean => radios.querySelector<HTMLInputElement>('input:checked')?.value === NO_PICK
+  const sync = (): void => { feedbackBox.hidden = !isNone(); openWrap.hidden = isNone() }
+  radios.addEventListener('change', (event) => { sync(); if (event.target instanceof HTMLInputElement) onSelect(event.target.value) })
 
   const fieldsets = open.map(openFieldset)
   const defaults = el('span', { 'data-defaults': true })
@@ -95,10 +110,12 @@ export function createDecide({ item, parsed, onSelect, onBuild }: DecideConfig):
   const outOfScope = parsed.structured && parsed.outOfScope.length > 0
     ? [heading('h4', 'Out of scope', `(${parsed.outOfScope.length}) · not in this fix`), el('ul', { class: 'md-list pk-oos' }, ...parsed.outOfScope.map(entry => el('li', {}, ...inline(entry))))]
     : []
+  if (open.length > 0) openWrap.append(heading('h4', 'Still open', '· your call, my default if you say nothing'), el('div', { class: 'pk-open-grid' }, ...fieldsets))
   const section = el('section', { id: 'decide' },
     heading('h3', 'Decide'),
     radios,
-    ...(open.length === 0 ? [] : [heading('h4', 'Still open', '· your call, my default if you say nothing'), el('div', { class: 'pk-open-grid' }, ...fieldsets)]),
+    feedbackBox,
+    openWrap,
     ...(item.questions.length === 0 ? [] : [heading('h4', 'Also asked'), el('ul', { class: 'md-list pk-oos pk-asked' }, ...item.questions.map(question => el('li', {}, question)))]),
     ...outOfScope,
     el('div', { class: 'pk-d-fields' },
@@ -109,12 +126,16 @@ export function createDecide({ item, parsed, onSelect, onBuild }: DecideConfig):
   return {
     section,
     buildButton,
+    isNone,
+    feedback,
     selected: () => radios.querySelector<HTMLInputElement>('input:checked')?.value ?? selectedId,
     setSelected(id): void {
       const radio = radioOf(id)
       if (radio) radio.checked = true
+      sync()
     },
     payload() {
+      if (isNone()) return { option: NO_PICK, feedback: feedback.value.trim(), tester: tester.value.trim(), note: note.value.trim() }
       const answers = open.map((choice, index) => {
         const other = fieldsets[index]!.querySelector<HTMLInputElement>('input[type=text]')!
         const custom = fieldsets[index]!.querySelector<HTMLInputElement>('input[value=other]')!.checked ? other.value.trim() : ''

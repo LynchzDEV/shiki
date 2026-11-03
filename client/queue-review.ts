@@ -1,5 +1,5 @@
 import { renderMarkdown } from './markdown'
-import { createDecide, inline, optionsOf, type Decide } from './queue-review-decide'
+import { createDecide, inline, NO_PICK, optionsOf, type Decide } from './queue-review-decide'
 import { parsePickSummary, type ParsedSummary } from './queue-review-parse'
 import { renderPoints, type PointsView } from './queue-review-points'
 import { createPreview, type Preview } from './queue-review-preview'
@@ -80,14 +80,14 @@ export function createPickReview(toast: (text: string) => void): PickReview {
       const points = parsed.structured && parsed.points !== null ? renderPoints(parsed.points) : null
       const options = optionsOf(item, parsed)
       let decide: Decide
-      const buildLabel = (id: string): string => `Build with ${id}`
+      const buildLabel = (id: string): string => (id === NO_PICK ? 'Ask for new designs' : `Build with ${id}`)
       const headerBuild = el('button', { type: 'button', class: 'connection-button primary pk-build pk-build-sm' }) as HTMLButtonElement
 
       let current: Preview
       function select(id: string): void {
         decide.setSelected(id)
         headerBuild.textContent = decide.buildButton.textContent = buildLabel(id)
-        current.show(id.toLowerCase())
+        if (id !== NO_PICK) current.show(id.toLowerCase())
       }
       decide = createDecide({ item, parsed, onSelect: select, onBuild: () => { void build() } })
       current = createPreview({ itemId: item.id, path: pick.path, options, recommended: pick.recommended, selected: () => decide.selected(), choose: select })
@@ -96,6 +96,7 @@ export function createPickReview(toast: (text: string) => void): PickReview {
       headerBuild.addEventListener('click', () => { void build() })
 
       async function build(): Promise<void> {
+        if (decide.isNone() && decide.feedback.value.trim() === '') { decide.setError('Say what should change'); decide.feedback.focus(); return }
         const buttons = [headerBuild, decide.buildButton]
         for (const button of buttons) button.disabled = true
         decide.setError('')
@@ -106,7 +107,7 @@ export function createPickReview(toast: (text: string) => void): PickReview {
         back.removeAttribute('aria-disabled')
         if (!result.ok) { if (token === opened) decide.setError(errorText(result)); return }
         if (token === opened && !screen!.hidden) leave()
-        toast(`Picked ${body.option} for ${item.title}`)
+        toast(body.option === NO_PICK ? `Asked for new designs for ${item.title}` : `Picked ${body.option} for ${item.title}`)
       }
 
       const sections = [

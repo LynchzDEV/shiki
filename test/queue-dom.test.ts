@@ -531,7 +531,7 @@ test('Pick opens the review screen with every section of a structured summary', 
   expect(sel('.pk-points tr[data-decision] .pill-state').textContent).toBe('Decision needed')
   expect(sel('.pk-points tr[data-decision] td:last-child').textContent).toBe('Decision needed: pick a page.')
   expect(sel('.pk-foot-note').textContent).toBe('Specs are listed elsewhere.')
-  expect(all$('.pk-opt').map(card => card.textContent)).toEqual(['ANarrowSqueezes the table.', 'BRecommendedWideFull table.', 'CPopupAdds a screen.'])
+  expect(all$('.pk-opt:not(.pk-none)').map(card => card.textContent)).toEqual(['ANarrowSqueezes the table.', 'BRecommendedWideFull table.', 'CPopupAdds a screen.'])
   expect(sel('.pk-opt code').textContent).toBe('table')
   expect(sel<HTMLImageElement>('.pk-opt img').getAttribute('src')).toBe('/queue/p1/files/login/renders/a.png')
   expect(all$('.pk-open legend').map(legend => legend.textContent)).toEqual(['#7 Promo replies', '#5 No page'])
@@ -553,7 +553,7 @@ test('a summary without headings falls back to markdown and has no Points sectio
   expect(sel('#summary strong').textContent).toBe('Three')
   expect(review().querySelector('#points')).toBeNull()
   expect(all$('.pk-nav a').map(link => link.textContent)).toEqual(['1Summary', '2Decide'])
-  expect(all$('.pk-opt').map(card => card.querySelector('strong')?.textContent)).toEqual(['Option A', 'Option B', 'Option C'])
+  expect(all$('.pk-opt:not(.pk-none)').map(card => card.querySelector('strong')?.textContent)).toEqual(['Option A', 'Option B', 'Option C'])
   expect(review().querySelector('.pk-open')).toBeNull()
 })
 
@@ -914,4 +914,60 @@ test('the log dialog shows the log and polls every 5 seconds only while it is op
     globalThis.setInterval = realSetInterval
     globalThis.clearInterval = realClear
   }
+})
+
+const chooseOption = (value: string) => { const input = radio(value); input.checked = true; input.dispatchEvent(new window.Event('change', { bubbles: true })) }
+const feedbackBox = () => sel<HTMLTextAreaElement>('[name="feedback"]')
+
+test('None of these is a fourth card that shows a required feedback box and relabels both Build buttons', async () => {
+  await openPick()
+  expect(all$('input[name=option]').map(input => input.value)).toEqual(['A', 'B', 'C', 'none'])
+  expect(sel('.pk-none').textContent).toContain('None of these')
+  expect(sel('.pk-none').textContent).toContain('Ask for new designs')
+  expect(sel('.pk-none img')).toBeNull()
+  expect(sel('[data-feedback]').hidden).toBe(true)
+  chooseOption('none')
+  expect(sel('[data-feedback]').hidden).toBe(false)
+  expect(sel('[data-feedback] label').textContent).toBe('What should change?')
+  expect(feedbackBox().maxLength).toBe(4000)
+  expect(feedbackBox().placeholder).toContain('keep B')
+  expect(all$('.pk-build').map(button => button.textContent)).toEqual(['Ask for new designs', 'Ask for new designs'])
+  expect(sel('[data-open-wrap]').hidden).toBe(true)
+  expect(previewSrc()).toBe('/queue/p1/files/login/b.html')
+})
+
+test('reselecting an option restores its Build label and the Still open answers', async () => {
+  await openPick()
+  chooseOption('none')
+  chooseOption('B')
+  expect(all$('.pk-build').map(button => button.textContent)).toEqual(['Build with B', 'Build with B'])
+  expect(sel('[data-open-wrap]').hidden).toBe(false)
+  expect(sel('[data-feedback]').hidden).toBe(true)
+})
+
+test('asking for new designs with empty feedback shows an error and posts nothing', async () => {
+  await openPick()
+  chooseOption('none')
+  feedbackBox().value = '   '
+  click(all$('.pk-build')[1] as HTMLElement)
+  await flush()
+  expect(sel('.q-add-error').textContent).toBe('Say what should change')
+  expect(sel('.q-add-error').hidden).toBe(false)
+  expect(calls.some(entry => entry.method === 'POST' && entry.url.endsWith('/pick'))).toBe(false)
+  expect(all$('.pk-build').some(button => (button as HTMLButtonElement).disabled)).toBe(false)
+})
+
+test('asking for new designs posts none with feedback and no answers, then returns to the queue', async () => {
+  await openPick()
+  sel<HTMLInputElement>('[name="tester"]').value = ' Mint '
+  chooseOption('none')
+  feedbackBox().value = ' keep B but drop the badge '
+  replies.set('POST /api/queue/p1/pick', () => Response.json({ item: { id: 'p1' } }))
+  click(all$('.pk-build')[0] as HTMLElement)
+  await flush()
+  const post = calls.find(entry => entry.method === 'POST')!
+  expect(post.url).toBe('/api/queue/p1/pick')
+  expect(post.body).toEqual({ option: 'none', feedback: 'keep B but drop the badge', tester: 'Mint', note: '' })
+  expect(toasts).toEqual(['Asked for new designs for Login button wording'])
+  expect(shown.at(-1)).toBe('queue')
 })
