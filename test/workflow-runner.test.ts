@@ -337,6 +337,21 @@ test('retry re-resolves agents from current Settings', async () => {
   await finished(run.id)
 })
 
+test('after a retry with new Settings, the review is still checked against the family that wrote the code', async () => {
+  let calls = 0
+  const store = await build(() => ({ cmd: '/bin/echo', args: [report(calls++ === 3 ? 'blocked' : 'pass')], env: {} }))
+  await store.save({ ...withoutSession(), id: 'author-family' })
+  const run = await runner.start({ workflowId: 'author-family', cwd: repo, request: 'Implement', label: 'author-family' })
+  expect(run.agents.execute).toMatchObject({ engine: 'glm' })
+  expect((await finished(run.id)).status).toBe('blocked')
+  await writeConfig({ roles: { ...ROLES, execute: { engine: 'codex', model: null }, review: { engine: 'glm', model: null } } })
+  await runner.retry(run.id)
+  const done = await finished(run.id)
+  expect(done.status).toBe('done')
+  const reviews = stepJobs().filter(job => job.workflowRunId === run.id && job.workflowNodeId === 'review')
+  expect(reviews.at(-1)!.engine).not.toBe('glm')
+})
+
 test('a stop that lands while a crashed step is being recovered never starts another job', async () => {
   let spawns = 0
   const store = await build(({ engine }) => { if (engine === 'glm') { spawns += 1; throw new Error('glm will not start') } return { cmd: '/bin/echo', args: [report()], env: {} } })
