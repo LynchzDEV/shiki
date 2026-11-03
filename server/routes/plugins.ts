@@ -9,6 +9,7 @@ import { ContextTooLarge, writeContextFile } from '../plugins/context-files'
 import { createInstaller, type Installer } from '../plugins/installer'
 import { addFromLink } from '../plugins/link'
 import { addMarketplace, catalog, listMarketplaces, removeMarketplace } from '../plugins/marketplaces'
+import type { RequirementConsent } from '../plugins/requirements'
 import { defaultRuntimes, type Runtimes } from '../plugins/runtimes'
 import { setSetting, settingsView } from '../plugins/settings'
 import { refreshContributions } from '../plugins/contributions'
@@ -27,6 +28,18 @@ function successBody<T extends { ok: true }>(result: T): Record<string, unknown>
 
 const text = (value: unknown): string => (typeof value === 'string' ? value : '')
 const optionalText = (value: unknown): string | undefined => (typeof value === 'string' && value !== '' ? value : undefined)
+
+const CONSENT_ACTIONS: RequirementConsent['action'][] = ['install', 'update', 'enable']
+
+function consentList(value: unknown): RequirementConsent[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  return value.flatMap((entry): RequirementConsent[] => {
+    const record = typeof entry === 'object' && entry !== null ? entry as Record<string, unknown> : {}
+    const action = CONSENT_ACTIONS.find(candidate => candidate === record.action)
+    if (typeof record.id !== 'string' || action === undefined) return []
+    return [{ id: record.id, action, ...(typeof record.commit === 'string' ? { commit: record.commit } : {}) }]
+  })
+}
 
 const PUBLIC_DIR = resolve(import.meta.dir, '..', '..', 'public')
 
@@ -80,7 +93,7 @@ export function pluginsRoutes(deps: { installer?: Installer; runtimes?: Runtimes
     .get('/api/plugins/catalog', async () => ({ entries: await catalog() }))
     .post('/api/plugins/preview', async ({ body, set }) => {
       const parsed = (body ?? {}) as Record<string, unknown>
-      const result = await installer.preview({ repo: text(parsed.repo), ref: text(parsed.ref) })
+      const result = await installer.preview({ repo: text(parsed.repo), ref: text(parsed.ref), marketplace: optionalText(parsed.marketplace) })
       if (!result.ok) { set.status = result.status; return failureBody(result) }
       return successBody(result)
     })
@@ -99,6 +112,7 @@ export function pluginsRoutes(deps: { installer?: Installer; runtimes?: Runtimes
         commit: text(parsed.commit),
         trust: parsed.trust === true,
         marketplace: optionalText(parsed.marketplace),
+        requirements: consentList(parsed.requirements),
       })
       if (!result.ok) { set.status = result.status; return failureBody(result) }
       return successBody(result)
@@ -111,25 +125,26 @@ export function pluginsRoutes(deps: { installer?: Installer; runtimes?: Runtimes
         accept: parsed.accept === true,
         trust: parsed.trust === true,
         repo: optionalText(parsed.repo),
+        requirements: consentList(parsed.requirements),
       })
       if (!result.ok) { set.status = result.status; return failureBody(result) }
       return successBody(result)
     })
     .delete('/api/plugins/:id', async ({ params, body, set }) => {
-      const keepData = ((body ?? {}) as Record<string, unknown>).keepData
+      const { keepData, force } = (body ?? {}) as Record<string, unknown>
       if (keepData !== undefined && typeof keepData !== 'boolean') {
         set.status = 400
         return { error: 'keepData must be true or false' }
       }
-      const result = await installer.uninstall(params.id, { keepData: keepData === undefined ? undefined : keepData })
-      if (!result.ok) { set.status = result.status; return { error: result.error } }
+      const result = await installer.uninstall(params.id, { keepData: keepData === undefined ? undefined : keepData, force: force === true })
+      if (!result.ok) { set.status = result.status; return failureBody(result) }
       return { ok: true, keptData: result.keptData }
     })
     .patch('/api/plugins/:id', async ({ params, body, set }) => {
-      const enabled = ((body ?? {}) as Record<string, unknown>).enabled
+      const { enabled, force } = (body ?? {}) as Record<string, unknown>
       if (typeof enabled !== 'boolean') { set.status = 400; return { error: 'enabled must be true or false' } }
-      const result = await installer.setEnabled(params.id, enabled)
-      if (!result.ok) { set.status = result.status; return { error: result.error } }
+      const result = await installer.setEnabled(params.id, enabled, { force: force === true })
+      if (!result.ok) { set.status = result.status; return failureBody(result) }
       return successBody(result)
     })
     .get('/api/plugins/:id/settings', async ({ params, set }) => {
