@@ -500,6 +500,15 @@ test('the queue resumes by itself after the pause time', async () => {
   expect(h.store.get(item.id)).toMatchObject({ state: 'building', currentRunId: 'run-2', runIds: ['run-1', 'run-2'] })
 })
 
+test('a run that is already unavailable when it starts pauses the queue after one build instead of looping', async () => {
+  let builds = 0
+  const looping = harness({ runner: { start: async () => { builds += 1; const id = `run-${builds}`; looping.runs.set(id, { id, status: 'blocked', error: 'glm unavailable', attempts: [], unavailable }); return { id } }, get: id => looping.runs.get(id) } })
+  await looping.engine.add(add)
+  expect(builds).toBe(1)
+  expect(looping.engine.paused()?.reason).toContain('glm unavailable')
+  expect(looping.store.list()[0]!.state).toBe('queued')
+})
+
 test('an expired pause tells stream listeners even when no card is waiting', async () => {
   let now = 1_000_000
   const h = harness({ now: () => now })

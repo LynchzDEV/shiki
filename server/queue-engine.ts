@@ -243,7 +243,7 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
   async function startNext(): Promise<void> {
     if (paused !== null && now() < paused.until) return
     if (paused !== null) { paused = null; onPausedChange() }
-    while (!store.list().some(item => item.state === 'building')) {
+    while (paused === null && !store.list().some(item => item.state === 'building')) {
       const next = store.list().find(item => item.state === 'queued')
       if (next === undefined) return
       onPreparing(next.id)
