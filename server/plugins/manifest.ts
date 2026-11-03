@@ -35,6 +35,12 @@ export type PluginPermissions = {
 
 export type PluginContributions = { agents?: string[]; skills?: string[]; flows?: string[] }
 
+export type PluginRequirement = { id: string; version?: string }
+
+export const MAX_REQUIREMENTS = 10
+
+export const REQUIREMENT_VERSION_PATTERN = /^\d+(\.\d+){0,2}$/
+
 export type PluginManifest = {
   id: string
   name: string
@@ -49,6 +55,7 @@ export type PluginManifest = {
   permissions: PluginPermissions
   settings?: SettingField[]
   contributes?: PluginContributions
+  requires?: PluginRequirement[]
 }
 
 export type ParseManifestResult = { ok: true; manifest: PluginManifest } | { ok: false; errors: string[] }
@@ -82,6 +89,7 @@ const manifestSchema = z.object({
     skills: z.array(z.string()).optional(),
     flows: z.array(z.string()).optional(),
   }).optional(),
+  requires: z.array(z.object({ id: z.string(), version: z.string().optional() })).optional(),
 })
 
 function insideRepoPath(value: string): boolean {
@@ -117,6 +125,7 @@ export function parseManifest(raw: unknown): ParseManifestResult {
     if (!isNetworkPermission(host)) add(`network permission "${host}" must be a plain host name like api.example.com, or *. and a host like *.example.com`)
   }
   for (const error of contributionErrors(value.contributes, value.pluginApi)) add(error)
+  for (const error of requirementErrors(value.requires, value.id)) add(error)
   const settingKeys = new Set<string>()
   for (const field of value.settings ?? []) {
     if (settingKeys.has(field.key)) add(`settings: the key "${field.key}" is declared more than once`)
@@ -124,6 +133,21 @@ export function parseManifest(raw: unknown): ParseManifestResult {
   }
 
   return errors.length > 0 ? { ok: false, errors } : { ok: true, manifest: value }
+}
+
+function requirementErrors(requires: PluginRequirement[] | undefined, selfId: string): string[] {
+  if (requires === undefined) return []
+  const errors: string[] = []
+  if (requires.length > MAX_REQUIREMENTS) errors.push(`requires can list at most ${MAX_REQUIREMENTS} plugins`)
+  const seen = new Set<string>()
+  for (const entry of requires) {
+    if (!PLUGIN_ID_PATTERN.test(entry.id)) errors.push(`requires: "${entry.id}" is not a valid plugin id`)
+    else if (entry.id === selfId) errors.push('requires: a plugin cannot require itself')
+    else if (seen.has(entry.id)) errors.push(`requires: ${entry.id} is listed more than once`)
+    if (entry.version !== undefined && !REQUIREMENT_VERSION_PATTERN.test(entry.version)) errors.push(`requires: the version "${entry.version}" for ${entry.id} must look like 1.7 or 1.7.0`)
+    seen.add(entry.id)
+  }
+  return errors
 }
 
 const CONTRIBUTION_KINDS = [

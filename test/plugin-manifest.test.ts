@@ -87,6 +87,31 @@ describe('parseManifest', () => {
     if (!result.ok) expect(result.errors.join('\n')).toContain('declared more than once')
   })
 
+  test('accepts requires with and without a minimum version', () => {
+    const requires = [{ id: 'queue-board', version: '1.7.0' }, { id: 'hello-board' }]
+    expect(parseManifest({ ...CLICKUP_MANIFEST, requires })).toEqual({ ok: true, manifest: { ...CLICKUP_MANIFEST, requires } })
+  })
+
+  test('requires needs pluginApi 1 or 2 only, so it works on both', () => {
+    expect(parseManifest({ ...CLICKUP_MANIFEST, pluginApi: 2, requires: [{ id: 'hello-board' }] }).ok).toBe(true)
+  })
+
+  test.each([
+    ['a bad id', [{ id: 'Bad_ID' }], 'Bad_ID'],
+    ['a bad version', [{ id: 'hello-board', version: '1.x' }], '1.x'],
+    ['a version with four parts', [{ id: 'hello-board', version: '1.2.3.4' }], '1.2.3.4'],
+    ['the plugin itself', [{ id: 'clickup-board' }], 'cannot require itself'],
+    ['the same id twice', [{ id: 'hello-board' }, { id: 'hello-board', version: '1.0' }], 'listed more than once'],
+    ['more than 10 entries', Array.from({ length: 11 }, (_, index) => ({ id: `plugin-${index}a` })), 'at most 10'],
+  ])('refuses requires with %s, with one error', (_label, requires, fragment) => {
+    const result = parseManifest({ ...CLICKUP_MANIFEST, requires })
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.errors).toHaveLength(1)
+      expect(result.errors[0]).toContain(fragment)
+    }
+  })
+
   test('collects several errors at once', () => {
     const result = parseManifest({ ...CLICKUP_MANIFEST, id: 'x', pluginApi: 3, screen: '../x.ts' })
     expect(result.ok).toBe(false)
