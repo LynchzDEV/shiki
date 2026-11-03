@@ -1654,15 +1654,16 @@ dialog, .access-dialog, .confirm-dialog { max-width: calc(100vw - 32px); max-hei
 .q-review .pk-d{display:block;height:auto}
 .q-review .pk-d-body{display:flex;flex-direction:column}
 .q-review .pk-d-left,.q-review .pk-main{display:contents}
-.q-review .pk-nav{display:none}
-.q-review .pk-main > section{padding:0 16px}
+.q-review .pk-d-left .pk-nav{display:none}
+.q-review .pk-main > section{padding:18px 16px 0;min-width:0}
+.q-review .pk-d-right{padding-inline:16px}
 .q-review #decide{order:1}
 .q-review .pk-d-right{order:2;height:60vh;padding-top:12px}
 .q-review #summary{order:3}
 .q-review #points{order:4}
 .q-review .pk-d-head{padding:14px 16px}
 .q-review .pk-d-body{min-height:0}
-.q-review .pk-opt{grid-template-columns:auto minmax(0,1fr)}
-.q-review .pk-opt img{display:none}
-.q-review .pk-points{display:block;overflow-x:auto}
+.q-review .pk-d-left .pk-opt{grid-template-columns:auto minmax(0,1fr)}
+.q-review .pk-d-left .pk-opt img{display:none}
+.q-review .pk-d-left .pk-points{display:block;overflow-x:auto}
 }
