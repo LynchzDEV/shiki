@@ -10,15 +10,18 @@ import * as worktrees from '../server/job-worktrees'
 import { initScratchGitRepo } from './support/scratch-git-repo'
 import { classicWorkflow } from './support/classic-workflow'
 import type { TerminalRecord } from '../server/terminals'
+import type { Unavailable } from '../server/engine-availability'
 import { mcUrl, writeConfig } from '../server/secrets'
 
 let dir: string, repo: string, manager: JobManager, runner: WorkflowRunner, settledRuns: WorkflowRun[]
+let down: (engine: string) => Unavailable | null = () => null
 const report = (outcome = 'pass') => JSON.stringify({ type: 'result', result: `SKD_RESULT ${JSON.stringify({ outcome, summary: 'Completed fixture', evidence: ['fixture assertion'] })}` })
 const resolver: EngineResolver = () => ({ cmd: '/bin/echo', args: [report()], env: {} })
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'mc-workflow-runner-'))
   repo = await mkdtemp(join(homedir(), 'mc-workflow-repo-'))
   process.env.SKD_CONFIG_DIR = dir
+  down = () => null
   await initScratchGitRepo(repo)
 })
 afterEach(async () => {
@@ -41,7 +44,7 @@ async function build(agent: EngineResolver = resolver, approval = false) {
   const settled: WorkflowRun[] = []
   settledRuns = settled
   manager = createJobManager({ onJobSettled: job => { void runner.onJobSettled(job) } })
-  runner = createWorkflowRunner({ manager, resolver: agent, store, base: dir, requireApproval: async () => approval, onRunSettled: run => { settled.push(run) } })
+  runner = createWorkflowRunner({ manager, resolver: agent, store, base: dir, requireApproval: async () => approval, onRunSettled: run => { settled.push(run) }, availability: async ({ engine }) => down(engine) })
   return store
 }
 function withoutSession(): Workflow {
@@ -184,6 +187,73 @@ test('an undefined role resolves to the fallback; with fallback null the run sta
   await writeConfig({ roles: { plan: { engine: 'claude', model: null }, execute: { engine: 'glm', model: null }, review: { engine: 'codex', model: null }, builder: { engine: 'codex', model: 'gpt-5' } } })
   const named = await runner.start({ workflowId: 'named-role', cwd: repo, request: 'Build', label: 'named' })
   expect(named.agents.build).toMatchObject({ engine: 'codex', model: 'gpt-5', family: 'gpt' })
+})
+
+const downFor = (engines: string[]) => (engine: string) => engines.includes(engine) ? { reason: `${engine} is down`, until: null } : null
+const ROLES = { plan: { engine: 'claude', model: null }, execute: { engine: 'glm', model: null }, review: { engine: 'codex', model: null } }
+
+test('an unavailable role engine is swapped to the fallback before the run starts, and the swap is recorded', async () => {
+  const store = await build()
+  await store.save({ ...withoutSession(), id: 'swap' })
+  down = downFor(['glm'])
+  const run = await runner.start({ workflowId: 'swap', cwd: repo, request: 'Implement', label: 'swap' })
+  expect(run.agents.execute).toMatchObject({ engine: 'claude', family: 'claude', swappedFrom: { engine: 'glm', model: null, reason: 'glm is down' } })
+  expect(run.agents.review).toMatchObject({ engine: 'codex' })
+  expect(run.agents.review!.swappedFrom).toBeUndefined()
+  const done = await finished(run.id)
+  expect(done.status).toBe('done')
+  expect(manager.listJobs().find(job => job.workflowNodeId === 'execute')!.engine).toBe('claude')
+})
+
+test('a review whose engine is down moves to another available family, never the implementation family', async () => {
+  const store = await build()
+  await store.save({ ...withoutSession(), id: 'review-down' })
+  await writeConfig({ roles: { ...ROLES, plan: { engine: 'glm', model: null } }, fallback: { engine: 'glm', model: null } })
+  down = downFor(['codex'])
+  const run = await runner.start({ workflowId: 'review-down', cwd: repo, request: 'Implement', label: 'review-down' })
+  expect(run.agents.execute).toMatchObject({ engine: 'glm', family: 'glm' })
+  expect(run.agents.review).toMatchObject({ engine: 'claude', family: 'claude', swappedFrom: { engine: 'codex' } })
+  expect(run.agents.review!.sameFamily).toBeUndefined()
+  expect(run.agents['verify-plan']).toMatchObject({ engine: 'glm', swappedFrom: { engine: 'codex' } })
+  expect((await finished(run.id)).status).toBe('done')
+})
+
+test('with no other family available, the review runs same-family at most twice and is marked sameFamily', async () => {
+  let calls = 0
+  const store = await build(() => ({ cmd: '/bin/echo', args: [report(++calls === 4 || calls === 6 ? 'fail' : 'pass')], env: {} }))
+  await store.save({ ...withoutSession(), id: 'same-family-review' })
+  await writeConfig({ roles: { ...ROLES, execute: { engine: 'claude', model: null } } })
+  down = downFor(['codex', 'glm'])
+  const run = await runner.start({ workflowId: 'same-family-review', cwd: repo, request: 'Implement', label: 'same-family' })
+  expect(run.agents.review).toMatchObject({ engine: 'claude', family: 'claude', sameFamily: true, swappedFrom: { engine: 'codex' } })
+  const done = await finished(run.id)
+  const reviews = done.attempts.filter(attempt => attempt.nodeId === 'review')
+  expect(reviews.map(attempt => [attempt.sameFamily, attempt.result!.outcome])).toEqual([[true, 'fail'], [true, 'fail']])
+  expect(done.status).toBe('blocked')
+  expect(done.error).toBe('claude unavailable: no reviewer of a different family is available')
+  expect(done.unavailable).toEqual({ engine: 'claude', reason: 'no reviewer of a different family is available', until: null })
+})
+
+test('a review that would share the implementation family at dispatch moves to another family', async () => {
+  const store = await build()
+  await store.save({ ...withoutSession(), id: 'collide' })
+  await writeConfig({ roles: { ...ROLES, review: { engine: 'claude', model: null } } })
+  down = downFor(['glm'])
+  const run = await runner.start({ workflowId: 'collide', cwd: repo, request: 'Implement', label: 'collide' })
+  expect(run.agents.execute).toMatchObject({ engine: 'claude', swappedFrom: { engine: 'glm' } })
+  const done = await finished(run.id)
+  expect(done.status).toBe('done')
+  expect(done.agents.review).toMatchObject({ engine: 'codex', family: 'gpt', swappedFrom: { engine: 'claude' } })
+})
+
+test('a pinned parallel runner is not swapped before the run starts', async () => {
+  await homeConfig()
+  await build()
+  down = downFor(['glm'])
+  const run = await runner.start({ workflowId: 'default', cwd: repo, request: 'Design', label: 'arena' }, { startedByUser: true })
+  expect(run.agents['runner-glm']).toMatchObject({ engine: 'glm' })
+  expect(run.agents['runner-glm']!.swappedFrom).toBeUndefined()
+  expect(run.agents.execute).toMatchObject({ engine: 'claude', swappedFrom: { engine: 'glm' } })
 })
 
 test('same model family through different engine names cannot perform cross-family review', async () => {

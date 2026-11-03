@@ -355,10 +355,17 @@ way under `policies/`. The one built-in `default` workflow is plan → verify-pl
   waits for the job's final message to end in an `SKD_RESULT {"outcome",...}` line, runs the node's
   `checks`, and follows the matching outcome edge — retrying the same node up to `maxVisits` times on
   `fail`, and blocking the run outright if a plan is unverified before an `implement` node or a review
-  would share a model family with the implementation it's reviewing. `POST /api/studio/runs` starts
+  would share a model family with the implementation it's reviewing and no other family can take it. `POST /api/studio/runs` starts
   one from `{terminalId?, workflowId?, revision?, cwd, request, label, chat?, chatTurn?, engine?,
   model?}`; `GET /api/studio/runs` lists summaries, `GET .../:id` the full run (agents, attempts,
   checks, status); `.../:id/stop` and `.../:id/retry` control it.
+- **When a step's AI cannot start** (`server/engine-availability.ts`): before a run starts, every
+  agent step's AI is checked. It is unavailable when GLM has no z.ai token, its CLI is not installed,
+  or `/api/quota` shows its 5-hour or weekly limit at 100% with a reset still ahead. An unavailable
+  step moves to a replacement (`replacementFor`): the fallback AI first, then the built-ins and
+  connections that can start, and the agent records `swappedFrom`. A review only moves to a family
+  the implementation did not use; with none left it may run same-family (`sameFamily`) for at most
+  two review attempts in the run. A pinned AI that is one of several parallel paths is never swapped.
 - **One run per folder.** A run claims its folder; while it runs, other jobs in that folder are refused (409). Chat turns are exempt both ways: a chat turn neither blocks a run from starting nor is blocked by one, so a chat can run a workflow in its own project.
 - **Designing one in English** (`createWorkflowBuilder`): `POST /api/studio/drafts` spawns a
   throwaway, read-only job (a separate temp git-free worktree under `~/.cache/shikidan/

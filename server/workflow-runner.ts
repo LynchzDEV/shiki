@@ -22,6 +22,7 @@ import { validateWorkspaceCwd } from './workspace'
 import { checkShape, readShape, shapeGraph, shapeNotes, shapeTarget, type FlowShape } from './flow-shape'
 import { atomicJson, composeWorkflowPrompt, draftRevision, forkSections, identifier, passTargets, sessionRules, type Outcome, type PolicyRevision, type WorkflowNode, type WorkflowRevision, type WorkflowStore } from './workflows'
 import { exportEnv } from './env'
+import type { AvailabilityCheck } from './engine-availability'
 
 const jobId = z.string().min(1).max(200)
 const GIT_TIMEOUT = 120_000
@@ -29,7 +30,7 @@ const startSchema = z.object({ terminalId: identifier.optional(), workflowId: id
 const resultSchema = z.object({ outcome: z.enum(['pass', 'fail', 'blocked']), summary: z.string().trim().min(1).max(16000), evidence: z.array(z.string().min(1).max(4000)).max(100) })
 const stepReportSchema = resultSchema.extend({ output: z.string().max(64000).optional() })
 type NodeResult = z.infer<typeof resultSchema>
-export type ResolvedAgent = { engine: string; model: string | null; family: string | null; connection?: AgentConnection; inSession?: true }
+export type ResolvedAgent = { engine: string; model: string | null; family: string | null; connection?: AgentConnection; inSession?: true; swappedFrom?: { engine: string; model: string | null; reason: string }; sameFamily?: true }
 type ChatDefault = { engine: string; model: string | null }
 type WorkspaceState = { head: string; diffHash: string }
 export type CheckResult = { command: string; args: string[]; exitCode: number | null; output: string; timedOut: boolean }
@@ -41,6 +42,7 @@ export type WorkflowAttempt = {
   inSession?: true; sessionNotifiedAt?: number | null; workspaceSnapshot?: WorkspaceState;
   reportedBy?: { via: ApprovalContext['via']; id: string; at: number }; interrupted?: true;
   shape?: FlowShape; nudgedFrom?: string;
+  crashes?: number; tried?: string[]; sameFamily?: true;
 }
 export type TokenState = 'ready' | 'working' | 'settled' | 'waiting'
 export type WorkflowToken = { id: string; nodeId: string; pathId: string; workspace: string; state: TokenState; attempt: number | null; from: number[] }
@@ -63,6 +65,7 @@ export type WorkflowRun = {
   currentNodeId: string; attempts: WorkflowAttempt[]; createdAt: number; updatedAt: number;
   tokens: WorkflowToken[]; sections: OpenSection[]; keptBranches: string[];
   dismissedAt?: number | null
+  unavailable?: { engine: string; reason: string; until: number | null }
 }
 
 export function lineage(a: string, b: string): boolean {
@@ -207,6 +210,7 @@ function detached(node: WorkflowNode): WorkflowNode {
 }
 
 const ENTER_DELAY_MS = 150
+const SAME_FAMILY_REVIEWS = 2
 export const NUDGE_PROMPT = 'Your last turn ended without the SKD_RESULT line. Anything you left running in the background was stopped when your turn ended. Re-run what you need in the foreground. Give your complete final answer again (for a plan: the whole plan and any SKD_SHAPE line), ending with exactly one SKD_RESULT line.'
 const NUDGEABLE_ENGINES: ReadonlySet<string> = new Set(['claude', 'glm'])
 const LAST_WORDS_CHARS = 200
@@ -252,9 +256,10 @@ async function repoSnapshot(cwd: string): Promise<WorkspaceState> {
   return { head, diffHash: hash.digest('hex') }
 }
 
-export function createWorkflowRunner(deps: { manager: JobManager; resolver: EngineResolver; store: WorkflowStore; base?: string; terminals?: Pick<TerminalRegistry, 'get'> & Partial<Pick<TerminalRegistry, 'write' | 'list' | 'ended'>>; onRunSettled?: (run: WorkflowRun) => void; requireApproval?: () => Promise<boolean>; onChange?: (run: WorkflowRun) => void; onSessionStep?: (run: WorkflowRun) => void }) {
+export function createWorkflowRunner(deps: { manager: JobManager; resolver: EngineResolver; store: WorkflowStore; base?: string; terminals?: Pick<TerminalRegistry, 'get'> & Partial<Pick<TerminalRegistry, 'write' | 'list' | 'ended'>>; onRunSettled?: (run: WorkflowRun) => void; requireApproval?: () => Promise<boolean>; onChange?: (run: WorkflowRun) => void; onSessionStep?: (run: WorkflowRun) => void; availability?: AvailabilityCheck }) {
   const root = join(deps.base ?? configDir(), 'workflow-runs')
   const requireApproval = deps.requireApproval ?? (async () => (await readConfig()).flowApproval)
+  const availability = deps.availability ?? (async () => null)
   const runs = new Map<string, WorkflowRun>()
   try {
     for (const file of readdirSync(root).filter(file => /^[a-zA-Z0-9-]+\.json$/.test(file))) {
@@ -348,14 +353,17 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
       const role = chatDefault ?? roles[node.agent.role] ?? fallback
       if (!role && !node.agent.engine) throw new Error(`${node.title}: role "${node.agent.role}" is not defined in Settings`)
       const engine = node.agent.engine ?? role!.engine
-      const model = node.agent.model ?? (node.agent.engine ? null : role!.model)
       const builtin = BUILTIN_AGENTS.includes(engine as typeof BUILTIN_AGENTS[number])
-      const connection = builtin ? undefined : await modelDiscovery(deps.base).effective(await connections.get(engine))
-      if (node.mcpServers.length && (!connection || connection.adapter === 'cli')) throw new Error(`${node.title}: attached MCP servers need an ACP connection`)
-      const ownFamily = builtin ? engine === 'codex' ? 'gpt' : engine : connection?.family ?? node.agent.family
-      const family = (modelFamily(model) ?? ownFamily)?.toLowerCase() ?? null
-      return { engine, model, family, ...(connection ? { connection } : {}) }
+      const connection = builtin ? undefined : await connections.get(engine)
+      return agentOn(node, engine, node.agent.model ?? (node.agent.engine ? null : role!.model), connection)
     }
+  }
+  async function agentOn(node: WorkflowNode, engine: string, model: string | null, stored?: AgentConnection): Promise<ResolvedAgent> {
+    const connection = stored ? await modelDiscovery(deps.base).effective(stored) : undefined
+    if (node.mcpServers.length && (!connection || connection.adapter === 'cli')) throw new Error(`${node.title}: attached MCP servers need an ACP connection`)
+    const ownFamily = connection ? connection.family ?? node.agent.family : engine === 'codex' ? 'gpt' : engine
+    const family = (modelFamily(model) ?? ownFamily)?.toLowerCase() ?? null
+    return { engine, model, family, ...(connection ? { connection } : {}) }
   }
   async function agentsFor(workflow: WorkflowRevision, chatDefault?: ChatDefault, session?: ChatDefault): Promise<Record<string, ResolvedAgent>> {
     const resolveAgent = await agentResolver()
@@ -399,6 +407,49 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
     }
     return agents
   }
+  function pinnedParallel(run: WorkflowRun, node: WorkflowNode): boolean {
+    if (!node.agent.engine || node.agent.engine === SESSION_ENGINE) return false
+    return run.workflow.nodes.some(source => { const targets = passTargets(run.workflow, source.id); return targets.length > 1 && targets.includes(node.id) })
+  }
+  const sameFamilyUses = (run: WorkflowRun) => run.attempts.filter(attempt => attempt.sameFamily).length
+  async function replacementFor(run: WorkflowRun, node: WorkflowNode, tried: string[], reason: string): Promise<ResolvedAgent | null> {
+    const current = run.agents[node.id]!
+    if (pinnedParallel(run, node)) return null
+    const { fallback } = await readConfig()
+    const connections = await createConnectionStore(deps.base).list()
+    const options: Array<{ engine: string; model: string | null; connection?: AgentConnection }> = [
+      ...(fallback ? [{ ...fallback, connection: connections.find(connection => connection.id === fallback.engine) }] : []),
+      ...BUILTIN_AGENTS.map(engine => ({ engine, model: null })),
+      ...connections.map(connection => ({ engine: connection.id, model: null, connection })),
+    ]
+    const candidates: ResolvedAgent[] = []
+    for (const option of options) {
+      if (option.engine === current.engine || tried.includes(option.engine)) continue
+      if (!BUILTIN_AGENTS.includes(option.engine as typeof BUILTIN_AGENTS[number]) && !option.connection) continue
+      const agent = await agentOn(node, option.engine, option.model, option.connection).catch(() => null)
+      if (agent && !await availability(agent)) candidates.push(agent)
+    }
+    const swappedFrom = { engine: current.engine, model: current.model, reason }
+    if (node.kind !== 'review') return candidates[0] ? { ...candidates[0], swappedFrom } : null
+    const implemented = new Set(run.workflow.nodes.filter(other => other.kind === 'implement').map(other => run.agents[other.id]?.family))
+    const crossFamily = candidates.find(agent => !implemented.has(agent.family))
+    if (crossFamily) return { ...crossFamily, swappedFrom }
+    return candidates[0] && sameFamilyUses(run) < SAME_FAMILY_REVIEWS ? { ...candidates[0], swappedFrom, sameFamily: true } : null
+  }
+  async function preflight(run: WorkflowRun): Promise<void> {
+    const steps = run.workflow.nodes.filter(node => node.kind !== 'join' && !run.agents[node.id]?.inSession)
+    for (const node of [...steps.filter(node => node.kind !== 'review'), ...steps.filter(node => node.kind === 'review')]) {
+      const agent = run.agents[node.id]!
+      const down = await availability(agent)
+      if (!down) continue
+      const replacement = await replacementFor(run, node, [agent.engine], down.reason)
+      if (replacement) run.agents[node.id] = replacement
+    }
+  }
+  async function unavailableBlock(run: WorkflowRun, engine: string, reason: string, until: number | null): Promise<void> {
+    run.unavailable = { engine, reason, until }
+    await block(run, `${engine} unavailable: ${reason}`)
+  }
   function visitLimit(run: WorkflowRun, node: WorkflowNode, counts: (attempt: WorkflowAttempt) => boolean = () => true): string | null {
     if (run.attempts.filter(attempt => attempt.nodeId === node.id && counts(attempt)).length >= node.maxVisits) return `${node.title} reached its ${node.maxVisits}-visit limit`
     return run.attempts.length >= 256 ? 'Run reached its 256-node execution limit' : null
@@ -414,7 +465,13 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
     const verification = related.findLastIndex(attempt => kindOf(run, attempt) === 'verify-plan')
     const verified = verification > lastPlan && related[verification]?.result?.outcome === 'pass'
     if (node.kind === 'implement' && !verified) return block(run, 'Implementation requires a successfully verified plan')
-    if (node.kind === 'review' && unreviewedImplementations(run, token.pathId).some(attempt => run.agents[attempt.nodeId]!.family === run.agents[node.id]!.family)) return block(run, 'Review must use a different model family from implementation; change the blueprint and start a new run')
+    if (node.kind === 'review' && unreviewedImplementations(run, token.pathId).some(attempt => run.agents[attempt.nodeId]!.family === run.agents[node.id]!.family)) {
+      const reviewer = run.agents[node.id]!
+      const reason = 'no reviewer of a different family is available'
+      const replacement = reviewer.sameFamily ? null : await replacementFor(run, node, [reviewer.engine], 'it shares a family with the implementation')
+      if (replacement) run.agents[node.id] = replacement
+      else if (!reviewer.sameFamily || sameFamilyUses(run) >= SAME_FAMILY_REVIEWS) return unavailableBlock(run, reviewer.engine, reason, null)
+    }
     const latest = new Map(related.filter(attempt => attempt.result).map(attempt => [attempt.nodeId, attempt]))
     const inputs = [...latest.values()].map(attempt => ({ node: attempt.nodeId, outcome: attempt.result, output: attempt.output, checks: attempt.checks, workspace: attempt.workspace }))
     const agent = run.agents[node.id]!
@@ -431,6 +488,7 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
     Object.assign(token, { state: 'working', attempt: attempt.number })
     await persist(run)
     if (agent.inSession) { deps.onSessionStep?.(structuredClone(run)); return }
+    if (run.agents[node.id]!.sameFamily) attempt.sameFamily = true
     const result = await deps.manager.createJob(stepJob(run, node, attempt, token, prompt), deps.resolver)
     if (!result.ok) return block(run, result.error)
     attempt.jobId = result.job.id; attempt.status = 'running'
@@ -502,6 +560,7 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
       const waits = !context.startedByUser && (await requireApproval() || (input.graph !== undefined && commandsChanged({ nodes: [] }, workflow)))
       const version: RunVersion = { number: 1, revision: workflow.revision, reason: 'Initial flow', size: 'initial', state: waits ? 'pending' : 'approved', approvedVia: waits ? null : context.startedByUser ? 'user' : 'auto', relayedBy: null, at: Date.now() }
       const run: WorkflowRun = { id: crypto.randomUUID(), ...(input.terminalId ? { terminalId: input.terminalId } : {}), ...chat, label: input.label, cwd: cwd.path, request: input.request, workflow, policy, agents, skills, status: waits ? 'awaiting-approval' : 'running', error: null, origin: { source: input.graph !== undefined ? 'drafted' : 'saved', by, where }, versions: [version], currentNodeId: workflow.entry, attempts: [], createdAt: Date.now(), updatedAt: Date.now(), tokens: [{ id: crypto.randomUUID(), nodeId: workflow.entry, pathId: 'main', workspace: cwd.path, state: 'ready', attempt: null, from: [] }], sections: [], keptBranches: [] }
+      await preflight(run)
       if (!deps.manager.claimWorkspace(run.cwd, run.id)) throw new Error('Workspace already has running work')
       await persist(run)
       if (!waits) await exclusive(run.id, () => advance(run))

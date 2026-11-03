@@ -7,10 +7,11 @@ import { Elysia } from 'elysia'
 
 import { maybeAutoReview } from './auto-review'
 import { localRequestAllowed, peerAddress } from './local-access'
-import { quotaRoutes } from './routes/quota'
+import { quotaCache, quotaRoutes } from './routes/quota'
+import { createAvailabilityCheck } from './engine-availability'
 import { historyRoutes } from './routes/history'
 import { createExternalSessionsCache, ownedPids } from './history'
-import { CONFIG_DIR_NAME, configDir, LEGACY_CONFIG_DIR_NAME, listenTarget, migrateConfigDir } from './secrets'
+import { CONFIG_DIR_NAME, configDir, LEGACY_CONFIG_DIR_NAME, listenTarget, migrateConfigDir, readSecrets } from './secrets'
 import { createJobManager } from './jobs'
 import { attentionEvents } from './attention-events'
 import { createChatFlusher } from './chat-reports'
@@ -205,6 +206,7 @@ export async function createApp(): Promise<Elysia> {
     },
     onSessionStep: run => { void chatFlusher.onSessionStep(run).catch(error => console.error('In Session chat nudge failed', error)) },
     onChange: () => runEvents.changed(),
+    availability: createAvailabilityCheck({ secrets: readSecrets, quota: () => quotaCache.get() }),
   })
   const chatQueue = createChatQueue(chatQueuePath())
   const chatFlusher = createChatFlusher(jobManager, realEngineResolver, {
