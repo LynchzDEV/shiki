@@ -83,6 +83,7 @@ test('validRoleName accepts a new name and rejects reserved, duplicate and malfo
   expect(validRoleName('builder',['plan','execute','review'])).toBe(true)
   expect(validRoleName('fallback',[])).toBe(false)
   expect(validRoleName('autoReview',[])).toBe(false)
+  expect(validRoleName('execute_model',[])).toBe(false)
   expect(validRoleName('plan',['plan','execute','review'])).toBe(false)
   expect(validRoleName('-x',[])).toBe(false)
   expect(validRoleName('a'.repeat(64),[])).toBe(true)

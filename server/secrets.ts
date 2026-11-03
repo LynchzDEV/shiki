@@ -26,7 +26,7 @@ export type EngineRoles = { plan: RoleAssignment; execute: RoleAssignment; revie
 
 const ROLE_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/
 export const MAX_ROLES = 24
-export const RESERVED_ROLE_NAMES: readonly string[] = ['autoReview', 'fallback']
+export const RESERVED_ROLE_NAMES: readonly string[] = ['autoReview', 'fallback', 'plan_model', 'execute_model', 'review_model']
 
 export function isRoleName(name: string): boolean {
   return ROLE_NAME.test(name) && !RESERVED_ROLE_NAMES.includes(name)

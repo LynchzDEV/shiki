@@ -59,7 +59,7 @@ export function roleWord(role: string): string { return role.charAt(0).toUpperCa
 export type RoleAssignment = { engine: string; model: string | null }
 export type RoleOption = RoleAssignment & { name: string }
 export const BUILTIN_ROLES = ['plan', 'execute', 'review'] as const
-const RESERVED_KEYS = new Set(['autoReview', 'fallback'])
+const RESERVED_KEYS = new Set(['autoReview', 'fallback', 'plan_model', 'execute_model', 'review_model'])
 const ROLE_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/
 const builtinRank = (name: string) => { const index = (BUILTIN_ROLES as readonly string[]).indexOf(name); return index < 0 ? BUILTIN_ROLES.length : index }
 export function roleOptions(roles: Record<string, unknown>): RoleOption[] {

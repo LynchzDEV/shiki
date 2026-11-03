@@ -15,6 +15,7 @@ import {
   listenTarget,
   publicView,
   readApiToken,
+  isRoleName,
   readConfig,
   readSecrets,
   rotateApiToken,
@@ -69,6 +70,11 @@ describe('round trip', () => {
     const stored = await readSecrets()
     expect(stored.zaiAuthToken).toBe(TOKEN)
     expect(stored.zaiBaseUrl).toBe('https://example.test/anthropic')
+  })
+
+  test('the flat model keys of the built-in roles are not role names', () => {
+    expect(['plan_model', 'execute_model', 'review_model'].map(isRoleName)).toEqual([false, false, false])
+    expect(isRoleName('builder')).toBe(true)
   })
 
   test('a role named like an object property survives a reload', async () => {
