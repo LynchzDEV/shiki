@@ -542,3 +542,48 @@ test('pause backoff grows 5, 15, 60 minutes and resets after a normal settle', a
   await h.engine.onRunSettled(h.settle('run-6', { status: 'blocked', unavailable }))
   expect((h.engine.paused()!.until - now) / MINUTE).toBe(5)
 })
+
+test('with parallel 2, two cards build at once and a third waits', async () => {
+  const h = harness({ parallel: async () => 2 })
+  await h.engine.add(add)
+  await h.engine.add({ ...add, externalId: '2' })
+  await h.engine.add({ ...add, externalId: '3' })
+  expect(h.started).toHaveLength(2)
+  expect(states(h.store.list())).toEqual(['1:building', '2:building', '3:queued'])
+})
+
+test('when one of two building cards settles, the next card starts', async () => {
+  const h = harness({ parallel: async () => 2 })
+  for (const externalId of ['1', '2', '3']) await h.engine.add({ ...add, externalId })
+  await h.engine.onRunSettled(h.settle('run-2', { status: 'done' }))
+  expect(states(h.store.list())).toEqual(['1:building', '2:ready', '3:building'])
+  expect(h.started).toHaveLength(3)
+})
+
+test('a paused queue starts nothing even below the limit', async () => {
+  let now = 1_000_000
+  const h = harness({ now: () => now, parallel: async () => 3 })
+  await h.engine.add(add)
+  await h.engine.add({ ...add, externalId: '2' })
+  await h.engine.onRunSettled(h.settle('run-1', { status: 'blocked', unavailable }))
+  await h.engine.add({ ...add, externalId: '3' })
+  await h.engine.kick()
+  expect(h.started).toHaveLength(2)
+  expect(states(h.store.list())).toEqual(['1:queued', '2:building', '3:queued'])
+})
+
+test('parallel 1 keeps one at a time', async () => {
+  const h = harness({ parallel: async () => 1 })
+  await Promise.all([h.engine.add(add), h.engine.add({ ...add, externalId: '2' })])
+  expect(states(h.store.list())).toEqual(['1:building', '2:queued'])
+  expect(h.started).toHaveLength(1)
+})
+
+test('a landing card does not count against the limit', async () => {
+  const h = harness({ parallel: async () => 2 })
+  const first = await h.engine.add(add)
+  await h.store.update(first.id, { state: 'landing', currentRunId: null })
+  await h.engine.add({ ...add, externalId: '2' })
+  await h.engine.add({ ...add, externalId: '3' })
+  expect(states(h.store.list())).toEqual(['1:landing', '2:building', '3:building'])
+})

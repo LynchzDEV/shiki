@@ -62,7 +62,7 @@ beforeAll(async () => {
     calls.push(call)
     const reply = replies.get(`${call.method} ${call.url}`)
     if (reply) return reply()
-    if (call.url === '/api/queue') return Response.json({ items: [queuedA, queuedB], checkedAt: NOW - 3 * 60_000 })
+    if (call.url === '/api/queue') return Response.json({ items: [queuedA, queuedB], checkedAt: NOW - 3 * 60_000, parallel: 2 })
     if (call.url === '/api/plugins') return Response.json({ plugins })
     if (call.url === '/api/studio/workflows') return Response.json({ workflows: flows, selected: flows[1] })
     return Response.json({ ok: true })
@@ -237,6 +237,38 @@ test('a queued row cannot be dropped onto a row that is not queued', async () =>
 
 test('the screen starts from when the server last checked replies', () => {
   expect(section().querySelector('.q-checked')?.textContent).toBe('Checked 3 min ago')
+})
+
+const atOnce = (root: ParentNode) => root.querySelector<HTMLSelectElement>('select[name=parallel]')
+const choose = (select: HTMLSelectElement, value: string) => { select.value = value; select.dispatchEvent(new window.Event('change', { bubbles: true })) }
+
+test('the At once select shows the snapshot parallel, and an older server without parallel shows none', () => {
+  const view = queue.renderQueue(all, context({ parallel: 3 }))
+  const select = atOnce(view)!
+  expect(select.value).toBe('3')
+  expect([...select.options].map(option => option.value)).toEqual(['1', '2', '3', '4'])
+  expect(select.closest('label')?.textContent).toStartWith('At once')
+  expect(select.closest('.studio-heading nav')).not.toBeNull()
+  expect(view.querySelector('.q-bar')?.textContent).toContain('Up to 3 build at a time')
+  expect(atOnce(queue.renderQueue([], context({ parallel: 1 })))?.value).toBe('1')
+  const older = queue.renderQueue(all, context())
+  expect(atOnce(older)).toBeNull()
+  expect(older.querySelector('.q-bar')?.textContent).toContain('One builds at a time')
+})
+
+test('changing At once saves it, and a refused change says why and shows the saved value again', async () => {
+  expect(atOnce(section())?.value).toBe('2')
+  replies.set('PUT /api/queue/settings', () => Response.json({ parallel: 3 }))
+  choose(atOnce(section())!, '3')
+  await flush()
+  expect(calls).toEqual([{ method: 'PUT', url: '/api/queue/settings', body: { parallel: 3 } }])
+  expect(atOnce(section())?.value).toBe('3')
+  expect(toasts).toEqual(['Up to 3 cards build at once'])
+  replies.set('PUT /api/queue/settings', () => Response.json({ error: 'parallel must be a whole number from 1 to 4' }, { status: 400 }))
+  choose(atOnce(section())!, '4')
+  await flush()
+  expect(toasts.at(-1)).toBe('parallel must be a whole number from 1 to 4')
+  expect(atOnce(section())?.value).toBe('3')
 })
 
 test('requeue, remove and check call their routes', async () => {

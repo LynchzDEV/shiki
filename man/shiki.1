@@ -503,7 +503,10 @@ folder, else the current one; the AI is
 else the plan role. Also
 .BR \-\-model " and " \-\-message .
 .SH QUEUE
-The build queue builds source items (such as ClickUp tasks) in order. An item
+The build queue builds source items (such as ClickUp tasks) in order, one at a
+time unless
+.B shiki queue parallel
+raises it. An item
 that needs answers waits and resumes when the source replies. When a run stops
 because no AI can start (missing token, CLI not installed, usage limit
 reached), its item goes back first in line and the queue pauses until the
@@ -526,6 +529,12 @@ puts it first.
 Move an item to position
 .I to
 (0 is first).
+.TP
+.BI "shiki queue parallel " n
+Build up to
+.I n
+cards at once, 1 to 4 (default 1). Keep 1 for projects whose worktrees share
+one test database: two cards running tests at once deadlock there.
 .TP
 .BI "shiki queue requeue " id
 Put a failed, ready or waiting item back in line.

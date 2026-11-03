@@ -25,10 +25,10 @@ export async function getJson(url: string): Promise<ApiResult> {
   }
 }
 
-export async function postJson(url: string, body: JsonRecord): Promise<ApiResult> {
+async function sendJson(method: 'POST' | 'PUT', url: string, body: JsonRecord): Promise<ApiResult> {
   try {
     const response = await fetch(url, {
-      method: 'POST',
+      method,
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     })
@@ -37,6 +37,9 @@ export async function postJson(url: string, body: JsonRecord): Promise<ApiResult
     return { ok: false, status: 0, data: {} }
   }
 }
+
+export const postJson = (url: string, body: JsonRecord): Promise<ApiResult> => sendJson('POST', url, body)
+export const putJson = (url: string, body: JsonRecord): Promise<ApiResult> => sendJson('PUT', url, body)
 
 export function errorText(result: ApiResult): string {
   const message = result.data.error

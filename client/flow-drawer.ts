@@ -3,7 +3,7 @@ import { confirmButton } from './confirm-button'
 import { describeCard, renderRunGraph, type EdgeState, type GraphEdge, type GraphStep, type StepState } from './flow-graph'
 import { mountViewport } from './flow-viewport'
 import { rollText } from './morph'
-import { errorText, postJson, providerName, type ApiResult, type JsonRecord } from './shared'
+import { errorText, postJson, providerName, putJson } from './shared'
 
 type RunAction = 'approve' | 'reject' | 'retry' | 'dismiss' | 'stop' | 'pause' | 'resume'
 type BannerAction = 'approve' | 'reject' | 'retry' | 'stop' | 'keep' | 'approval-on' | 'remind'
@@ -305,16 +305,6 @@ export function bannerFor(run: RunView): Banner {
     return { tone: 'notice', text: `v${change.number} applied automatically. ${change.reason} Approval is off, so it did not wait.`, actions: ['approval-on'] }
   }
   return NO_BANNER
-}
-
-async function putJson(url: string, body: JsonRecord): Promise<ApiResult> {
-  try {
-    const response = await fetch(url, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
-    const data: unknown = await response.json().catch(() => ({}))
-    return { ok: response.ok, status: response.status, data: data && typeof data === 'object' && !Array.isArray(data) ? data as JsonRecord : {} }
-  } catch {
-    return { ok: false, status: 0, data: {} }
-  }
 }
 
 export function pickRun(runs: RunView[], pinned: string | null): RunView | null {

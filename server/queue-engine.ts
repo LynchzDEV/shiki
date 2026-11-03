@@ -31,6 +31,7 @@ export type QueueEngineDeps = {
   backupDir(itemId: string): string
   needsYou(item: QueueItem, reason: string): void
   autoPick?(pluginId: string): Promise<boolean>
+  parallel?(): Promise<number>
   now?: () => number
 }
 
@@ -274,7 +275,8 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
   async function startNext(): Promise<void> {
     if (paused !== null && now() < paused.until) return
     if (paused !== null) { paused = null; onPausedChange() }
-    while (paused === null && !store.list().some(item => item.state === 'building')) {
+    const limit = deps.parallel ? await deps.parallel() : 1
+    while (paused === null && store.list().filter(item => item.state === 'building').length < limit) {
       const next = store.list().find(item => item.state === 'queued')
       if (next === undefined) return
       onPreparing(next.id)

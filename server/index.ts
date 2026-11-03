@@ -11,7 +11,7 @@ import { quotaCache, quotaRoutes } from './routes/quota'
 import { createAvailabilityCheck } from './engine-availability'
 import { historyRoutes } from './routes/history'
 import { createExternalSessionsCache, ownedPids } from './history'
-import { CONFIG_DIR_NAME, configDir, LEGACY_CONFIG_DIR_NAME, listenTarget, migrateConfigDir, readSecrets } from './secrets'
+import { CONFIG_DIR_NAME, configDir, LEGACY_CONFIG_DIR_NAME, listenTarget, migrateConfigDir, readConfig, readSecrets } from './secrets'
 import { createJobManager } from './jobs'
 import { attentionEvents } from './attention-events'
 import { createChatFlusher } from './chat-reports'
@@ -235,6 +235,7 @@ export async function createApp(): Promise<Elysia> {
     backupDir: itemId => join(configDir(), 'queue-files', itemId),
     needsYou: (item, reason) => { void raiseQueueAlert(attention, item, reason).catch(error => console.error('Queue alert failed', error)) },
     autoPick: async id => (await getSetting(id, 'autoPick')) === 'true',
+    parallel: async () => (await readConfig()).queueParallel,
   })
   watchQueueAlerts(queueStore, attention)
   const bootQueue = queueEngine

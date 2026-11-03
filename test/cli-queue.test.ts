@@ -91,6 +91,21 @@ describe('shiki queue', () => {
     }
   })
 
+  test('parallel sets how many cards build at once and rejects anything but 1 to 4', async () => {
+    const ok = harness(() => Response.json({ parallel: 3 }))
+    expect(await main(['queue', 'parallel', '3'], ok.deps)).toBe(0)
+    expect(routesOf(ok.calls)).toEqual(['PUT /api/queue/settings'])
+    expect(ok.calls[0]?.body).toEqual({ parallel: 3 })
+    expect(ok.out()).toBe('Up to 3 cards build at once.\n')
+
+    for (const bad of ['0', '5', '2.5', 'x']) {
+      const rejected = harness()
+      expect(await main(['queue', 'parallel', bad], rejected.deps)).toBe(2)
+      expect(rejected.err()).toContain('shiki: parallel must be a whole number from 1 to 4')
+      expect(rejected.calls).toEqual([])
+    }
+  })
+
   test('move sends a whole number and rejects anything else', async () => {
     const ok = harness(() => Response.json({ items: [] }))
     expect(await main(['queue', 'move', 'a1', '2'], ok.deps)).toBe(0)

@@ -44,7 +44,7 @@ async function modeOf(path: string): Promise<number> {
 describe('defaults', () => {
   test('missing files fall back to documented defaults', async () => {
     expect(await readSecrets()).toEqual({ zaiAuthToken: null, zaiBaseUrl: DEFAULT_ZAI_BASE_URL, apiToken: null })
-    expect(await readConfig()).toEqual({ roles: DEFAULT_ROLES, fallback: DEFAULT_FALLBACK, autoReview: false, chatHome: null, flowApproval: true, marketplaces: [] })
+    expect(await readConfig()).toEqual({ roles: DEFAULT_ROLES, fallback: DEFAULT_FALLBACK, autoReview: false, chatHome: null, flowApproval: true, marketplaces: [], queueParallel: 1 })
   })
 
   test('corrupt json falls back instead of throwing', async () => {
@@ -127,6 +127,19 @@ describe('round trip', () => {
     expect((await readConfig()).chatHome).toBe('/Users/me/work')
     await Bun.write(configPath(CONFIG_FILE), JSON.stringify({ chatHome: 42 }))
     expect((await readConfig()).chatHome).toBeNull()
+  })
+
+  test('queueParallel reads 1 when missing, clamps whole numbers to 1..4 and survives the round trip', async () => {
+    expect((await readConfig()).queueParallel).toBe(1)
+    await ensureConfigDir()
+    await Bun.write(configPath(CONFIG_FILE), JSON.stringify({ queueParallel: 9 }))
+    expect((await readConfig()).queueParallel).toBe(4)
+    await Bun.write(configPath(CONFIG_FILE), JSON.stringify({ queueParallel: 0 }))
+    expect((await readConfig()).queueParallel).toBe(1)
+    await Bun.write(configPath(CONFIG_FILE), JSON.stringify({ queueParallel: 2.5 }))
+    expect((await readConfig()).queueParallel).toBe(1)
+    await writeConfig({ queueParallel: 3 })
+    expect((await readConfig()).queueParallel).toBe(3)
   })
 
   test('legacy string roles on disk load with a null model', async () => {

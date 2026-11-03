@@ -49,6 +49,7 @@ export type AppConfig = {
   chatHome: string | null
   flowApproval: boolean
   marketplaces: MarketplaceRef[]
+  queueParallel: number
 }
 
 export type PublicSecretsView = {
@@ -191,6 +192,10 @@ function readMarketplaces(raw: unknown): MarketplaceRef[] {
   })
 }
 
+export const MAX_QUEUE_PARALLEL = 4
+
+const readQueueParallel = (raw: unknown): number => (Number.isInteger(raw) ? Math.min(Math.max(raw as number, 1), MAX_QUEUE_PARALLEL) : 1)
+
 export async function readConfig(): Promise<AppConfig> {
   const raw = await readJsonFile(CONFIG_FILE)
   return {
@@ -200,6 +205,7 @@ export async function readConfig(): Promise<AppConfig> {
     chatHome: asString(raw.chatHome),
     flowApproval: raw.flowApproval !== false,
     marketplaces: readMarketplaces(raw.marketplaces),
+    queueParallel: readQueueParallel(raw.queueParallel),
   }
 }
 

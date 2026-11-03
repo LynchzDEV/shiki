@@ -177,7 +177,10 @@ shiki clickup filter add main Assignee "is any of" --value Me
 shiki clickup start 86d4ccpu2 --board main   # chat with the task dossier attached
 shiki queue add clickup-board 86d4ccpu2 --repo ~/code/app   # build it when its turn comes
 shiki queue add clickup-board 86d4ccpu2 --repo ~/klangtech   # a folder of repos: the plan picks which (or pass --repos api,backoffice)
+shiki queue parallel 2                # build up to 2 cards at once (1 to 4, default 1)
 ```
+
+**At once** on the Queue screen, or `shiki queue parallel <n>`, lets up to four cards build at the same time (default 1), but keep it at 1 for projects whose worktrees share one test database, because two cards running tests at once deadlock there.
 
 - `--json` prints the server's JSON as one document (NDJSON for `job follow` and `job new --follow`); every command supports it.
 - `--url` > `SKD_URL` > `http://127.0.0.1:7777`. Local URLs need no token. For other URLs set `SKD_TOKEN`; otherwise `apiToken` from `secrets.json` is used when present.

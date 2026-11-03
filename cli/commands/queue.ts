@@ -55,6 +55,17 @@ function position(ctx: Context): number {
   return Number(text)
 }
 
+function parallelOption(ctx: Context): number {
+  const text = arg(ctx, 'n')
+  if (!/^[1-4]$/.test(text)) throw new UsageError('parallel must be a whole number from 1 to 4')
+  return Number(text)
+}
+
+const parallelText = (value: unknown): string => {
+  const parallel = field(value, 'parallel')
+  return parallel === 1 ? 'One card builds at a time.\n' : `Up to ${cell(parallel)} cards build at once.\n`
+}
+
 function addBody(ctx: Context): Json {
   const flowId = stringOpt(ctx, 'flow')
   const repos = reposOption(ctx)
@@ -114,6 +125,15 @@ export const queueCommands: Command[] = [
     run: async (ctx) => {
       const to = position(ctx)
       emit(ctx, await ctx.client.post(itemPath(ctx, '/move'), { to }), listText)
+    },
+  },
+  {
+    path: ['queue', 'parallel'],
+    args: ['n'],
+    summary: 'Set how many cards build at once, 1 to 4 (default 1)',
+    run: async (ctx) => {
+      const parallel = parallelOption(ctx)
+      emit(ctx, await ctx.client.put('/api/queue/settings', { parallel }), parallelText)
     },
   },
   {

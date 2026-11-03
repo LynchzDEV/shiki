@@ -11,9 +11,10 @@ import { queueStep, type QueueStep, type QueueStepRun } from '../queue-step'
 import { listFolderRepos, resolveQueueFolder } from '../queue-folder'
 import { queueTree, type QueueTree } from '../queue-tree'
 import { eventStreamResponse, type RunEvents } from '../run-events'
+import { MAX_QUEUE_PARALLEL, readConfig, writeConfig } from '../secrets'
 
 type Status = { status?: number | string }
-type QueueEngineRoutes = Pick<QueueEngine, 'add' | 'requeue' | 'pick' | 'checkReplies' | 'remove' | 'move' | 'checkedAt' | 'subscribeChecks' | 'startStage' | 'refreshPreflight' | 'retryStage' | 'landLog' | 'report'> & Partial<Pick<QueueEngine, 'preparing' | 'paused'>>
+type QueueEngineRoutes = Pick<QueueEngine, 'add' | 'requeue' | 'pick' | 'checkReplies' | 'remove' | 'move' | 'checkedAt' | 'subscribeChecks' | 'startStage' | 'refreshPreflight' | 'retryStage' | 'landLog' | 'report'> & Partial<Pick<QueueEngine, 'preparing' | 'paused' | 'kick'>>
 export type QueueRunLookup = { get(id: string): QueueStepRun | undefined; subscribe(listener: () => void): () => void }
 const NO_RUNS: QueueRunLookup = { get: () => undefined, subscribe: () => () => {} }
 
@@ -31,6 +32,7 @@ const pickAnswerSchema = z.object({ id: oneLineText(16).pipe(z.string().min(1)),
 const pickSchema = z.object({ option: z.string().min(1).max(16), tester: oneLineText(200).optional(), note: z.string().max(4000).optional(), answers: z.array(pickAnswerSchema).max(20).optional(), feedback: z.string().max(4000).optional() })
 const confirmSchema = z.object({ confirm: z.literal(true) })
 const moveSchema = z.object({ to: z.number().int().min(0) })
+const settingsSchema = z.object({ parallel: z.number().int().min(1).max(MAX_QUEUE_PARALLEL) })
 const NO_ITEM = 'No such queue item'
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
@@ -114,7 +116,14 @@ export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: 
   const snapshot = () => ({ items: store.list().map(item => withStep(cleaned(item), runs, engine.preparing?.() ?? null)), checkedAt: engine.checkedAt(), paused: engine.paused?.() ?? null })
   return new Elysia()
     .onBeforeHandle(requireLocalExceptMockupAssets)
-    .get('/api/queue', snapshot)
+    .get('/api/queue', async () => ({ ...snapshot(), parallel: (await readConfig()).queueParallel }))
+    .put('/api/queue/settings', async ({ body, set }) => {
+      const parsed = settingsSchema.safeParse(body)
+      if (!parsed.success) { set.status = 400; return { error: `parallel must be a whole number from 1 to ${MAX_QUEUE_PARALLEL}` } }
+      const { queueParallel } = await writeConfig({ queueParallel: parsed.data.parallel })
+      await engine.kick?.()
+      return { parallel: queueParallel }
+    })
     .get('/api/queue/tree', () => tree())
     .get('/api/queue/folder', ({ query, set }) => folderRepos(query.path, set))
     .get('/api/queue/stream', ({ request }) => eventStreamResponse(itemsChecksAndRuns(store, engine, runs), snapshot, request.signal))

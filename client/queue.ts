@@ -4,7 +4,7 @@ import { createPickReview } from './queue-review'
 import { createLandDialogs } from './queue-land'
 import { readQueueTree, renderTree } from './queue-tree'
 import { readPaused, readQueueItems, renderQueue, watchRunId, type QueueFlow, type QueueItemView, type QueueLayout, type QueuePaused, type QueuePlugin } from './queue-view'
-import { errorText, getJson, postJson, readArray, readRecord, type ApiResult } from './shared'
+import { errorText, getJson, postJson, putJson, readArray, readRecord, type ApiResult } from './shared'
 
 export { parseItemRef } from './queue-dialog'
 export { readQueueItems, renderQueue } from './queue-view'
@@ -19,6 +19,7 @@ let plugins: QueuePlugin[] = []
 let flows: QueueFlow[] = []
 let checkedAt: number | null = null
 let paused: QueuePaused | null = null
+let parallel: number | undefined
 let loaded = false
 let dragId: string | null = null
 let focusId: string | null = null
@@ -55,6 +56,9 @@ async function deleteJson(url: string): Promise<ApiResult> {
     return { ok: false, status: 0, data: {} }
   }
 }
+
+const readParallel = (value: unknown): number | undefined => (Number.isInteger(value) ? value as number : undefined)
+const parallelText = (count: number): string => (count === 1 ? 'One card builds at a time' : `Up to ${count} cards build at once`)
 
 function readPlugins(value: unknown): QueuePlugin[] {
   return readArray(value).filter(entry => typeof entry.id === 'string').map(entry => ({
@@ -96,7 +100,7 @@ function start(section: HTMLElement): void {
     if (!loaded) return
     if (dragId !== null) { paintAfterDrag = true; return }
     const shown = layout === 'tree' ? { layout, treeView: treeView() } : { layout }
-    section.replaceChildren(renderQueue(items, { plugins, flows, now: Date.now(), checkedAt, openIds, paused, ...shown }))
+    section.replaceChildren(renderQueue(items, { plugins, flows, now: Date.now(), checkedAt, openIds, paused, parallel, ...shown }))
     applyFocus()
   }
 
@@ -166,6 +170,21 @@ function start(section: HTMLElement): void {
     if (openIds.has(row.dataset.id)) openIds.delete(row.dataset.id)
     else openIds.add(row.dataset.id)
     paint()
+  })
+
+  async function saveParallel(select: HTMLSelectElement): Promise<void> {
+    select.disabled = true
+    const result = await putJson('/api/queue/settings', { parallel: Number(select.value) })
+    const saved = result.ok ? readParallel(result.data.parallel) : undefined
+    if (saved !== undefined) parallel = saved
+    toast(saved === undefined ? errorText(result) : parallelText(saved))
+    select.disabled = false
+    paint()
+  }
+
+  section.addEventListener('change', (event) => {
+    const select = event.target instanceof Element ? event.target.closest<HTMLSelectElement>('select[name=parallel]') : null
+    if (select !== null) void saveParallel(select)
   })
 
   section.addEventListener('keydown', (event) => {
@@ -239,8 +258,9 @@ function start(section: HTMLElement): void {
 
   async function loadItems(): Promise<void> {
     const result = await getJson('/api/queue')
+    if (result.ok) parallel = readParallel(result.data.parallel)
     if (result.ok && checkedAt === null) showChecked(result.data.checkedAt)
-    if (loaded) return
+    if (loaded) { paint(); return }
     if (result.ok) { paused = readPaused(result.data.paused); showItems(readQueueItems(result.data.items)) }
     else section.replaceChildren(statusLine('Could not load the queue. Shikidan keeps trying.'))
   }

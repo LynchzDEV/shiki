@@ -17,13 +17,20 @@ const newItem = { source: 'clickup-board', externalId: '1', title: 'Task 1', url
 
 let repo: string
 let plain: string
+let configDir: string
+const priorConfigDir = process.env.SKD_CONFIG_DIR
 beforeAll(async () => {
+  configDir = await mkdtemp(join(tmpdir(), 'mc-queue-routes-config-'))
+  process.env.SKD_CONFIG_DIR = configDir
   repo = await mkdtemp(join(homedir(), 'mc-queue-routes-repo-'))
   plain = await mkdtemp(join(homedir(), 'mc-queue-routes-plain-'))
   if (Bun.spawnSync(['git', 'init', '-q', repo]).exitCode !== 0) throw new Error('git init failed')
   await symlink(repo, join(plain, 'link'))
 })
 afterAll(async () => {
+  if (priorConfigDir === undefined) delete process.env.SKD_CONFIG_DIR
+  else process.env.SKD_CONFIG_DIR = priorConfigDir
+  await rm(configDir, { recursive: true, force: true })
   await rm(repo, { recursive: true, force: true })
   await rm(plain, { recursive: true, force: true })
 })
@@ -197,9 +204,9 @@ test('GET says when replies were last checked, or null before the first check', 
   const items = store()
   let checkedAt: number | null = null
   const app = new Elysia().use(queueRoutes(items, engine(items, { checkedAt: () => checkedAt })))
-  expect(await (await call(app, '/api/queue')).json()).toEqual({ items: [], checkedAt: null, paused: null })
+  expect(await (await call(app, '/api/queue')).json()).toEqual({ items: [], checkedAt: null, paused: null, parallel: 1 })
   checkedAt = 1_700_000_000_000
-  expect(await (await call(app, '/api/queue')).json()).toEqual({ items: [], checkedAt: 1_700_000_000_000, paused: null })
+  expect(await (await call(app, '/api/queue')).json()).toEqual({ items: [], checkedAt: 1_700_000_000_000, paused: null, parallel: 1 })
 })
 
 test('GET says when the queue is paused on an unavailable AI', async () => {
@@ -488,4 +495,29 @@ test('POST pick takes none with feedback and refuses the other combinations', as
   expect((await post(app, url, { option: 'B', feedback: 'x' })).status).toBe(400)
   expect((await post(app, url, { option: 'none', feedback: 'x'.repeat(4001) })).status).toBe(400)
   expect((await post(app, url, { option: 'none', feedback: 'x'.repeat(4000) })).status).toBe(200)
+})
+
+test('PUT /api/queue/settings stores how many cards build at once, kicks the queue, and GET shows it', async () => {
+  const items = store()
+  let kicks = 0
+  const app = new Elysia().use(queueRoutes(items, { ...engine(items), kick: async () => { kicks += 1 } }))
+  expect((await (await call(app, '/api/queue')).json()).parallel).toBe(1)
+  const saved = await call(app, '/api/queue/settings', { method: 'PUT', body: JSON.stringify({ parallel: 3 }) })
+  expect(saved.status).toBe(200)
+  expect(await saved.json()).toEqual({ parallel: 3 })
+  expect(kicks).toBe(1)
+  expect((await (await call(app, '/api/queue')).json()).parallel).toBe(3)
+  const crossSite = await app.handle(new Request('http://127.0.0.1:7777/api/queue/settings', { method: 'PUT', body: JSON.stringify({ parallel: 2 }), headers: { host: '127.0.0.1:7777', 'content-type': 'application/json', 'sec-fetch-site': 'cross-site' } }))
+  expect(crossSite.status).toBe(403)
+  expect((await (await call(app, '/api/queue')).json()).parallel).toBe(3)
+})
+
+test('PUT /api/queue/settings refuses anything but a whole number from 1 to 4', async () => {
+  const items = store()
+  const app = new Elysia().use(queueRoutes(items, engine(items)))
+  for (const parallel of [0, 5, 2.5, '2']) {
+    const refused = await call(app, '/api/queue/settings', { method: 'PUT', body: JSON.stringify({ parallel }) })
+    expect(refused.status).toBe(400)
+    expect(await refused.json()).toEqual({ error: 'parallel must be a whole number from 1 to 4' })
+  }
 })

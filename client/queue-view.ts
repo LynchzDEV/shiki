@@ -18,11 +18,12 @@ export type QueueLayout = 'list' | 'tree'
 export type QueuePaused = { reason: string; until: number }
 export type QueueContext = {
   plugins: QueuePlugin[]; flows: QueueFlow[]; now: number; checkedAt: number | null; openIds: ReadonlySet<string>
-  layout?: QueueLayout; treeView?: HTMLElement; paused?: QueuePaused | null
+  layout?: QueueLayout; treeView?: HTMLElement; paused?: QueuePaused | null; parallel?: number
 }
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
-const LINE = 'Items from your sources, built one at a time. Nothing reaches the remote until you land it.'
+const LINE = 'Items from your sources, built in queue order. Nothing reaches the remote until you land it.'
+const PARALLEL_CHOICES = ['1', '2', '3', '4']
 const STATES: readonly QueueState[] = ['building', 'queued', 'waiting-info', 'waiting-pick', 'ready', 'failed', 'landing', 'awaiting-stage', 'landed']
 const PILL: Record<QueueState, { s: string; label: string; count: string; icon?: string }> = {
   building: { s: 'running', label: 'Building', count: 'building' },
@@ -113,11 +114,17 @@ const stagePill = (item: QueueItemView): string | undefined => (item.state === '
 const failedAtStage = (item: QueueItemView): boolean => item.state === 'failed' && item.land !== undefined && item.land.runId === item.runIds.at(-1)
 const firstLine = (text: string): string => text.split('\n')[0]!
 
+function atOnce(parallel: number): HTMLElement {
+  const select = el('select', { name: 'parallel' }, ...PARALLEL_CHOICES.map(choice => el('option', { value: choice, selected: choice === String(parallel) }, choice)))
+  return el('label', { class: 'muted q-at-once' }, 'At once', select)
+}
+
 function heading(context: QueueContext): HTMLElement {
   const checked = context.checkedAt === null ? 'Not checked yet' : `Checked ${ageText(context.checkedAt, context.now)}`
+  const control = context.parallel === undefined ? [] : [atOnce(context.parallel)]
   return el('header', { class: 'studio-heading' },
     el('div', {}, el('h1', {}, 'Queue'), el('p', { class: 'muted' }, LINE)),
-    el('nav', { 'aria-label': 'Queue actions' }, el('span', { class: 'muted q-checked' }, checked), button('Check replies', 'connection-button q-btn', { 'data-act': 'check' }, 'mk-refresh')))
+    el('nav', { 'aria-label': 'Queue actions' }, ...control, el('span', { class: 'muted q-checked' }, checked), button('Check replies', 'connection-button q-btn', { 'data-act': 'check' }, 'mk-refresh')))
 }
 
 function top(context: QueueContext): HTMLElement[] {
@@ -127,14 +134,14 @@ function top(context: QueueContext): HTMLElement[] {
 
 const addButton = (): HTMLElement => button('Add item', 'connection-button q-btn', { 'data-act': 'add' }, 'plus-icon')
 
-function summary(items: readonly QueueItemView[], shown: QueueLayout): HTMLElement {
+function summary(items: readonly QueueItemView[], shown: QueueLayout, parallel = 1): HTMLElement {
   const counts = STATES.map(state => [state, items.filter(item => item.state === state).length] as const).filter(([, count]) => count > 0)
   const layout = el('nav', { class: 'mk-seg q-layout', 'aria-label': 'Layout' },
     button('List', '', { 'data-layout': 'list', 'aria-pressed': String(shown === 'list') }),
     button('Git tree', '', { 'data-layout': 'tree', 'aria-pressed': String(shown === 'tree') }))
   return el('div', { class: 'q-bar' },
     ...counts.map(([state, count]) => el('span', { class: 'pill-state', 'data-s': PILL[state].s }, `${count} ${PILL[state].count}`)),
-    el('span', { class: 'sp' }), el('span', { class: 'muted' }, 'One builds at a time'), layout, addButton())
+    el('span', { class: 'sp' }), el('span', { class: 'muted' }, parallel === 1 ? 'One builds at a time' : `Up to ${parallel} build at a time`), layout, addButton())
 }
 
 function sourceBadge(item: QueueItemView, plugins: readonly QueuePlugin[]): HTMLElement {
@@ -265,9 +272,9 @@ export function renderQueue(items: readonly QueueItemView[], context: QueueConte
     return el('div', { class: 'q-screen' }, ...top(context), el('div', { class: 'q-bar' }, el('span', { class: 'sp' }), addButton()), emptyState())
   }
   const treeView = context.layout === 'tree' ? context.treeView : undefined
-  if (treeView !== undefined) return el('div', { class: 'q-screen' }, ...top(context), summary(items, 'tree'), treeView)
+  if (treeView !== undefined) return el('div', { class: 'q-screen' }, ...top(context), summary(items, 'tree', context.parallel), treeView)
   const hint = el('button', { type: 'button', class: 'connection-add q-hint', 'data-act': 'add' }, icon('plus-icon'), 'Add an item from a source plugin, or run ', el('code', {}, 'shiki queue add'))
-  return el('div', { class: 'q-screen' }, ...top(context), summary(items, 'list'), el('div', { class: 'q-list' }, ...items.map(item => row(item, items, context))), hint)
+  return el('div', { class: 'q-screen' }, ...top(context), summary(items, 'list', context.parallel), el('div', { class: 'q-list' }, ...items.map(item => row(item, items, context))), hint)
 }
 
 const isText = (value: unknown): value is string => typeof value === 'string'
