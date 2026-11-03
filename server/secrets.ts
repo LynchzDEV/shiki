@@ -22,10 +22,14 @@ export type Secrets = {
 
 export type RoleAssignment = { engine: string; model: string | null }
 
-export type EngineRoles = {
-  plan: RoleAssignment
-  execute: RoleAssignment
-  review: RoleAssignment
+export type EngineRoles = { plan: RoleAssignment; execute: RoleAssignment; review: RoleAssignment } & Record<string, RoleAssignment>
+
+const ROLE_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/
+export const MAX_ROLES = 24
+export const RESERVED_ROLE_NAMES: readonly string[] = ['autoReview', 'fallback']
+
+export function isRoleName(name: string): boolean {
+  return ROLE_NAME.test(name) && !RESERVED_ROLE_NAMES.includes(name)
 }
 
 export const DEFAULT_ROLES: EngineRoles = {
@@ -34,10 +38,13 @@ export const DEFAULT_ROLES: EngineRoles = {
   review: { engine: 'codex', model: null },
 }
 
+export const DEFAULT_FALLBACK: RoleAssignment = { engine: 'claude', model: null }
+
 export type MarketplaceRef = { url: string }
 
 export type AppConfig = {
   roles: EngineRoles
+  fallback: RoleAssignment | null
   autoReview: boolean
   chatHome: string | null
   flowApproval: boolean
@@ -158,9 +165,18 @@ function readRoleAssignment(value: unknown, fallback: RoleAssignment): RoleAssig
   return { engine, model: asString(record.model) }
 }
 
+function readExtraRoles(record: Record<string, unknown>): Record<string, RoleAssignment> {
+  const extras = Object.entries(record).filter(([name]) => !(name in DEFAULT_ROLES) && isRoleName(name)).slice(0, MAX_ROLES - 3)
+  return Object.fromEntries(extras.flatMap(([name, value]) => {
+    const role = readRoleAssignment(value, { engine: '', model: null })
+    return role.engine === '' ? [] : [[name, role]]
+  }))
+}
+
 function readRoles(raw: unknown): EngineRoles {
   const record = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {}
   return {
+    ...readExtraRoles(record),
     plan: readRoleAssignment(record.plan, DEFAULT_ROLES.plan),
     execute: readRoleAssignment(record.execute, DEFAULT_ROLES.execute),
     review: readRoleAssignment(record.review, DEFAULT_ROLES.review),
@@ -179,6 +195,7 @@ export async function readConfig(): Promise<AppConfig> {
   const raw = await readJsonFile(CONFIG_FILE)
   return {
     roles: readRoles(raw.roles),
+    fallback: raw.fallback === null ? null : readRoleAssignment(raw.fallback, DEFAULT_FALLBACK),
     autoReview: raw.autoReview === true,
     chatHome: asString(raw.chatHome),
     flowApproval: raw.flowApproval !== false,

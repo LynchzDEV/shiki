@@ -67,19 +67,24 @@ Unknown options are a usage error.
 .TP
 .B shiki status
 Whether Shikidan is up, usage per provider (5\-hour, weekly or monthly
-window), and which engine and model play the plan, execute and review roles.
+window), which engine and model play each role, and the fallback AI.
 .TP
 .B shiki roles
-Show the engine and model for each role.
+Show the engine and model for each role, and the fallback AI that steps
+use when their role is not defined or their AI cannot start.
 .TP
 .BI "shiki roles set " "role engine" " \fR[\fB\-\-model\fR \fIM\fR]"
 Assign an engine (and optionally a model) to
 .IR role :
 .BR plan ,
-.B execute
-or
-.BR review .
-The other two roles keep their current values.
+.BR execute ,
+.B review
+or a named role of letters, digits,
+.B \-
+and
+.B _
+that flow steps can ask for.
+The other roles and the fallback keep their current values.
 .TP
 .B shiki models
 Models each engine offers.

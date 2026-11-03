@@ -7,7 +7,7 @@ import type { Elysia } from 'elysia'
 
 import { createApp } from '../server/index'
 import { parseRoles } from '../server/routes/roles'
-import { DEFAULT_ROLES, readConfig } from '../server/secrets'
+import { DEFAULT_FALLBACK, DEFAULT_ROLES, readConfig } from '../server/secrets'
 
 let dir: string
 let app: Elysia
@@ -113,7 +113,7 @@ describe('/api/roles', () => {
     expect((await app.handle(request('GET', undefined, 'http://rebind.example'))).status).toBe(403)
     const response = await app.handle(request('GET'))
     expect(response.status).toBe(200)
-    expect(await response.json()).toEqual({ ...DEFAULT_ROLES, autoReview: false })
+    expect(await response.json()).toEqual({ ...DEFAULT_ROLES, autoReview: false, fallback: DEFAULT_FALLBACK })
   })
 
   test('POST persists the full nested mapping and GET reflects it', async () => {
@@ -124,9 +124,9 @@ describe('/api/roles', () => {
     }
     const saved = await app.handle(request('POST', next))
     expect(saved.status).toBe(200)
-    expect(await saved.json()).toEqual({ ...next, autoReview: false })
+    expect(await saved.json()).toEqual({ ...next, autoReview: false, fallback: DEFAULT_FALLBACK })
     expect((await readConfig()).roles).toEqual(next)
-    expect(await (await app.handle(request('GET'))).json()).toEqual({ ...next, autoReview: false })
+    expect(await (await app.handle(request('GET'))).json()).toEqual({ ...next, autoReview: false, fallback: DEFAULT_FALLBACK })
   })
 
   test('POST accepts the flat settings form and returns the nested shape', async () => {
@@ -139,7 +139,7 @@ describe('/api/roles', () => {
       execute: { engine: 'glm', model: null },
       review: { engine: 'codex', model: null },
     }
-    expect(await saved.json()).toEqual({ ...nested, autoReview: false })
+    expect(await saved.json()).toEqual({ ...nested, autoReview: false, fallback: DEFAULT_FALLBACK })
     expect((await readConfig()).roles).toEqual(nested)
   })
 
@@ -153,6 +153,7 @@ describe('/api/roles', () => {
       execute: { engine: 'glm', model: null },
       review: { engine: 'codex', model: null },
       autoReview: true,
+      fallback: DEFAULT_FALLBACK,
     })
     expect((await readConfig()).autoReview).toBe(true)
 
@@ -162,7 +163,31 @@ describe('/api/roles', () => {
       execute: { engine: 'glm', model: null },
       review: { engine: 'claude', model: null },
       autoReview: true,
+      fallback: DEFAULT_FALLBACK,
     })
+  })
+
+  test('accepts named roles and a fallback, rejects reserved names', async () => {
+    const roles = { plan: 'claude', execute: 'glm', review: 'codex' }
+    const saved = await app.handle(request('POST', { ...roles, builder: { engine: 'claude', model: 'opus' }, fallback: { engine: 'claude', model: null } }))
+    expect(saved.status).toBe(200)
+    const view = await (await app.handle(request('GET'))).json()
+    expect(view.builder.model).toBe('opus')
+    expect(view.fallback.engine).toBe('claude')
+    expect((await app.handle(request('POST', { ...roles, autoReview: { engine: 'claude', model: null } }))).status).toBe(400)
+    expect((await app.handle(request('POST', { ...roles, 'bad name': 'claude' }))).status).toBe(400)
+    expect((await app.handle(request('POST', { ...roles, builder: 'gpt' }))).status).toBe(400)
+    const crowd = Object.fromEntries(Array.from({ length: 22 }, (_, index) => [`role-${index}`, 'claude']))
+    expect((await app.handle(request('POST', { ...roles, ...crowd }))).status).toBe(400)
+    expect((await readConfig()).roles.builder).toEqual({ engine: 'claude', model: 'opus' })
+  })
+
+  test('fallback null turns it off, and a POST without fallback keeps it', async () => {
+    const roles = { plan: 'claude', execute: 'glm', review: 'codex' }
+    await app.handle(request('POST', { ...roles, fallback: null }))
+    expect((await (await app.handle(request('GET'))).json()).fallback).toBeNull()
+    await app.handle(request('POST', roles))
+    expect((await readConfig()).fallback).toBeNull()
   })
 
   test('POST rejects a partial or invalid mapping without touching storage', async () => {

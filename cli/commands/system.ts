@@ -3,6 +3,8 @@ import { arg, countOpt, emit, flag, oneOf, records, stringOpt, UsageError, type 
 import { cell, keyValue, relativeAge, table } from '../format'
 
 const ROLE_NAMES = ['plan', 'execute', 'review'] as const
+const ROLE_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/
+const NOT_ROLES: readonly string[] = ['autoReview', 'fallback']
 const FLOW_APPROVAL_VALUES: Record<string, boolean> = { on: true, true: true, off: false, false: false }
 const DEFAULT_ENGINE = 'claude'
 const USAGE_WINDOWS: Array<[string, string]> = [['fiveHourPct', '5h'], ['weeklyPct', 'week'], ['monthlyPct', 'month']]
@@ -38,8 +40,9 @@ function statusText(url: string, doc: { quota: unknown; roles: unknown }): strin
   const quota = isRecord(doc.quota) ? doc.quota : {}
   const usage = 'error' in quota ? [`  ${cell(quota.error)}`] : Object.keys(quota).filter((key) => key !== 'peak').map((key) => usageLine(key, quota[key]))
   const roles = isRecord(doc.roles) ? doc.roles : {}
-  const roleLines = 'error' in roles ? [`  ${cell(roles.error)}`] : ROLE_NAMES.map((name) => roleLine(name, roles[name]))
-  return [`Shikidan: up at ${url}`, 'Usage:', ...usage, 'Roles:', ...roleLines, ...(typeof roles.autoReview === 'boolean' ? [`  auto-review ${roles.autoReview ? 'on' : 'off'}`] : [])].join('\n') + '\n'
+  const roleLines = 'error' in roles ? [`  ${cell(roles.error)}`] : roleNames(roles).map((name) => roleLine(name, roles[name]))
+  const fallback = 'fallback' in roles ? [roles.fallback === null ? '  fallback off' : roleLine('fallback', roles.fallback)] : []
+  return [`Shikidan: up at ${url}`, 'Usage:', ...usage, 'Roles:', ...roleLines, ...fallback, ...(typeof roles.autoReview === 'boolean' ? [`  auto-review ${roles.autoReview ? 'on' : 'off'}`] : [])].join('\n') + '\n'
 }
 
 function roleAssignment(value: unknown): RoleAssignment {
@@ -47,10 +50,15 @@ function roleAssignment(value: unknown): RoleAssignment {
   return { engine: typeof record.engine === 'string' ? record.engine : '', model: typeof record.model === 'string' ? record.model : null }
 }
 
+function roleNames(roles: Record<string, unknown>): string[] {
+  return [...ROLE_NAMES, ...Object.keys(roles).filter((name) => !(ROLE_NAMES as readonly string[]).includes(name) && !NOT_ROLES.includes(name) && isRecord(roles[name]))]
+}
+
 async function setRole(ctx: Context): Promise<void> {
-  const role = oneOf(arg(ctx, 'role'), ROLE_NAMES, 'role')
+  const role = arg(ctx, 'role')
+  if (!ROLE_NAME.test(role) || NOT_ROLES.includes(role)) throw new UsageError('role must be plan, execute, review or a name of letters, digits, - and _')
   const current = await ctx.client.get('/api/roles')
-  const roles = Object.fromEntries(ROLE_NAMES.map((name) => [name, roleAssignment(isRecord(current) ? current[name] : undefined)]))
+  const roles = Object.fromEntries(roleNames(isRecord(current) ? current : {}).map((name) => [name, roleAssignment(isRecord(current) ? current[name] : undefined)]))
   const next = { ...roles, [role]: { engine: arg(ctx, 'engine'), model: stringOpt(ctx, 'model') ?? null } }
   emit(ctx, await ctx.client.post('/api/roles', next), keyValue)
 }
@@ -121,12 +129,12 @@ export const systemCommands: Command[] = [
       emit(ctx, { health, quota, roles }, (doc) => statusText(ctx.client.url, doc as { quota: unknown; roles: unknown }))
     },
   },
-  { path: ['roles'], summary: 'Show which engine plays plan, execute and review', run: async (ctx) => emit(ctx, await ctx.client.get('/api/roles'), keyValue) },
+  { path: ['roles'], summary: 'Show which engine plays each role, and the fallback AI', run: async (ctx) => emit(ctx, await ctx.client.get('/api/roles'), keyValue) },
   {
     path: ['roles', 'set'],
     args: ['role', 'engine'],
     options: MODEL_OPTION,
-    summary: 'Assign an engine (and optional model) to plan, execute or review',
+    summary: 'Assign an engine (and optional model) to plan, execute, review or a named role',
     run: setRole,
   },
   { path: ['models'], summary: 'List the models each engine offers', run: async (ctx) => emit(ctx, await ctx.client.get('/api/models'), keyValue) },

@@ -107,10 +107,13 @@ token (`mct_<48 hex>`) is generated on first read (`readApiToken`) and never ech
 `POST /api/secrets/api-token/reveal`; API responses otherwise report only `configured: boolean`
 flags (`publicView`).
 
-`~/.config/shikidan/config.json`: `{ roles: EngineRoles, autoReview: boolean, chatHome:
-string | null }`. `EngineRoles` is `{ plan, execute, review }`, each `{ engine, model }` — the three
-named roles Studio's default workflow and auto-review read (`DEFAULT_ROLES`: plan → claude, execute →
-glm, review → codex). `GET/POST /api/roles` reads and writes this.
+`~/.config/shikidan/config.json`: `{ roles: EngineRoles, fallback: RoleAssignment | null,
+autoReview: boolean, chatHome: string | null }`. `EngineRoles` is `{ plan, execute, review }` plus up
+to 21 more named roles (identifiers, never `autoReview` or `fallback`), each `{ engine, model }`.
+Studio's default workflow and auto-review read the three built-ins (`DEFAULT_ROLES`: plan → claude,
+execute → glm, review → codex); a flow step may name any role. `fallback` is the AI a step uses when
+its role is not defined or its own AI cannot start; absent means `{ engine: 'claude', model: null }`,
+`null` turns it off. `GET/POST /api/roles` reads and writes roles, `autoReview` and `fallback`.
 
 ## Engines (`server/engines.ts`)
 
@@ -430,7 +433,7 @@ directory mode 0700, files mode 0600:
 | Path | Owner | Contents |
 |---|---|---|
 | `secrets.json` | `secrets.ts` | `zaiAuthToken`, `zaiBaseUrl`, `apiToken` |
-| `config.json` | `secrets.ts` | `roles` (plan/execute/review engine+model), `autoReview`, `chatHome` |
+| `config.json` | `secrets.ts` | `roles` (plan/execute/review and named roles, engine+model), `fallback`, `autoReview`, `chatHome` |
 | `jobs.jsonl` | `jobs.ts` | one line per `JobRecord`, latest wins on replay; compacted past 5000 lines |
 | `logs/<jobId>.log` | `jobs.ts` | raw stdout+stderr of that job's process, tailed live, redacted on every read |
 | `chat-queue.json` | `chat-queue.ts` | queued user messages per chat, drained into the next turn |
@@ -500,8 +503,8 @@ at all (never returns anything secret).
 | POST | `/api/secrets` | `{zaiAuthToken?, zaiBaseUrl?}` | `{ok, ...view}` or `400` | no |
 | POST | `/api/secrets/api-token/reveal` | — | `{apiToken}` | no |
 | POST | `/api/secrets/api-token/rotate` | — | `{apiToken}` | no |
-| GET | `/api/roles` | — | `EngineRoles & {autoReview}` | yes |
-| POST | `/api/roles` | `{plan, execute, review, autoReview?}` | same, or `400` | no |
+| GET | `/api/roles` | — | `EngineRoles & {autoReview, fallback}` | yes |
+| POST | `/api/roles` | `{plan, execute, review, ...namedRoles, autoReview?, fallback?}` | same, or `400` | no |
 | GET | `/api/models` | — | `ModelLists` (per engine) | yes |
 | GET | `/api/providers` | — | `{providers: Provider[]}` | yes |
 | GET | `/api/quota` | — | `QuotaComposite` | yes |

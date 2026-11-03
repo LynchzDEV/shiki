@@ -341,13 +341,14 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
     const root = run.chatId ? deps.manager.getJob(run.chatId) : undefined
     return root ? { engine: root.engine, model: root.model ?? null } : undefined
   }
-  async function agentResolver(): Promise<(node: WorkflowNode, fallback: ChatDefault | undefined) => Promise<ResolvedAgent>> {
-    const roles = (await readConfig()).roles
+  async function agentResolver(): Promise<(node: WorkflowNode, chatDefault: ChatDefault | undefined) => Promise<ResolvedAgent>> {
+    const { roles, fallback } = await readConfig()
     const connections = createConnectionStore(deps.base)
-    return async (node, fallback) => {
-      const role = fallback ?? roles[node.agent.role]
-      const engine = node.agent.engine ?? role.engine
-      const model = node.agent.model ?? (node.agent.engine ? null : role.model)
+    return async (node, chatDefault) => {
+      const role = chatDefault ?? roles[node.agent.role] ?? fallback
+      if (!role && !node.agent.engine) throw new Error(`${node.title}: role "${node.agent.role}" is not defined in Settings`)
+      const engine = node.agent.engine ?? role!.engine
+      const model = node.agent.model ?? (node.agent.engine ? null : role!.model)
       const builtin = BUILTIN_AGENTS.includes(engine as typeof BUILTIN_AGENTS[number])
       const connection = builtin ? undefined : await modelDiscovery(deps.base).effective(await connections.get(engine))
       if (node.mcpServers.length && (!connection || connection.adapter === 'cli')) throw new Error(`${node.title}: attached MCP servers need an ACP connection`)

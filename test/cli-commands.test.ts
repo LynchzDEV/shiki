@@ -223,7 +223,8 @@ describe('usage errors exit 2 without calling the server', () => {
     ['too many arguments', ['job', 'log', 'a', 'b']],
     ['unknown flag', ['jobs', '--frob']],
     ['flag that belongs to another command', ['jobs', '--worktree']],
-    ['bad role', ['roles', 'set', 'boss', 'claude']],
+    ['bad role name', ['roles', 'set', 'boss!', 'claude']],
+    ['reserved role name', ['roles', 'set', 'fallback', 'claude']],
     ['bad flow-approval value', ['flow-approval', 'set', 'maybe']],
     ['bad step outcome', ['run', 'step', 'r', 'n', '--post', '--outcome', 'great', '--summary', 's']],
     ['step post without summary', ['run', 'step', 'r', 'n', '--post', '--outcome', 'pass']],
@@ -288,6 +289,12 @@ describe('output', () => {
     expect(h.out()).toContain('plan')
     expect(h.out()).toContain('claude')
     expect(h.out()).toContain('autoReview: false')
+  })
+
+  test('roles set keeps the named roles already in Settings', async () => {
+    const h = harness((method, path) => method === 'GET' && path === '/api/roles' ? Response.json({ ...ROLES, builder: { engine: 'claude', model: 'opus' }, fallback: null }) : Response.json({ ok: true }))
+    expect(await main(['roles', 'set', 'tester', 'codex'], h.deps)).toBe(0)
+    expect(h.calls.at(-1)!.body).toEqual({ plan: ROLES.plan, execute: ROLES.execute, review: ROLES.review, builder: { engine: 'claude', model: 'opus' }, tester: { engine: 'codex', model: null } })
   })
 
   test('status combines health, usage and roles', async () => {

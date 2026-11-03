@@ -22,7 +22,7 @@ export const mcpSchema = z.object({ name: identifier, command: z.string().min(1)
 export const nodeSchema = z.object({
   id: identifier, title: z.string().trim().min(1).max(120), instructions: text,
   kind: z.enum(['task', 'plan', 'verify-plan', 'implement', 'review', 'join']).default('task'),
-  agent: z.object({ role: z.enum(['plan', 'execute', 'review']).default('execute'), engine: identifier.optional(), model: z.string().max(200).optional(), family: identifier.optional() }).default({ role: 'execute' }),
+  agent: z.object({ role: identifier.default('execute'), engine: identifier.optional(), model: z.string().max(200).optional(), family: identifier.optional() }).default({ role: 'execute' }),
   skills: z.array(z.string().min(1).max(2048)).max(10).default([]),
   mcpServers: z.array(mcpSchema).max(10).default([]),
   checks: z.array(commandSchema).max(10).default([]),

@@ -10,7 +10,7 @@ import * as worktrees from '../server/job-worktrees'
 import { initScratchGitRepo } from './support/scratch-git-repo'
 import { classicWorkflow } from './support/classic-workflow'
 import type { TerminalRecord } from '../server/terminals'
-import { mcUrl } from '../server/secrets'
+import { mcUrl, writeConfig } from '../server/secrets'
 
 let dir: string, repo: string, manager: JobManager, runner: WorkflowRunner, settledRuns: WorkflowRun[]
 const report = (outcome = 'pass') => JSON.stringify({ type: 'result', result: `SKD_RESULT ${JSON.stringify({ outcome, summary: 'Completed fixture', evidence: ['fixture assertion'] })}` })
@@ -171,6 +171,19 @@ test('failure routing is bounded and does not turn an endless loop into success'
   expect(done.status).toBe('blocked')
   expect(done.attempts).toHaveLength(2)
   expect(done.error).toContain('visit limit')
+})
+
+test('an undefined role resolves to the fallback; with fallback null the run start throws naming the role', async () => {
+  const store = await build()
+  await store.save({ ...classicWorkflow(), id: 'named-role', entry: 'build', nodes: [{ id: 'build', title: 'Build', instructions: 'Build it', agent: { role: 'builder' } }], edges: [] })
+  const run = await runner.start({ workflowId: 'named-role', cwd: repo, request: 'Build', label: 'named' })
+  expect(run.agents.build).toMatchObject({ engine: 'claude', model: null })
+  await finished(run.id)
+  await writeConfig({ fallback: null })
+  await expect(runner.start({ workflowId: 'named-role', cwd: repo, request: 'Build', label: 'named' })).rejects.toThrow('Build: role "builder" is not defined in Settings')
+  await writeConfig({ roles: { plan: { engine: 'claude', model: null }, execute: { engine: 'glm', model: null }, review: { engine: 'codex', model: null }, builder: { engine: 'codex', model: 'gpt-5' } } })
+  const named = await runner.start({ workflowId: 'named-role', cwd: repo, request: 'Build', label: 'named' })
+  expect(named.agents.build).toMatchObject({ engine: 'codex', model: 'gpt-5', family: 'gpt' })
 })
 
 test('same model family through different engine names cannot perform cross-family review', async () => {

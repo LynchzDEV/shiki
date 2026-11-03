@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import {
   API_TOKEN_PREFIX,
   CONFIG_FILE,
+  DEFAULT_FALLBACK,
   DEFAULT_ROLES,
   DEFAULT_ZAI_BASE_URL,
   SECRETS_FILE,
@@ -42,7 +43,7 @@ async function modeOf(path: string): Promise<number> {
 describe('defaults', () => {
   test('missing files fall back to documented defaults', async () => {
     expect(await readSecrets()).toEqual({ zaiAuthToken: null, zaiBaseUrl: DEFAULT_ZAI_BASE_URL, apiToken: null })
-    expect(await readConfig()).toEqual({ roles: DEFAULT_ROLES, autoReview: false, chatHome: null, flowApproval: true, marketplaces: [] })
+    expect(await readConfig()).toEqual({ roles: DEFAULT_ROLES, fallback: DEFAULT_FALLBACK, autoReview: false, chatHome: null, flowApproval: true, marketplaces: [] })
   })
 
   test('corrupt json falls back instead of throwing', async () => {
@@ -82,6 +83,21 @@ describe('round trip', () => {
     await ensureConfigDir()
     await Bun.write(configPath(CONFIG_FILE), JSON.stringify({ roles: { execute: 'codex' } }))
     expect((await readConfig()).roles).toEqual({ ...DEFAULT_ROLES, execute: { engine: 'codex', model: null } })
+  })
+
+  test('config without fallback defaults to claude', async () => {
+    expect((await readConfig()).fallback).toEqual({ engine: 'claude', model: null })
+    await ensureConfigDir()
+    await Bun.write(configPath(CONFIG_FILE), JSON.stringify({ fallback: null }))
+    expect((await readConfig()).fallback).toBeNull()
+    await Bun.write(configPath(CONFIG_FILE), JSON.stringify({ fallback: { engine: 'codex', model: 'gpt-5' } }))
+    expect((await readConfig()).fallback).toEqual({ engine: 'codex', model: 'gpt-5' })
+  })
+
+  test('named roles load beside the three defaults; reserved or malformed names are dropped', async () => {
+    await ensureConfigDir()
+    await Bun.write(configPath(CONFIG_FILE), JSON.stringify({ roles: { builder: { engine: 'claude', model: 'opus' }, tester: 'codex', fallback: 'glm', autoReview: 'glm', 'bad name': 'glm', empty: {} } }))
+    expect((await readConfig()).roles).toEqual({ ...DEFAULT_ROLES, builder: { engine: 'claude', model: 'opus' }, tester: { engine: 'codex', model: null } })
   })
 
   test('autoReview defaults to false and survives the round trip', async () => {
