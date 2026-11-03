@@ -177,11 +177,8 @@ shiki clickup filter add main Assignee "is any of" --value Me
 shiki clickup start 86d4ccpu2 --board main   # chat with the task dossier attached
 shiki queue add clickup-board 86d4ccpu2 --repo ~/code/app   # build it when its turn comes
 shiki queue add clickup-board 86d4ccpu2 --repo ~/klangtech   # a folder of repos: the plan picks which (or pass --repos api,backoffice)
-<<<<<<< HEAD
 shiki queue parallel 2                # build up to 2 cards at once (1 to 4, default 1)
-=======
 shiki queue requeue <id>              # a failed card resumes the run it failed in; --fresh starts a new run
->>>>>>> 45acf7d (feat(queue): resume a failed or paused card's run instead of starting over)
 ```
 
 **At once** on the Queue screen, or `shiki queue parallel <n>`, lets up to four cards build at the same time (default 1), but keep it at 1 for projects whose worktrees share one test database, because two cards running tests at once deadlock there.
