@@ -256,6 +256,87 @@ test('a pinned parallel runner is not swapped before the run starts', async () =
   expect(run.agents.execute).toMatchObject({ engine: 'claude', swappedFrom: { engine: 'glm' } })
 })
 
+test('a crashing step is retried on the same engine up to three times, then on the fallback', async () => {
+  const store = await build(({ engine }) => engine === 'glm' ? { cmd: '/bin/false', args: [], env: {} } : { cmd: '/bin/echo', args: [report()], env: {} })
+  await store.save({ ...withoutSession(), id: 'crash' })
+  const run = await runner.start({ workflowId: 'crash', cwd: repo, request: 'Implement', label: 'crash' })
+  const done = await finished(run.id)
+  expect(done.status).toBe('done')
+  const engines = stepJobs().filter(job => job.workflowNodeId === 'execute').map(job => job.engine)
+  expect([engines.filter(engine => engine === 'glm').length, engines.filter(engine => engine === 'claude').length]).toEqual([3, 1])
+  const execute = done.attempts.find(attempt => attempt.nodeId === 'execute')!
+  expect(execute).toMatchObject({ crashes: 0, tried: ['glm'], result: { outcome: 'pass' } })
+  expect(done.agents.execute).toMatchObject({ engine: 'claude', swappedFrom: { engine: 'glm', reason: 'Agent process failed (1)' } })
+})
+
+test('when nothing can run, the step settles with the real reason, never Interrupted before it finished, and run.unavailable is set', async () => {
+  let broken = true
+  const store = await build((input) => { if (broken) throw new Error('no binary'); return resolver(input) })
+  await store.save({ ...withoutSession(), id: 'nothing' })
+  const run = await runner.start({ workflowId: 'nothing', cwd: repo, request: 'Implement', label: 'nothing' })
+  const blocked = await finished(run.id)
+  expect(blocked.status).toBe('blocked')
+  expect(manager.listJobs()).toHaveLength(0)
+  expect(blocked.attempts).toHaveLength(1)
+  const [attempt] = blocked.attempts
+  expect(attempt!.status).toBe('settled')
+  expect(attempt!.tried).toEqual(['claude', 'codex'])
+  expect(attempt!.result!.summary.startsWith('glm unavailable: engine resolver failed')).toBe(true)
+  expect(attempt!.result!.summary).not.toContain('Interrupted')
+  expect(blocked.error).toBe(attempt!.result!.summary)
+  expect(blocked.unavailable).toMatchObject({ engine: 'glm', until: null })
+  expect(blocked.unavailable!.reason).toContain('engine resolver failed')
+  broken = false
+  await runner.retry(run.id)
+  const done = await finished(run.id)
+  expect(done.status).toBe('done')
+  expect(done.unavailable).toBeUndefined()
+})
+
+test('a user stop during a crash never retries', async () => {
+  const store = await build(({ engine }) => engine === 'glm' ? { cmd: '/bin/sleep', args: ['20'], env: {} } : { cmd: '/bin/echo', args: [report()], env: {} })
+  await store.save({ ...withoutSession(), id: 'user-stop' })
+  const run = await runner.start({ workflowId: 'user-stop', cwd: repo, request: 'Implement', label: 'user-stop' })
+  await until(run.id, current => current.attempts.some(attempt => attempt.nodeId === 'execute' && attempt.status === 'running'))
+  await manager.killJob(stepJobs().find(job => job.workflowNodeId === 'execute')!.id)
+  const done = await finished(run.id)
+  expect(done.status).toBe('blocked')
+  expect(done.error).toContain('Agent process failed')
+  expect(done.unavailable).toBeUndefined()
+  expect(stepJobs().filter(job => job.workflowNodeId === 'execute')).toHaveLength(1)
+  const stopped = await runner.start({ workflowId: 'user-stop', cwd: repo, request: 'Implement', label: 'user-stop' })
+  await until(stopped.id, current => current.attempts.some(attempt => attempt.nodeId === 'execute' && attempt.status === 'running'))
+  await runner.stop(stopped.id)
+  await allJobsStopped()
+  expect(runner.get(stopped.id)!.status).toBe('stopped')
+  expect(stepJobs().filter(job => job.workflowNodeId === 'execute' && job.workflowRunId === stopped.id)).toHaveLength(1)
+})
+
+test('a pinned parallel runner whose engine is down is skipped and the join still completes', async () => {
+  await homeConfig()
+  let calls = 0
+  await build(() => ({ cmd: '/bin/echo', args: [report(calls++ === 1 ? 'fail' : 'pass')], env: {} }))
+  down = downFor(['glm'])
+  const started = await runner.start({ workflowId: 'default', cwd: repo, request: 'Design and implement the fixture', label: 'arena' }, { startedByUser: true })
+  const done = await finished(started.id)
+  expect(done.status).toBe('done')
+  expect(done.attempts.find(attempt => attempt.nodeId === 'runner-glm')!.result).toEqual({ outcome: 'pass', summary: 'Skipped: glm unavailable (glm is down)', evidence: ['glm unavailable: glm is down'] })
+  expect(manager.listJobs().some(job => job.workflowNodeId === 'runner-glm')).toBe(false)
+  expect(done.attempts.filter(attempt => attempt.nodeId === 'arena-join').map(attempt => attempt.result!.outcome)).toEqual(['pass'])
+})
+
+test('retry re-resolves agents from current Settings', async () => {
+  const store = await build(() => ({ cmd: '/bin/echo', args: [report('blocked')], env: {} }))
+  await store.save({ ...withoutSession(), id: 'resettle' })
+  const run = await runner.start({ workflowId: 'resettle', cwd: repo, request: 'Implement', label: 'resettle' })
+  expect(run.agents.execute).toMatchObject({ engine: 'glm' })
+  expect((await finished(run.id)).status).toBe('blocked')
+  await writeConfig({ roles: { ...ROLES, execute: { engine: 'claude', model: 'opus' } } })
+  const retried = await runner.retry(run.id)
+  expect(retried.agents.execute).toMatchObject({ engine: 'claude', model: 'opus', family: 'claude' })
+  await finished(run.id)
+})
+
 test('same model family through different engine names cannot perform cross-family review', async () => {
   const store = await build()
   const graph = classicWorkflow()
@@ -282,7 +363,7 @@ test('a terminal agent error overrides an earlier claimed pass even with exit ze
   await build(() => ({ cmd: '/usr/bin/printf', args: ['%s\n%s\n', report(), JSON.stringify({ type: 'result', is_error: true, result: 'Provider failed' })], env: {} }))
   const run = await runner.start({ cwd: repo, request: 'Inspect', label: 'false-success' })
   expect((await finished(run.id)).status).toBe('blocked')
-  expect(manager.listJobs()).toHaveLength(1)
+  expect(manager.listJobs().map(job => job.workflowAttempt)).toEqual(Array(9).fill(0))
 })
 
 test('stopping an acceptance command prevents the next node from starting', async () => {
@@ -1543,7 +1624,7 @@ test('a crashed job blocks the run instead of taking the fail edge', async () =>
   const done = await crashFlow('exit 3')
   expect(done.status).toBe('blocked')
   expect(done.attempts.map(attempt => attempt.nodeId)).toEqual(['test'])
-  expect(done.attempts[0]!.result).toMatchObject({ outcome: 'blocked', summary: 'Agent process failed (3)' })
+  expect(done.attempts[0]!.result).toMatchObject({ outcome: 'blocked', summary: 'codex unavailable: Agent process failed (3)' })
 })
 
 test('a crashed job that claimed a pass blocks too', async () => {

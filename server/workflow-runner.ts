@@ -211,6 +211,8 @@ function detached(node: WorkflowNode): WorkflowNode {
 
 const ENTER_DELAY_MS = 150
 const SAME_FAMILY_REVIEWS = 2
+const MAX_CRASHES = 3
+const REPLACEMENT_ORDER = ['claude', 'codex', 'glm'] as const
 export const NUDGE_PROMPT = 'Your last turn ended without the SKD_RESULT line. Anything you left running in the background was stopped when your turn ended. Re-run what you need in the foreground. Give your complete final answer again (for a plan: the whole plan and any SKD_SHAPE line), ending with exactly one SKD_RESULT line.'
 const NUDGEABLE_ENGINES: ReadonlySet<string> = new Set(['claude', 'glm'])
 const LAST_WORDS_CHARS = 200
@@ -419,7 +421,7 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
     const connections = await createConnectionStore(deps.base).list()
     const options: Array<{ engine: string; model: string | null; connection?: AgentConnection }> = [
       ...(fallback ? [{ ...fallback, connection: connections.find(connection => connection.id === fallback.engine) }] : []),
-      ...BUILTIN_AGENTS.map(engine => ({ engine, model: null })),
+      ...REPLACEMENT_ORDER.map(engine => ({ engine, model: null })),
       ...connections.map(connection => ({ engine: connection.id, model: null, connection })),
     ]
     const candidates: ResolvedAgent[] = []
@@ -488,12 +490,41 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
     Object.assign(token, { state: 'working', attempt: attempt.number })
     await persist(run)
     if (agent.inSession) { deps.onSessionStep?.(structuredClone(run)); return }
-    if (run.agents[node.id]!.sameFamily) attempt.sameFamily = true
-    const result = await deps.manager.createJob(stepJob(run, node, attempt, token, prompt), deps.resolver)
-    if (!result.ok) return block(run, result.error)
-    attempt.jobId = result.job.id; attempt.status = 'running'
+    await launch(run, node, attempt, token)
+  }
+  async function launch(run: WorkflowRun, node: WorkflowNode, attempt: WorkflowAttempt, token: WorkflowToken): Promise<null> {
+    const agent = run.agents[node.id]!
+    const down = await availability(agent)
+    if (down) return recoverStep(run, node, attempt, token, down.reason)
+    if (agent.sameFamily) attempt.sameFamily = true
+    const result = await deps.manager.createJob(stepJob(run, node, attempt, token, attempt.prompt), deps.resolver)
+    if (!result.ok) return recoverStep(run, node, attempt, token, result.error)
+    Object.assign(attempt, { jobId: result.job.id, status: 'running' })
     await persist(run)
     settleIfFinished(run, result.job.id)
+    return null
+  }
+  async function recoverStep(run: WorkflowRun, node: WorkflowNode, attempt: WorkflowAttempt, token: WorkflowToken, reason: string): Promise<null> {
+    const agent = run.agents[node.id]!
+    const down = await availability(agent)
+    attempt.crashes = (attempt.crashes ?? 0) + 1
+    if (attempt.crashes < MAX_CRASHES && !down) return launch(run, node, attempt, token)
+    const why = down?.reason ?? reason
+    const tried = [...attempt.tried ?? [], agent.engine]
+    const replacement = await replacementFor(run, node, tried, why)
+    if (replacement) {
+      run.agents[node.id] = replacement
+      Object.assign(attempt, { crashes: 0, tried })
+      return launch(run, node, attempt, token)
+    }
+    if (pinnedParallel(run, node)) {
+      await conclude(run, attempt, token, { outcome: 'pass', summary: `Skipped: ${agent.engine} unavailable (${why})`, evidence: [`${agent.engine} unavailable: ${why}`] }, [])
+      return null
+    }
+    Object.assign(attempt, { status: 'settled', endedAt: Date.now(), result: { outcome: 'blocked', summary: `${agent.engine} unavailable: ${why}`, evidence: [] } })
+    Object.assign(token, { state: 'ready', attempt: null })
+    await unavailableBlock(run, agent.engine, why, down?.until ?? null)
+    return null
   }
   function stepJob(run: WorkflowRun, node: WorkflowNode, attempt: WorkflowAttempt, token: WorkflowToken, prompt: string): CreateJobParams {
     const agent = run.agents[node.id]!
@@ -623,7 +654,12 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
       return nudge(run, attempt, token, record, sessionId)
     }
     if (record.status === 'done' && !result && nudged) result = { outcome: 'blocked', summary: lastWords(own), evidence: [] }
-    if (record.status !== 'done' && result?.outcome !== 'fail' && result?.outcome !== 'blocked') result = { outcome: 'blocked', summary: `Agent process failed (${record.exitCode ?? 'unknown exit'})`, evidence: [] }
+    if (record.status !== 'done' && result?.outcome !== 'fail' && result?.outcome !== 'blocked') {
+      const summary = `Agent process failed (${record.exitCode ?? 'unknown exit'})`
+      if (current.stoppedAt !== undefined) result = { outcome: 'blocked', summary, evidence: [] }
+      else if (run.status === 'paused') { await persist(run); return null }
+      else return recoverStep(run, run.workflow.nodes.find(node => node.id === attempt.nodeId)!, attempt, token, summary)
+    }
     if (!result || (result.outcome === 'pass' && !result.evidence.length)) result = { outcome: 'blocked', summary: 'Agent did not provide a valid SKD_RESULT with evidence', evidence: [] }
     if (result.outcome === 'pass' && kindOf(run, attempt) === 'plan') {
       const errors = await keepShape(run, attempt)
@@ -944,6 +980,7 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
         if (run.status !== 'running') return
       }
       for (const token of run.tokens.filter(token => token.state === 'ready')) {
+        if (token.state !== 'ready' || !run.tokens.includes(token)) continue
         await dispatch(run, token)
         if (run.status !== 'running') return
       }
@@ -1066,9 +1103,10 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
       return structuredClone(run)
     })
   }
-  async function asAgents(run: WorkflowRun): Promise<void> {
-    const resolveAgent = await agentResolver()
-    for (const node of run.workflow.nodes) if (run.agents[node.id]?.inSession) run.agents[node.id] = await resolveAgent(detached(node), undefined)
+  async function reresolve(run: WorkflowRun): Promise<void> {
+    const root = run.chatId ? deps.manager.getJob(run.chatId) : undefined
+    run.agents = await agentsFor(run.workflow, root ? { engine: root.engine, model: root.model ?? null } : undefined, sessionOf(run))
+    await preflight(run)
   }
   async function retry(id: string): Promise<WorkflowRun> {
     return exclusive(id, async () => {
@@ -1078,7 +1116,8 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
       if (run.versions[0]?.state !== 'approved') throw new RunActionError('Approve the flow before retrying', 409)
       if (workspaceBusy(run.cwd, id) || deps.manager.listJobs().some(job => job.workflowRunId === id && job.status === 'running')) throw new Error('Workspace still has running work')
       if (run.attempts.some(attempt => processAlive(attempt.checkPid))) throw new Error('The interrupted acceptance process may still be running; inspect it before retrying')
-      if (!sessionOf(run)) await asAgents(run)
+      await reresolve(run)
+      delete run.unavailable
       interrupt(run)
       if (!deps.manager.claimWorkspace(run.cwd, run.id)) throw new Error('Workspace already has running work')
       const taken = claimPaths(run)

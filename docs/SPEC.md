@@ -366,6 +366,13 @@ way under `policies/`. The one built-in `default` workflow is plan → verify-pl
   connections that can start, and the agent records `swappedFrom`. A review only moves to a family
   the implementation did not use; with none left it may run same-family (`sameFamily`) for at most
   two review attempts in the run. A pinned AI that is one of several parallel paths is never swapped.
+  The same check runs before every step job. A step whose job cannot be created, or whose process
+  exits without a result, is retried on the same AI up to three tries (`attempt.crashes`), then
+  moves to the next replacement (`attempt.tried`). A pinned parallel path with nothing left passes
+  as `Skipped: <engine> unavailable (<reason>)` so its join still runs. Otherwise the step settles
+  blocked with `<engine> unavailable: <reason>`, the run records `unavailable: { engine, reason,
+  until }` and blocks. A job the user stopped never retries. Retry re-resolves every step's AI from
+  current Settings and clears `unavailable`.
 - **One run per folder.** A run claims its folder; while it runs, other jobs in that folder are refused (409). Chat turns are exempt both ways: a chat turn neither blocks a run from starting nor is blocked by one, so a chat can run a workflow in its own project.
 - **Designing one in English** (`createWorkflowBuilder`): `POST /api/studio/drafts` spawns a
   throwaway, read-only job (a separate temp git-free worktree under `~/.cache/shikidan/
