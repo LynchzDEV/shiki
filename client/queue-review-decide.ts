@@ -82,7 +82,7 @@ export function createDecide({ item, parsed, onSelect, onBuild }: DecideConfig):
   const feedbackBox = el('div', { class: 'pk-field pk-feedback', 'data-feedback': true, hidden: true }, el('div', { class: 'pk-lbl' }, el('label', { for: 'queue-review-feedback' }, 'What should change?')), feedback)
   const openWrap = el('div', { 'data-open-wrap': true })
   const isNone = (): boolean => radios.querySelector<HTMLInputElement>('input:checked')?.value === NO_PICK
-  const sync = (): void => { feedbackBox.hidden = !isNone(); openWrap.hidden = isNone() }
+  const sync = (): void => { feedbackBox.hidden = !isNone(); openWrap.hidden = isNone(); defaults.hidden = isNone() }
   radios.addEventListener('change', (event) => { sync(); if (event.target instanceof HTMLInputElement) onSelect(event.target.value) })
 
   const fieldsets = open.map(openFieldset)

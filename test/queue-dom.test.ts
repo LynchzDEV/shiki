@@ -933,6 +933,7 @@ test('None of these is a fourth card that shows a required feedback box and rela
   expect(feedbackBox().placeholder).toContain('keep B')
   expect(all$('.pk-build').map(button => button.textContent)).toEqual(['Ask for new designs', 'Ask for new designs'])
   expect(sel('[data-open-wrap]').hidden).toBe(true)
+  expect(sel('[data-defaults]').hidden).toBe(true)
   expect(previewSrc()).toBe('/queue/p1/files/login/b.html')
 })
 
@@ -942,6 +943,7 @@ test('reselecting an option restores its Build label and the Still open answers'
   chooseOption('B')
   expect(all$('.pk-build').map(button => button.textContent)).toEqual(['Build with B', 'Build with B'])
   expect(sel('[data-open-wrap]').hidden).toBe(false)
+  expect(sel('[data-defaults]').hidden).toBe(false)
   expect(sel('[data-feedback]').hidden).toBe(true)
 })
 
