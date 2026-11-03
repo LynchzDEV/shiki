@@ -1331,6 +1331,7 @@ a.pill:hover { color: var(--accent); }
 .q-screen { padding-bottom: 140px; }
 .q-screen .studio-heading nav { gap: 14px; }
 .q-checked { font-size: 12px; }
+.q-paused { margin: 0 0 14px; padding: 10px 14px; font-size: 13px; color: var(--text-strong); background: var(--field); border-radius: var(--r-md); corner-shape: var(--corner); }
 .q-status { margin: 40px 0; text-align: center; font-size: 13px; }
 .q-btn { display: inline-flex; align-items: center; gap: 7px; }
 .q-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }

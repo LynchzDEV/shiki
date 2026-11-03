@@ -15,9 +15,10 @@ export type QueueStepView = { title: string; attempt: number; maxAttempts: numbe
 export type QueuePlugin = { id: string; name: string; icon?: string; enabled: boolean; queueSource?: true }
 export type QueueFlow = { id: string; name: string }
 export type QueueLayout = 'list' | 'tree'
+export type QueuePaused = { reason: string; until: number }
 export type QueueContext = {
   plugins: QueuePlugin[]; flows: QueueFlow[]; now: number; checkedAt: number | null; openIds: ReadonlySet<string>
-  layout?: QueueLayout; treeView?: HTMLElement
+  layout?: QueueLayout; treeView?: HTMLElement; paused?: QueuePaused | null
 }
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
@@ -74,6 +75,20 @@ export function ageText(at: number, now: number): string {
   return hours < 24 ? `${hours}h ago` : `${Math.floor(hours / 24)}d ago`
 }
 
+export function untilText(at: number, now: number): string {
+  const minutes = Math.ceil(Math.max(0, at - now) / 60_000)
+  if (minutes < 1) return 'now'
+  if (minutes < 60) return `in ${minutes} min`
+  const hours = Math.round(minutes / 60)
+  return hours < 24 ? `in ${hours}h` : `in ${Math.round(hours / 24)}d`
+}
+
+export function readPaused(value: unknown): QueuePaused | null {
+  if (typeof value !== 'object' || value === null) return null
+  const { reason, until } = value as Record<string, unknown>
+  return typeof reason === 'string' && typeof until === 'number' ? { reason, until } : null
+}
+
 export function isWebLink(url: string): boolean {
   return /^https?:\/\//i.test(url)
 }
@@ -103,6 +118,11 @@ function heading(context: QueueContext): HTMLElement {
   return el('header', { class: 'studio-heading' },
     el('div', {}, el('h1', {}, 'Queue'), el('p', { class: 'muted' }, LINE)),
     el('nav', { 'aria-label': 'Queue actions' }, el('span', { class: 'muted q-checked' }, checked), button('Check replies', 'connection-button q-btn', { 'data-act': 'check' }, 'mk-refresh')))
+}
+
+function top(context: QueueContext): HTMLElement[] {
+  const { paused } = context
+  return paused ? [heading(context), el('p', { class: 'q-paused', role: 'status' }, `Queue paused · ${paused.reason} · retrying ${untilText(paused.until, context.now)}`)] : [heading(context)]
 }
 
 const addButton = (): HTMLElement => button('Add item', 'connection-button q-btn', { 'data-act': 'add' }, 'plus-icon')
@@ -242,12 +262,12 @@ function emptyState(): HTMLElement {
 
 export function renderQueue(items: readonly QueueItemView[], context: QueueContext): HTMLElement {
   if (items.length === 0) {
-    return el('div', { class: 'q-screen' }, heading(context), el('div', { class: 'q-bar' }, el('span', { class: 'sp' }), addButton()), emptyState())
+    return el('div', { class: 'q-screen' }, ...top(context), el('div', { class: 'q-bar' }, el('span', { class: 'sp' }), addButton()), emptyState())
   }
   const treeView = context.layout === 'tree' ? context.treeView : undefined
-  if (treeView !== undefined) return el('div', { class: 'q-screen' }, heading(context), summary(items, 'tree'), treeView)
+  if (treeView !== undefined) return el('div', { class: 'q-screen' }, ...top(context), summary(items, 'tree'), treeView)
   const hint = el('button', { type: 'button', class: 'connection-add q-hint', 'data-act': 'add' }, icon('plus-icon'), 'Add an item from a source plugin, or run ', el('code', {}, 'shiki queue add'))
-  return el('div', { class: 'q-screen' }, heading(context), summary(items, 'list'), el('div', { class: 'q-list' }, ...items.map(item => row(item, items, context))), hint)
+  return el('div', { class: 'q-screen' }, ...top(context), summary(items, 'list'), el('div', { class: 'q-list' }, ...items.map(item => row(item, items, context))), hint)
 }
 
 const isText = (value: unknown): value is string => typeof value === 'string'

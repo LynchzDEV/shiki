@@ -111,6 +111,30 @@ test('progress text follows each state', () => {
   expect(rows(view)[1]?.querySelector('.q-meta')?.textContent).toContain('Default flow')
 })
 
+const pausedLine = (root: ParentNode) => [...root.querySelectorAll('[role=status]')].find(line => line.textContent?.startsWith('Queue paused'))
+
+test('a paused queue says why and when it retries, above the items', () => {
+  const view = queue.renderQueue(all, context({ paused: { reason: 'codex unavailable: codex is not installed', until: NOW + 15 * 60_000 } }))
+  const line = pausedLine(view) as HTMLElement
+  expect(line.textContent).toBe('Queue paused · codex unavailable: codex is not installed · retrying in 15 min')
+  expect(line.compareDocumentPosition(view.querySelector('.q-list')!) & window.Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  expect(view.querySelector('.q-checked')?.textContent).toBe('Not checked yet')
+})
+
+test('a running queue, or a snapshot without paused, shows no paused line', () => {
+  expect(pausedLine(queue.renderQueue(all, context({ paused: null })))).toBeUndefined()
+  expect(pausedLine(queue.renderQueue(all, context()))).toBeUndefined()
+})
+
+test('the live queue screen shows and clears the paused line as snapshots arrive', async () => {
+  dispatchEvent(new CustomEvent('quiet:queue-paused', { detail: { reason: 'codex unavailable: codex is not installed', until: Date.now() + 2 * 3_600_000 } }))
+  await flush()
+  expect(pausedLine(section())?.textContent).toBe('Queue paused · codex unavailable: codex is not installed · retrying in 2h')
+  dispatchEvent(new CustomEvent('quiet:queue-paused', { detail: null }))
+  await flush()
+  expect(pausedLine(section())).toBeUndefined()
+})
+
 test('summary only counts states that have items', () => {
   const view = queue.renderQueue([queuedA], context())
   expect([...view.querySelectorAll('.q-bar > .pill-state')].map(pill => pill.textContent)).toEqual(['1 queued'])

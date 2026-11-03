@@ -23,7 +23,7 @@ class FakeSource {
   onerror: (() => void) | null = null
   constructor(readonly url: string) { FakeSource.opened.push(this) }
   close(): void {}
-  send(items: QueueItem[], checkedAt: number | null = null): void { this.onmessage?.({ data: JSON.stringify({ items, checkedAt }) }) }
+  send(items: QueueItem[], checkedAt: number | null = null, extra: Record<string, unknown> = {}): void { this.onmessage?.({ data: JSON.stringify({ items, checkedAt, ...extra }) }) }
 }
 
 let plugins: Array<Record<string, unknown>> = [
@@ -123,6 +123,16 @@ test('the Queue screen shows how long ago the server last checked replies', asyn
   stream().send([building, queued, waiting, ready, failed], Date.now() - 7 * 60_000)
   await flush()
   expect(checkedText()).toBe('Checked 7 min ago')
+})
+
+test('a paused snapshot on the stream shows on the Queue screen, and the next snapshot without it clears it', async () => {
+  const paused = () => doc.querySelector('#queue .q-paused')?.textContent
+  stream().send([building, queued, waiting, ready, failed], null, { paused: { reason: 'codex unavailable: codex is not installed', until: Date.now() + 15 * 60_000 } })
+  await flush()
+  expect(paused()).toBe('Queue paused · codex unavailable: codex is not installed · retrying in 15 min')
+  stream().send([building, queued, waiting, ready, failed])
+  await flush()
+  expect(paused()).toBeUndefined()
 })
 
 test('items sit in a group right under the plugin they came from', async () => {

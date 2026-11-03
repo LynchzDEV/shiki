@@ -23,14 +23,17 @@ export function openQueueStream(onChange: () => void): void {
   const stream = new EventSource('/api/queue/stream')
   stream.onmessage = (event: MessageEvent) => {
     let checkedAt: unknown
+    let paused: unknown
     try {
       const snapshot = readRecord(JSON.parse(String(event.data)))
       queueItems = readQueueItems(snapshot.items)
       checkedAt = snapshot.checkedAt
+      paused = snapshot.paused ?? null
     } catch { return }
     onChange()
     dispatchEvent(new CustomEvent('quiet:queue-items', { detail: queueItems }))
     if (typeof checkedAt === 'number') dispatchEvent(new CustomEvent('quiet:queue-checked', { detail: checkedAt }))
+    dispatchEvent(new CustomEvent('quiet:queue-paused', { detail: paused }))
   }
 }
 

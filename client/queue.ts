@@ -3,7 +3,7 @@ import { createAddDialog } from './queue-dialog'
 import { createPickReview } from './queue-review'
 import { createLandDialogs } from './queue-land'
 import { readQueueTree, renderTree } from './queue-tree'
-import { readQueueItems, renderQueue, watchRunId, type QueueFlow, type QueueItemView, type QueueLayout, type QueuePlugin } from './queue-view'
+import { readPaused, readQueueItems, renderQueue, watchRunId, type QueueFlow, type QueueItemView, type QueueLayout, type QueuePaused, type QueuePlugin } from './queue-view'
 import { errorText, getJson, postJson, readArray, readRecord, type ApiResult } from './shared'
 
 export { parseItemRef } from './queue-dialog'
@@ -18,6 +18,7 @@ let items: QueueItemView[] = []
 let plugins: QueuePlugin[] = []
 let flows: QueueFlow[] = []
 let checkedAt: number | null = null
+let paused: QueuePaused | null = null
 let loaded = false
 let dragId: string | null = null
 let focusId: string | null = null
@@ -95,7 +96,7 @@ function start(section: HTMLElement): void {
     if (!loaded) return
     if (dragId !== null) { paintAfterDrag = true; return }
     const shown = layout === 'tree' ? { layout, treeView: treeView() } : { layout }
-    section.replaceChildren(renderQueue(items, { plugins, flows, now: Date.now(), checkedAt, openIds, ...shown }))
+    section.replaceChildren(renderQueue(items, { plugins, flows, now: Date.now(), checkedAt, openIds, paused, ...shown }))
     applyFocus()
   }
 
@@ -240,13 +241,14 @@ function start(section: HTMLElement): void {
     const result = await getJson('/api/queue')
     if (result.ok && checkedAt === null) showChecked(result.data.checkedAt)
     if (loaded) return
-    if (result.ok) showItems(readQueueItems(result.data.items))
+    if (result.ok) { paused = readPaused(result.data.paused); showItems(readQueueItems(result.data.items)) }
     else section.replaceChildren(statusLine('Could not load the queue. Shikidan keeps trying.'))
   }
 
   section.replaceChildren(statusLine('Loading the queue…'))
   addEventListener('quiet:queue-items', (event) => showItems(readQueueItems((event as CustomEvent<unknown>).detail)))
   addEventListener('quiet:queue-checked', (event) => showChecked((event as CustomEvent<unknown>).detail))
+  addEventListener('quiet:queue-paused', (event) => { paused = readPaused((event as CustomEvent<unknown>).detail); paint() })
   void loadItems()
   void loadContext()
 }
