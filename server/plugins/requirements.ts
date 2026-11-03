@@ -1,4 +1,5 @@
 import type { PluginContributions, PluginManifest, PluginPermissions, PluginRequirement, PluginRuntime } from './manifest'
+import type { InstallStep } from './installer'
 import type { InstalledPlugin } from './store'
 
 function versionParts(version: string): number[] {
@@ -110,4 +111,113 @@ async function resolveLevel(manifest: PluginManifest, origin: string | undefined
 
 export function resolveRequirements(manifest: PluginManifest, origin: string | undefined, ports: ResolverPorts): Promise<RequirementStep[]> {
   return resolveLevel(manifest, origin, 1, new Set([manifest.id]), ports)
+}
+
+export type RequirementConsent = { id: string; action: 'install' | 'update' | 'enable'; commit?: string }
+
+export type ActionOutcome = { ok: true } | { ok: false; status: number; error: string; step?: InstallStep }
+
+export type RequirementActions = {
+  install: (input: { repo: string; ref: string; commit: string; trust: boolean; marketplace: string }) => Promise<ActionOutcome>
+  update: (id: string, input: { ref: string; commit: string; accept: true; trust: boolean }) => Promise<ActionOutcome>
+  setEnabled: (id: string, enabled: boolean) => Promise<ActionOutcome>
+  uninstall: (id: string) => Promise<ActionOutcome>
+}
+
+export type NeedsRequirementsFailure = { ok: false; status: 409; needsRequirements: true; requirements: RequirementStep[]; error?: undefined; step?: undefined }
+
+export type RequirementFailure = { ok: false; status: number; error: string; step: InstallStep; requirement?: string }
+
+export function outcomeOf(result: { ok: true } | { ok: false; status: number; error?: string; step?: InstallStep }): ActionOutcome {
+  if (result.ok) return { ok: true }
+  return { ok: false, status: result.status, error: result.error ?? 'This change needs your approval', ...(result.step !== undefined ? { step: result.step } : {}) }
+}
+
+export type RequirementContext = {
+  steps: RequirementStep[]
+  given: RequirementConsent[] | undefined
+  trust: boolean
+  actions: RequirementActions
+  mainName: string
+  verb: 'installed' | 'updated'
+}
+
+type ActionableStep = Extract<RequirementStep, { status: 'install' | 'update' | 'enable' }>
+
+const isActionable = (step: RequirementStep): step is ActionableStep => step.status === 'install' || step.status === 'update' || step.status === 'enable'
+
+const stepName = (step: ActionableStep): string => (step.status === 'enable' ? step.name : step.preview.manifest.name)
+
+const needsTrust = (step: ActionableStep): boolean => step.status !== 'enable' && (step.preview.runtime === 'trusted' || step.preview.contributes !== undefined)
+
+function consented(step: ActionableStep, given: RequirementConsent[]): boolean {
+  return given.some(entry => entry.id === step.id && entry.action === step.status && (step.status === 'enable' || entry.commit === step.preview.commit))
+}
+
+function gateFailure(context: RequirementContext): NeedsRequirementsFailure | RequirementFailure | null {
+  const blocked = context.steps.find(step => step.status === 'unavailable')
+  if (blocked?.status === 'unavailable') return { ok: false, status: 409, error: `${context.mainName} needs ${blocked.id}: ${blocked.reason}`, step: 'requirements' }
+  const actionable = context.steps.filter(isActionable)
+  if (!actionable.every(step => consented(step, context.given ?? []))) return { ok: false, status: 409, needsRequirements: true, requirements: context.steps }
+  const trusting = actionable.find(needsTrust)
+  if (trusting !== undefined && !context.trust) return { ok: false, status: 400, error: `${stepName(trusting)} needs trust: true`, step: 'requirements' }
+  return null
+}
+
+function runStep(step: ActionableStep, context: RequirementContext): Promise<ActionOutcome> {
+  if (step.status === 'enable') return context.actions.setEnabled(step.id, true)
+  if (step.status === 'update') return context.actions.update(step.id, { ref: step.listing.ref, commit: step.preview.commit, accept: true, trust: context.trust })
+  return context.actions.install({ repo: step.listing.repo, ref: step.listing.ref, commit: step.preview.commit, trust: context.trust, marketplace: step.listing.marketplace })
+}
+
+async function undoStep(step: ActionableStep, actions: RequirementActions): Promise<string> {
+  const name = stepName(step)
+  if (step.status === 'update') return `${name} was updated to v${step.preview.manifest.version}`
+  if (step.status === 'enable') {
+    const outcome = await actions.setEnabled(step.id, false)
+    return outcome.ok ? `${name} was turned back off` : `${name} is still turned on: ${outcome.error}`
+  }
+  const outcome = await actions.uninstall(step.id)
+  return outcome.ok ? `${name} was removed again` : `${name} was installed and could not be removed: ${outcome.error}`
+}
+
+async function undoAll(done: ActionableStep[], actions: RequirementActions): Promise<string[]> {
+  const notes = new Map<string, string>()
+  for (const step of [...done].reverse()) notes.set(step.id, await undoStep(step, actions))
+  return done.map(step => notes.get(step.id)!)
+}
+
+async function failAfterRollback(context: RequirementContext, done: ActionableStep[], failure: { status: number; error: string; step?: InstallStep }, requirement?: ActionableStep): Promise<RequirementFailure> {
+  const notes = await undoAll(done, context.actions)
+  const reason = requirement === undefined ? failure.error : `${stepName(requirement)}: ${failure.error}`
+  return {
+    ok: false,
+    status: failure.status,
+    error: [...notes, `${context.mainName} was not ${context.verb}: ${reason}`].join('; '),
+    step: failure.step ?? 'requirements',
+    ...(requirement !== undefined ? { requirement: requirement.id } : {}),
+  }
+}
+
+type Succeeded = { ok: true }
+type Failed = { ok: false; status: number; error?: string; step?: InstallStep }
+export type WithRequirements<R> = (R extends Succeeded ? R & { installedRequirements: string[] } : R) | NeedsRequirementsFailure | RequirementFailure
+
+const withApplied = <R extends Succeeded | Failed>(result: R, ids: string[]): WithRequirements<R> =>
+  (result.ok ? { ...result, installedRequirements: ids } : result) as WithRequirements<R>
+
+export async function withRequirements<R extends Succeeded | Failed>(context: RequirementContext, main: () => Promise<R>): Promise<WithRequirements<R>> {
+  if (context.steps.length === 0) return withApplied(await main(), [])
+  const refused = gateFailure(context)
+  if (refused !== null) return refused
+  const done: ActionableStep[] = []
+  for (const step of context.steps.filter(isActionable)) {
+    const outcome = await runStep(step, context)
+    if (!outcome.ok) return failAfterRollback(context, done, outcome, step)
+    done.push(step)
+  }
+  const result = await main()
+  if (result.ok) return withApplied(result, done.map(step => step.id))
+  const failed = result as Failed
+  return failAfterRollback(context, done, { status: failed.status, error: failed.error ?? 'The change needs your approval', step: failed.step })
 }

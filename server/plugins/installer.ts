@@ -10,17 +10,17 @@ import { errorMessage } from './errors'
 import { PluginBusyError, withPluginLock } from './locks'
 import { checkFlows, contributionTargets, cliCommand, removeContributions, syncContributions } from './contributions'
 import { catalog } from './marketplaces'
-import { contributionsAdded, parseManifest, permissionsAdded, type PluginManifest, type PluginPermissions, type PluginRuntime } from './manifest'
+import { contributionsAdded, parseManifest, permissionsAdded, type PluginManifest } from './manifest'
 import { isAllowedRepoUrl } from './repo-url'
-import { resolveRequirements, type CheckoutPreview, type RequirementListing, type RequirementStep, type ResolverPorts } from './requirements'
+import { outcomeOf, resolveRequirements, withRequirements, type CheckoutPreview, type NeedsRequirementsFailure, type RequirementActions, type RequirementConsent, type RequirementListing, type RequirementStep, type ResolverPorts } from './requirements'
 import { invalidateRuntime } from './runtimes'
 import { getInstalled, pluginFolder, pluginsRoot, removeInstalled, saveInstalled, type InstalledPlugin } from './store'
 
 const GIT_TIMEOUT = 120_000
 
-export type InstallStep = 'clone' | 'manifest' | 'dependencies' | 'build' | 'move' | 'contributions'
+export type InstallStep = 'clone' | 'manifest' | 'dependencies' | 'build' | 'move' | 'contributions' | 'requirements'
 
-export type StepFailure = { ok: false; status: number; error: string; step: InstallStep }
+export type StepFailure = { ok: false; status: number; error: string; step: InstallStep; requirement?: string }
 export type MessageFailure = { ok: false; status: number; error: string; step?: undefined }
 export type ConsentFailure = { ok: false; status: 409; needsConsent: true; added: string[]; error?: undefined; step?: undefined }
 export type TrustFailure = { ok: false; status: 409; needsTrust: true; error?: undefined; step?: undefined }
@@ -29,11 +29,14 @@ type CheckoutPreviewResult = Extract<CheckoutPreview, { ok: true }>
 type RawPreviewResult = CheckoutPreviewResult | StepFailure | MessageFailure
 export type PreviewResult = (CheckoutPreviewResult & { requires: RequirementStep[] }) | StepFailure | MessageFailure
 
-export type InstallInput = { repo: string; ref: string; commit: string; trust?: boolean; marketplace?: string }
-export type InstallResult = { ok: true; plugin: InstalledPlugin } | StepFailure | MessageFailure
+export type InstallInput = { repo: string; ref: string; commit: string; trust?: boolean; marketplace?: string; requirements?: RequirementConsent[] }
+type PluginOk = { ok: true; plugin: InstalledPlugin }
+type InstallFailure = StepFailure | MessageFailure
+export type InstallResult = (PluginOk & { installedRequirements: string[] }) | InstallFailure | NeedsRequirementsFailure
 
-export type UpdateInput = { ref?: string; commit: string; accept?: boolean; trust?: boolean; repo?: string }
-export type UpdateResult = { ok: true; plugin: InstalledPlugin } | StepFailure | MessageFailure | ConsentFailure | TrustFailure
+export type UpdateInput = { ref?: string; commit: string; accept?: boolean; trust?: boolean; repo?: string; requirements?: RequirementConsent[] }
+type UpdateFailure = InstallFailure | ConsentFailure | TrustFailure
+export type UpdateResult = (PluginOk & { installedRequirements: string[] }) | UpdateFailure | NeedsRequirementsFailure
 
 export type UninstallResult = { ok: true; keptData: boolean } | MessageFailure
 export type SetEnabledResult = { ok: true; plugin: InstalledPlugin } | MessageFailure
@@ -248,6 +251,7 @@ export function createInstaller(overrides: Partial<InstallerDeps> = {}) {
       ...(manifest.screen !== undefined ? { screen: manifest.screen } : {}),
       ...(manifest.queueSource === true ? { queueSource: true as const } : {}),
       ...(manifest.contributes !== undefined ? { contributes: manifest.contributes } : {}),
+      ...(manifest.requires !== undefined ? { requires: manifest.requires } : {}),
       enabled: true,
       installedAt,
       updatedAt: now,
@@ -290,6 +294,13 @@ export function createInstaller(overrides: Partial<InstallerDeps> = {}) {
     return { ...checkout, requires: await resolveRequirements(checkout.manifest, body.marketplace, resolverPorts) }
   }
 
+  const requirementActions: RequirementActions = {
+    install: async input => outcomeOf(await installCore(input)),
+    update: async (id, input) => outcomeOf(await updateCore(id, input)),
+    setEnabled: async (id, enabled) => outcomeOf(await setEnabled(id, enabled)),
+    uninstall: async id => outcomeOf(await uninstall(id, { keepData: false })),
+  }
+
   async function installLocked(manifest: PluginManifest, body: InstallInput, tmp: string, sha: string): Promise<InstallResult> {
     if (await getInstalled(manifest.id) !== null) return { ok: false, status: 409, error: 'Already installed; use Update' }
     const prepared = await prepareBuild(tmp, manifest)
@@ -322,7 +333,10 @@ export function createInstaller(overrides: Partial<InstallerDeps> = {}) {
     return { ok: true, plugin: record }
   }
 
-  async function install(body: InstallInput): Promise<InstallResult> {
+  async function installFrom<R>(
+    body: InstallInput,
+    around: (manifest: PluginManifest, run: () => Promise<PluginOk | InstallFailure>) => Promise<R>,
+  ): Promise<R | InstallFailure> {
     const invalid = checkedRepoRef(body)
     if (invalid !== null) return invalid
     const badCommit = checkedCommit(body.commit)
@@ -344,15 +358,28 @@ export function createInstaller(overrides: Partial<InstallerDeps> = {}) {
       }
       const sha = await headSha(tmp)
       if (sha !== body.commit) return { ok: false, status: 409, error: 'The plugin changed since you reviewed it; preview again' }
-      try {
-        return await withPluginLock(manifest.manifest.id, () => installLocked(manifest.manifest, body, tmp, sha))
-      } catch (error) {
-        if (error instanceof PluginBusyError) return { ok: false, status: 409, error: error.message }
-        throw error
+      const run = async (): Promise<PluginOk | InstallFailure> => {
+        try {
+          return await withPluginLock(manifest.manifest.id, () => installLocked(manifest.manifest, body, tmp, sha))
+        } catch (error) {
+          if (error instanceof PluginBusyError) return { ok: false, status: 409, error: error.message }
+          throw error
+        }
       }
+      return await around(manifest.manifest, run)
     } finally {
       await rm(tmp, { recursive: true, force: true })
     }
+  }
+
+  const installCore = (body: InstallInput) => installFrom(body, (_manifest, run) => run())
+
+  async function install(body: InstallInput): Promise<InstallResult> {
+    return installFrom(body, async (manifest, run): Promise<InstallResult> => {
+      if (await getInstalled(manifest.id) !== null) return { ok: false, status: 409, error: 'Already installed; use Update' }
+      const steps = await resolveRequirements(manifest, body.marketplace, resolverPorts)
+      return withRequirements({ steps, given: body.requirements, trust: body.trust === true, actions: requirementActions, mainName: manifest.name, verb: 'installed' }, run)
+    })
   }
 
   async function replaceInstalled(id: string, tmp: string, record: InstalledPlugin): Promise<StepFailure | null> {
@@ -383,7 +410,34 @@ export function createInstaller(overrides: Partial<InstallerDeps> = {}) {
     return null
   }
 
-  async function update(id: string, body: UpdateInput): Promise<UpdateResult> {
+  async function applyUpdate(installed: InstalledPlugin, manifest: PluginManifest, source: { repo: string; ref: string; tmp: string; sha: string }): Promise<PluginOk | InstallFailure> {
+    const id = installed.id
+    const prepared = await prepareBuild(source.tmp, manifest)
+    if (prepared !== null) return prepared
+    const badFlow = await contributionFailure(source.tmp, manifest)
+    if (badFlow !== null) return badFlow
+    const replacement: InstalledPlugin = {
+      ...recordOf(manifest, { repo: source.repo, ref: source.ref, ...(installed.source.marketplace !== undefined ? { marketplace: installed.source.marketplace } : {}) }, source.sha, installed.installedAt),
+      enabled: installed.enabled,
+      ...(installed.runtime === 'trusted' && manifest.runtime === 'trusted' ? { restartRequired: true } : {}),
+    }
+    const replaced = await replaceInstalled(id, source.tmp, replacement)
+    if (replaced !== null) return replaced
+    await invalidateRuntime(id)
+    if (installed.contributes === undefined && replacement.contributes === undefined) return { ok: true, plugin: replacement }
+    const applied = await syncContributions({ ...replacement, contributedPaths: installed.contributedPaths ?? [] }, contributionOptions())
+    if (!applied.ok) return { ok: false, status: 409, error: applied.error, step: 'contributions' }
+    const record: InstalledPlugin = { ...replacement, contributedPaths: applied.written }
+    await deps.saveInstalled(record)
+    await deps.syncEngineAssets()
+    return { ok: true, plugin: record }
+  }
+
+  async function updateFrom<R>(
+    id: string,
+    body: UpdateInput,
+    around: (manifest: PluginManifest, installed: InstalledPlugin, run: () => Promise<PluginOk | InstallFailure>) => Promise<R>,
+  ): Promise<R | UpdateFailure> {
     const badCommit = checkedCommit(body.commit)
     if (badCommit !== null) return badCommit
     try {
@@ -426,25 +480,7 @@ export function createInstaller(overrides: Partial<InstallerDeps> = {}) {
           if (added.length > 0 && body.accept !== true) return { ok: false, status: 409, needsConsent: true, added }
           const sha = await headSha(tmp)
           if (sha !== body.commit) return { ok: false, status: 409, error: 'The plugin changed since you reviewed it; preview again' }
-          const prepared = await prepareBuild(tmp, manifest.manifest)
-          if (prepared !== null) return prepared
-          const badFlow = await contributionFailure(tmp, manifest.manifest)
-          if (badFlow !== null) return badFlow
-          const replacement: InstalledPlugin = {
-            ...recordOf(manifest.manifest, { repo, ref, ...(installed.source.marketplace !== undefined ? { marketplace: installed.source.marketplace } : {}) }, sha, installed.installedAt),
-            enabled: installed.enabled,
-            ...(installed.runtime === 'trusted' && manifest.manifest.runtime === 'trusted' ? { restartRequired: true } : {}),
-          }
-          const replaced = await replaceInstalled(id, tmp, replacement)
-          if (replaced !== null) return replaced
-          await invalidateRuntime(id)
-          if (installed.contributes === undefined && replacement.contributes === undefined) return { ok: true, plugin: replacement }
-          const applied = await syncContributions({ ...replacement, contributedPaths: installed.contributedPaths ?? [] }, contributionOptions())
-          if (!applied.ok) return { ok: false, status: 409, error: applied.error, step: 'contributions' }
-          const record: InstalledPlugin = { ...replacement, contributedPaths: applied.written }
-          await deps.saveInstalled(record)
-          await deps.syncEngineAssets()
-          return { ok: true, plugin: record }
+          return await around(manifest.manifest, installed, () => applyUpdate(installed, manifest.manifest, { repo, ref, tmp, sha }))
         } finally {
           await rm(tmp, { recursive: true, force: true })
         }
@@ -453,6 +489,15 @@ export function createInstaller(overrides: Partial<InstallerDeps> = {}) {
       if (error instanceof PluginBusyError) return { ok: false, status: 409, error: error.message }
       throw error
     }
+  }
+
+  const updateCore = (id: string, body: UpdateInput) => updateFrom(id, body, (_manifest, _installed, run) => run())
+
+  async function update(id: string, body: UpdateInput): Promise<UpdateResult> {
+    return updateFrom(id, body, async (manifest, installed, run): Promise<UpdateResult> => {
+      const steps = await resolveRequirements(manifest, installed.source.marketplace, resolverPorts)
+      return withRequirements({ steps, given: body.requirements, trust: body.trust === true, actions: requirementActions, mainName: manifest.name, verb: 'updated' }, run)
+    })
   }
 
   async function uninstall(id: string, options: { keepData?: boolean } = {}): Promise<UninstallResult> {
