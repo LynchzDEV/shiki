@@ -108,6 +108,8 @@ function reviewsAhead(graph: WorkflowRevision, from: string[]): Set<string> {
 }
 
 const GATING_KINDS: ReadonlySet<WorkflowNode['kind']> = new Set(['review', 'verify-plan'])
+const RECHECKED_KINDS: ReadonlySet<WorkflowNode['kind']> = new Set(['review', 'verify-plan', 'task'])
+const RECHECK_NOTE = 'This is a re-check after your earlier fail. Fail again only for findings from your earlier check that are still not fixed, or for new defects that block shipping: wrong behaviour, data loss, broken callers, security. Report every other observation as a non-blocking note in evidence and pass.'
 
 function commandsChanged(before: Pick<WorkflowRevision, 'nodes'>, after: Pick<WorkflowRevision, 'nodes'>): boolean {
   const commands = (node?: WorkflowNode) => JSON.stringify([node?.checks ?? [], node?.setup ?? [], node?.mcpServers ?? []])
@@ -497,7 +499,9 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
     const restored = await restorePath(run, token)
     if (restored) return block(run, restored)
     const repoRules = node.kind === 'plan' ? await shapeRulesFor(run.cwd) : ''
-    const prompt = composeWorkflowPrompt(policy, run.workflow, node, run.request, inputs, run.skills[node.id], shapeNotes(run.workflow, node, inputs.map(input => input.output), repoRules))
+    const lastOwn = related.filter(attempt => attempt.nodeId === node.id && attempt.status === 'settled' && attempt.result !== null).at(-1)
+    const recheck: Record<string, string> = RECHECKED_KINDS.has(node.kind) && lastOwn?.result?.outcome === 'fail' ? { recheck: RECHECK_NOTE } : {}
+    const prompt = composeWorkflowPrompt(policy, run.workflow, node, run.request, inputs, run.skills[node.id], { ...shapeNotes(run.workflow, node, inputs.map(input => input.output), repoRules), ...recheck })
     const session = agent.inSession ? { inSession: true as const, sessionNotifiedAt: null, workspaceSnapshot: await workspaceSnapshot(token.workspace) } : {}
     const attempt: WorkflowAttempt = { nodeId: node.id, number: run.attempts.length, jobId: null, status: agent.inSession ? 'running' : 'starting', prompt, startedAt: Date.now(), endedAt: null, result: null, checks: [], output: '', workspace: null, tokenId: token.id, pathId: token.pathId, from: token.from, ...session }
     if (prompt.length > 500000) return block(run, 'Combined task inputs exceed 500 KB; use artifact paths for large outputs')

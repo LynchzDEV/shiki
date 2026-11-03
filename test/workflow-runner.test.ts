@@ -214,6 +214,20 @@ test('one sender still hits its limit', async () => {
   expect(done.error).toContain('reached its 3-visit limit from')
 })
 
+test('a re-check after a fail carries the convergence note', async () => {
+  let checks = 0
+  const store = await build(({ prompt }) => ({ cmd: '/bin/echo', args: [report(prompt.includes('Verify the upstream plan') && checks++ === 0 ? 'fail' : 'pass')], env: {} }))
+  await store.save({ ...withoutSession(), id: 'rechecked' })
+  const run = await runner.start({ workflowId: 'rechecked', cwd: repo, request: 'Build it', label: 'recheck' })
+  const done = await finished(run.id)
+  expect(done.status).toBe('done')
+  const prompts = done.attempts.filter(attempt => attempt.nodeId === 'verify-plan').map(attempt => attempt.prompt)
+  expect(prompts).toHaveLength(2)
+  expect(prompts[0]).not.toContain('This is a re-check after your earlier fail')
+  expect(prompts[1]).toContain('This is a re-check after your earlier fail')
+  expect(done.attempts.find(attempt => attempt.nodeId === 'review')!.prompt).not.toContain('This is a re-check')
+})
+
 test('retry gives every step a fresh budget', async () => {
   const store = await build(() => ({ cmd: '/bin/echo', args: [report('fail')], env: {} }))
   await store.save({ ...classicWorkflow(), id: 'loop', entry: 'test', nodes: [{ id: 'test', title: 'Test', instructions: 'Check', maxVisits: 2 }], edges: [{ source: 'test', target: 'test', outcome: 'fail' }] })
