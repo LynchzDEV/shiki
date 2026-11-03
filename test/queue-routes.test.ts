@@ -352,6 +352,23 @@ test('queue items sent to the client carry a cleaned pick summary', async () => 
   expect(items.get(parked.id)!.pick!.summary).toBe(dirty)
 })
 
+test('POST pick accepts answers and refuses too many, a long id or an empty answer', async () => {
+  const items = store()
+  let seen: unknown
+  const app = new Elysia().use(queueRoutes(items, engine(items, { pick: async (id, choice) => { seen = choice.answers; return items.update(id, { state: 'queued' }) } })))
+  const parked = await items.add(newItem, 'end')
+  await items.update(parked.id, { state: 'waiting-pick' })
+  const url = `/api/queue/${parked.id}/pick`
+  const entry = (n: number) => ({ id: `#${n}`, label: 'Label', answer: 'default' })
+  expect((await post(app, url, { option: 'B', answers: [{ id: '#7', label: '', answer: 'x' }] })).status).toBe(200)
+  expect(seen).toEqual([{ id: '#7', label: '', answer: 'x' }])
+  expect((await post(app, url, { option: 'B', answers: Array.from({ length: 21 }, (_, n) => entry(n)) })).status).toBe(400)
+  expect((await post(app, url, { option: 'B', answers: [{ ...entry(1), id: 'x'.repeat(17) }] })).status).toBe(400)
+  expect((await post(app, url, { option: 'B', answers: [{ ...entry(1), answer: '' }] })).status).toBe(400)
+  expect((await post(app, url, { option: 'B', answers: [{ ...entry(1), answer: 'x'.repeat(1001) }] })).status).toBe(400)
+  expect((await post(app, url, { option: 'B', answers: [{ ...entry(1), label: 'x'.repeat(201) }] })).status).toBe(400)
+})
+
 describe('mockup files', () => {
   let tree: string
   let outside: string

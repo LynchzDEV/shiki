@@ -25,7 +25,8 @@ const addSchema = z.object({
   flowId: z.string().min(1).max(200).nullable().optional(),
   position: z.enum(['end', 'next']).optional(),
 })
-const pickSchema = z.object({ option: z.string().min(1).max(16), tester: z.string().max(200).optional(), note: z.string().max(4000).optional() })
+const pickAnswerSchema = z.object({ id: z.string().min(1).max(16), label: z.string().max(200), answer: z.string().min(1).max(1000) })
+const pickSchema = z.object({ option: z.string().min(1).max(16), tester: z.string().max(200).optional(), note: z.string().max(4000).optional(), answers: z.array(pickAnswerSchema).max(20).optional() })
 const confirmSchema = z.object({ confirm: z.literal(true) })
 const moveSchema = z.object({ to: z.number().int().min(0) })
 const NO_ITEM = 'No such queue item'
@@ -124,7 +125,7 @@ export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: 
     })
     .post('/api/queue/:id/pick', ({ params, body, set }) => {
       const parsed = pickSchema.safeParse(body)
-      if (!parsed.success) { set.status = 400; return { error: 'option is required; tester is at most 200 characters and note at most 4000' } }
+      if (!parsed.success) { set.status = 400; return { error: 'option is required; tester is at most 200 characters and note at most 4000; each answer needs an id, a label and an answer, at most 20' } }
       return refusing(set, async () => ({ item: cleaned(await engine.pick(params.id, parsed.data)) }))
     })
     .get('/queue/:id/files/*', ({ params }) => mockupResponse(store.get(params.id)?.worktree ?? null, params['*']))
