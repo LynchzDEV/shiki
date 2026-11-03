@@ -3,7 +3,7 @@ import { chmod, lstat, mkdir, open, realpath, unlink, type FileHandle } from 'no
 import { basename, join, resolve, sep } from 'node:path'
 
 import { ContextTooLarge, excludeFromGit, MAX_CONTEXT_BYTES, safeContextName, SESSION_CONTEXT_DIR, stamp, type TaskContext } from './plugins/context-files'
-import type { SourceReply } from './queue-source'
+import type { SourceImage, SourceReply } from './queue-source'
 
 const MAX_IMAGE_BYTES = 3_932_160
 
@@ -55,6 +55,31 @@ export async function writePrivate(to: string, bytes: Buffer): Promise<void> {
   }
 }
 
+async function copyInside(realBase: string, image: SourceImage, to: string): Promise<void> {
+  await writePrivate(to, await readInsideFile(realBase, resolve(realBase, image.path)))
+}
+
+export type CardImageOutcome = { name: string; copied: string } | { name: string; failed: string }
+
+export async function importCardImages(root: string, images: SourceImage[], folder: string): Promise<CardImageOutcome[]> {
+  if (images.length === 0) return []
+  const realBase = await realpath(root).catch((error: unknown) => error as Error)
+  await mkdir(folder, { recursive: true, mode: 0o700 })
+  await refuseLinkedFolder(folder)
+  const outcomes: CardImageOutcome[] = []
+  for (const [index, image] of images.entries()) {
+    const to = join(folder, `${index}-${basename(image.name)}`.replace(/[^A-Za-z0-9._-]/g, '-'))
+    try {
+      if (realBase instanceof Error) throw realBase
+      await copyInside(realBase, image, to)
+      outcomes.push({ name: image.name, copied: to })
+    } catch (error) {
+      outcomes.push({ name: image.name, failed: error instanceof Error ? error.message : String(error) })
+    }
+  }
+  return outcomes
+}
+
 export async function importImages(root: string, replies: SourceReply[], folder: string): Promise<string[]> {
   const realBase = realpath(root)
   realBase.catch(() => undefined)
@@ -65,7 +90,7 @@ export async function importImages(root: string, replies: SourceReply[], folder:
       const to = join(folder, `${reply.id}-${index}-${basename(image.name)}`.replace(/[^A-Za-z0-9._-]/g, '-'))
       try {
         const base = await realBase
-        await writePrivate(to, await readInsideFile(base, resolve(base, image.path)))
+        await copyInside(base, image, to)
         copied.push(to)
       } catch (error) {
         console.error('queue image skipped', error)

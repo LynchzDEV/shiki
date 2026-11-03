@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
+import { writeQueueContext } from '../server/queue-files'
 import { createQueueEngine, QueueRefusal, type QueueEngineDeps, type QueueRunner } from '../server/queue-engine'
 import type { RunView } from '../server/queue-prompts'
 import type { QueueSource } from '../server/queue-source'
@@ -422,4 +423,44 @@ test('the engine\'s own refusals carry 404 for an unknown item and 409 for its s
   const studio = await h.engine.requeue(item.id).then(() => null, (error: unknown) => error).finally(() => muted.mockRestore())
   expect(studio).toBeInstanceOf(QueueRefusal)
   expect(studio).toMatchObject({ status: 409, message: 'It is running in Studio now' })
+})
+
+async function cardWith(images: Array<{ name: string; path: string }>, files: Record<string, string>) {
+  const pluginFiles = join(dir, 'plugin-data', 'clickup-board', 'files')
+  for (const [path, bytes] of Object.entries(files)) {
+    await mkdir(dirname(join(pluginFiles, path)), { recursive: true })
+    await writeFile(join(pluginFiles, path), bytes)
+  }
+  const h = harness({
+    prepareWorktree: async (repo, label) => { const worktree = join(dir, 'wt', repo.replaceAll('/', '_'), label); await mkdir(worktree, { recursive: true }); return { worktree } },
+    writeContext: (pluginId, context, cwd) => writeQueueContext(pluginId, context, cwd),
+  }, { item: async ({ id }) => ({ title: `Task ${id}`, url: 'u', contextMarkdown: '# card', images }) })
+  const item = await h.engine.add(add)
+  const stored = h.store.get(item.id)!
+  return { stored, context: await readFile(stored.contextPath!, 'utf8'), folder: join(stored.worktree!, '.shikidan', 'queue', 'clickup-board', 'card-images') }
+}
+
+test('downloaded card images are copied into the workspace and listed with absolute paths', async () => {
+  const { context, folder } = await cardWith(
+    [{ name: 'one.png', path: 'card/one.png' }, { name: 'two.png', path: 'card/two.png' }],
+    { 'card/one.png': 'bytes-one', 'card/two.png': 'bytes-two' },
+  )
+  expect(context).toBe(`# card\n\n## Downloaded images\n\n- one.png: ${join(folder, '0-one.png')}\n- two.png: ${join(folder, '1-two.png')}\n`)
+  expect(await readFile(join(folder, '0-one.png'), 'utf8')).toBe('bytes-one')
+  expect(await readFile(join(folder, '1-two.png'), 'utf8')).toBe('bytes-two')
+})
+
+test('a card image outside the plugin files folder is listed as not copied and the item still builds', async () => {
+  await writeFile(join(dir, 'secret'), 'do not copy')
+  const { stored, context, folder } = await cardWith([{ name: 'key', path: '../../../secret' }, { name: 'ok.png', path: 'ok.png' }], { 'ok.png': 'fine' })
+  expect(stored.state).toBe('building')
+  expect(context).toContain('- key: not copied (outside the plugin folder:')
+  expect(context).toContain(`- ok.png: ${join(folder, '1-ok.png')}`)
+  expect(await readdir(folder)).toEqual(['1-ok.png'])
+})
+
+test('a card without images keeps its context unchanged and makes no image folder', async () => {
+  const { context, folder } = await cardWith([], {})
+  expect(context).toBe('# card')
+  await expect(readdir(folder)).rejects.toThrow()
 })

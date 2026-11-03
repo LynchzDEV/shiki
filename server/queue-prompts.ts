@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 
 import type { QueueItem, QueuePick } from './queue-store'
+import type { CardImageOutcome } from './queue-files'
 import type { SourceReply } from './queue-source'
 import type { WorkflowRun } from './workflow-runner'
 
@@ -91,6 +92,12 @@ export function answersMarkdown(questions: string[], replies: SourceReply[], ima
   const answered = replies.map(reply => `### ${reply.author}\n\n${reply.text}`).join('\n\n')
   const pictures = images.length > 0 ? `\n## Images\n\n${images.map(path => `- ${path}`).join('\n')}\n` : ''
   return `# Answers from the requester\n\n## Questions asked\n\n${asked}\n\n## Replies\n\n${answered}\n${pictures}`
+}
+
+export function cardImagesMarkdown(outcomes: CardImageOutcome[]): string {
+  if (outcomes.length === 0) return ''
+  const lines = outcomes.map(outcome => ('copied' in outcome ? `- ${outcome.name}: ${outcome.copied}` : `- ${outcome.name}: not copied (${outcome.failed})`))
+  return `\n\n## Downloaded images\n\n${lines.join('\n')}\n`
 }
 
 const OPTION_ID = /^[A-Z][A-Za-z0-9]{0,15}$/

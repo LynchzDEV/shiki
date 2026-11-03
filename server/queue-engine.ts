@@ -1,10 +1,10 @@
-import { basename } from 'node:path'
+import { basename, join } from 'node:path'
 
 import type { TaskContext } from './plugins/context-files'
 import { backUpAnswers, dropAnswerBackups, restoreAnswers } from './queue-answers'
-import { blockedSummary, pickOf, questionsOf, repoRequestsOf, runRequest, SETTLED, type RunView } from './queue-prompts'
+import { blockedSummary, cardImagesMarkdown, pickOf, questionsOf, repoRequestsOf, runRequest, SETTLED, type RunView } from './queue-prompts'
 import { adoptionProblem, grantRepos, movedRealRepos, movedText, realRepoStates, reposToOffer, SINGLE_REPO_ASK } from './queue-repo-asks'
-import { refuseLinkedQueueFolders } from './queue-files'
+import { importCardImages, queueFolder, refuseLinkedQueueFolders } from './queue-files'
 import { createLand, PICK_FILE, type Land } from './queue-land'
 import { buildReport } from './queue-report'
 import { QueueRefusal } from './queue-refusal'
@@ -188,7 +188,8 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
   async function contextIn(item: QueueItem, worktree: string): Promise<string> {
     if (item.contextPath !== null && await fileExists(item.contextPath)) return item.contextPath
     const detail = await deps.source(item.source).item({ id: item.externalId })
-    return deps.writeContext(item.source, { name: `item-${item.externalId}`, markdown: detail.contextMarkdown }, worktree)
+    const outcomes = await importCardImages(deps.pluginFiles(item.source), detail.images ?? [], join(queueFolder(worktree, item.source), 'card-images'))
+    return deps.writeContext(item.source, { name: `item-${item.externalId}`, markdown: detail.contextMarkdown + cardImagesMarkdown(outcomes) }, worktree)
   }
 
   async function answersOf(item: QueueItem): Promise<string[]> {
