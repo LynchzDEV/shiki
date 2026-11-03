@@ -66,6 +66,7 @@ export type WorkflowRun = {
   tokens: WorkflowToken[]; sections: OpenSection[]; keptBranches: string[];
   dismissedAt?: number | null
   unavailable?: { engine: string; reason: string; until: number | null }
+  budgetFrom?: number
 }
 
 export function lineage(a: string, b: string): boolean {
@@ -457,15 +458,24 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
     run.unavailable = { engine, reason, until }
     await block(run, `${engine} unavailable: ${reason}`)
   }
-  function visitLimit(run: WorkflowRun, node: WorkflowNode, counts: (attempt: WorkflowAttempt) => boolean = () => true): string | null {
-    if (run.attempts.filter(attempt => attempt.nodeId === node.id && counts(attempt)).length >= node.maxVisits) return `${node.title} reached its ${node.maxVisits}-visit limit`
+  function visitLimit(run: WorkflowRun, node: WorkflowNode, counts: (attempt: WorkflowAttempt) => boolean, sender = ''): string | null {
+    const visits = run.attempts.filter(attempt => attempt.nodeId === node.id && attempt.number >= (run.budgetFrom ?? 0) && counts(attempt)).length
+    if (visits >= node.maxVisits) return `${node.title} reached its ${node.maxVisits}-visit limit${sender}`
     return run.attempts.length >= 256 ? 'Run reached its 256-node execution limit' : null
+  }
+  function sentBy(run: WorkflowRun, token: WorkflowToken): (attempt: WorkflowAttempt) => boolean {
+    const senders = token.from.map(number => run.attempts[number]?.nodeId)
+    return attempt => !attempt.interrupted && (senders.length === 0 ? attempt.from.length === 0 : attempt.from.some(number => senders.includes(run.attempts[number]?.nodeId)))
+  }
+  function senderTitle(run: WorkflowRun, token: WorkflowToken): string {
+    const id = run.attempts[token.from[0] ?? -1]?.nodeId
+    return id === undefined ? '' : ` from ${run.workflow.nodes.find(node => node.id === id)?.title ?? id}`
   }
   async function dispatch(run: WorkflowRun, token: WorkflowToken): Promise<void> {
     if (stopping.has(run.id) || run.status !== 'running' || changePending(run)) return
     const node = run.workflow.nodes.find(node => node.id === token.nodeId)!
     if (node.kind === 'join') return block(run, `${node.title} has no open paths to join`)
-    const limit = visitLimit(run, node, attempt => !attempt.interrupted)
+    const limit = visitLimit(run, node, sentBy(run, token), senderTitle(run, token))
     if (limit) return block(run, limit)
     const related = run.attempts.filter(attempt => lineage(attempt.pathId, token.pathId))
     const lastPlan = related.findLastIndex(attempt => kindOf(run, attempt) === 'plan')
@@ -1129,6 +1139,7 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
       await reresolve(run)
       delete run.unavailable
       interrupt(run)
+      run.budgetFrom = run.attempts.length
       if (!deps.manager.claimWorkspace(run.cwd, run.id)) throw new Error('Workspace already has running work')
       const taken = claimPaths(run)
       if (taken) { deps.manager.releaseWorkspace(run.cwd, run.id); throw new Error(`Another run owns ${taken}`) }

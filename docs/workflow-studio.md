@@ -27,7 +27,7 @@ The designer uses existing job logs and cancellation. A generation can be stoppe
 
 ## Tasks and routing
 
-Use **Add step** to search editable presets or select **Custom task**. Every step has free-form instructions and an AI assignment. Select a step and choose **Add next step** to insert a task while preserving the following step. Drag to arrange the canvas or connect the handles. **Connections & more options** provides labeled outcome routes, model selection, attempt limits, and task purpose. One outcome follows one path. Loops stop at the node's maximum visit count, with an overall limit of 256 node executions.
+Use **Add step** to search editable presets or select **Custom task**. Every step has free-form instructions and an AI assignment. Select a step and choose **Add next step** to insert a task while preserving the following step. Drag to arrange the canvas or connect the handles. **Connections & more options** provides labeled outcome routes, model selection, attempt limits, and task purpose. One outcome follows one path. Loops stop at the node's maximum visit count, counted separately for each step that sends work to it, with an overall limit of 256 node executions. Retrying a run gives every step a fresh count.
 
 **Who should do it?** lists the roles first, each as `<Role> · <its AI>` from **Manage AIs → Roles**, then **In Session**, then **A specific AI** with one entry per connected AI. A step on a role uses whatever AI that role has in Settings, and the fallback AI when that AI cannot run. Picking a specific AI pins the step to it and keeps the step's role. A step whose role no longer exists shows **Missing role · `<name>`** until you pick another, so nothing changes silently.
 

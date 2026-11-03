@@ -353,8 +353,8 @@ way under `policies/`. The one built-in `default` workflow is plan → verify-pl
   **The chat** → "Naming a Studio workflow"), snapshots the node's skill files and the workspace's git
   state before each attempt, spawns a job per node (its own worktree, standard `createJob` path),
   waits for the job's final message to end in an `SKD_RESULT {"outcome",...}` line, runs the node's
-  `checks`, and follows the matching outcome edge — retrying the same node up to `maxVisits` times on
-  `fail`, and blocking the run outright if a plan is unverified before an `implement` node or a review
+  `checks`, and follows the matching outcome edge — visiting a node up to `maxVisits` times per sender
+  (each step that routes to it has its own budget; a retry starts every budget afresh via `budgetFrom`), and blocking the run outright if a plan is unverified before an `implement` node or a review
   would share a model family with the implementation it's reviewing and no other family can take it. `POST /api/studio/runs` starts
   one from `{terminalId?, workflowId?, revision?, cwd, request, label, chat?, chatTurn?, engine?,
   model?}`; `GET /api/studio/runs` lists summaries, `GET .../:id` the full run (agents, attempts,

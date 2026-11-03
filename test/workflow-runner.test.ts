@@ -172,8 +172,57 @@ test('failure routing is bounded and does not turn an endless loop into success'
   const run = await runner.start({ workflowId: graph.id, cwd: repo, request: 'Test', label: 'loop' })
   const done = await finished(run.id)
   expect(done.status).toBe('blocked')
-  expect(done.attempts).toHaveLength(2)
-  expect(done.error).toContain('visit limit')
+  expect(done.attempts).toHaveLength(3)
+  expect(done.error).toBe('Test reached its 2-visit limit from Test')
+})
+
+const scripted = (script: Record<string, string[]>): EngineResolver => ({ prompt }) => {
+  const step = /STEP-(\w+)/.exec(prompt)?.[1] ?? ''
+  return { cmd: '/bin/echo', args: [report(script[step]?.shift() ?? 'pass')], env: {} }
+}
+const checkedGraph = (): Workflow => {
+  const graph = withoutSession()
+  const step = (id: string, kind: string, role: string, maxVisits = 3) => ({ id, title: id, kind, agent: { role }, instructions: `STEP-${id}`, maxVisits, position: { x: 0, y: 0 } })
+  return { ...graph, id: 'checked', nodes: [graph.nodes[0]!, graph.nodes[1]!, step('execute', 'implement', 'execute'), step('accept', 'task', 'execute', 5), step('ui', 'task', 'execute'), step('review', 'review', 'review')] as Workflow['nodes'], edges: [
+    { source: 'plan', target: 'verify-plan', outcome: 'pass' },
+    { source: 'verify-plan', target: 'execute', outcome: 'pass' },
+    { source: 'execute', target: 'accept', outcome: 'pass' },
+    { source: 'accept', target: 'execute', outcome: 'fail' },
+    { source: 'accept', target: 'ui', outcome: 'pass' },
+    { source: 'ui', target: 'execute', outcome: 'fail' },
+    { source: 'ui', target: 'review', outcome: 'pass' },
+    { source: 'review', target: 'execute', outcome: 'fail' },
+  ] }
+}
+
+test('each sender has its own visit budget', async () => {
+  const store = await build(scripted({ accept: ['fail', 'fail'], ui: ['fail'], review: ['fail'] }))
+  await store.save(checkedGraph())
+  const run = await runner.start({ workflowId: 'checked', cwd: repo, request: 'Build it', label: 'budgets' })
+  const done = await finished(run.id)
+  expect(done.error).toBeNull()
+  expect(done.status).toBe('done')
+  expect(done.attempts.filter(attempt => attempt.nodeId === 'execute')).toHaveLength(5)
+})
+
+test('one sender still hits its limit', async () => {
+  const store = await build(({ prompt }) => ({ cmd: '/bin/echo', args: [report(prompt.includes('Independently review') ? 'fail' : 'pass')], env: {} }))
+  await store.save({ ...withoutSession(), id: 'reviewed' })
+  const run = await runner.start({ workflowId: 'reviewed', cwd: repo, request: 'Build it', label: 'one sender' })
+  const done = await finished(run.id)
+  expect(done.status).toBe('blocked')
+  expect(done.error).toContain('reached its 3-visit limit from')
+})
+
+test('retry gives every step a fresh budget', async () => {
+  const store = await build(() => ({ cmd: '/bin/echo', args: [report('fail')], env: {} }))
+  await store.save({ ...classicWorkflow(), id: 'loop', entry: 'test', nodes: [{ id: 'test', title: 'Test', instructions: 'Check', maxVisits: 2 }], edges: [{ source: 'test', target: 'test', outcome: 'fail' }] })
+  const run = await runner.start({ workflowId: 'loop', cwd: repo, request: 'Test', label: 'loop' })
+  expect((await finished(run.id)).attempts).toHaveLength(3)
+  await runner.retry(run.id)
+  const retried = await finished(run.id)
+  expect(retried.status).toBe('blocked')
+  expect(retried.attempts).toHaveLength(5)
 })
 
 test('an undefined role resolves to the fallback; with fallback null the run start throws naming the role', async () => {
@@ -565,7 +614,7 @@ test('a chat run loops past the chat retry cap up to its own visit limit', async
   const root = await chatRoot()
   const run = await runner.start({ workflowId: 'chat-loop', cwd: repo, request: 'Test', label: 'loop', chat: root.id })
   const done = await finished(run.id)
-  expect(done.attempts).toHaveLength(4)
+  expect(done.attempts).toHaveLength(5)
   expect(done.error).toContain('visit limit')
 })
 
