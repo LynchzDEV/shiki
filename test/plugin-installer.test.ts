@@ -549,6 +549,20 @@ describe('settings', () => {
     }
   })
 
+  test('a toggle takes only true or false and shows its value', async () => {
+    const source = await repo('settings', isolatedManifest({ settings: [{ key: 'autoPick', label: 'Auto-pick', type: 'toggle' }] }), { 'src/screen.ts': TRIVIAL_SCREEN })
+    await installOk(fileUrl(source), await fixtureSha(source))
+    const refused = await setSetting('fixture-plugin', 'autoPick', 'yes')
+    expect(refused).toEqual({ ok: false, status: 400, error: 'Auto-pick takes true or false' })
+    expect(await getSetting('fixture-plugin', 'autoPick')).toBeNull()
+    expect((await setSetting('fixture-plugin', 'autoPick', 'true')).ok).toBe(true)
+    expect(await getSetting('fixture-plugin', 'autoPick')).toBe('true')
+    const view = await setSetting('fixture-plugin', 'autoPick', 'false')
+    expect(view.ok && view.value.values).toEqual({ autoPick: 'false' })
+    expect((await setSetting('fixture-plugin', 'autoPick', null)).ok).toBe(true)
+    expect(await getSetting('fixture-plugin', 'autoPick')).toBeNull()
+  })
+
   test('setting an undeclared key is refused and null deletes', async () => {
     const source = await repo('settings', isolatedManifest(), { 'src/screen.ts': TRIVIAL_SCREEN })
     await installOk(fileUrl(source), await fixtureSha(source))

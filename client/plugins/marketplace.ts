@@ -1,5 +1,5 @@
 import { errorText, getJson, postJson } from '../shared'
-import type { CatalogEntry, CatalogPlugin, InstalledPlugin, PluginPermissions, RequirementStep } from './types'
+import type { CatalogEntry, CatalogPlugin, InstalledPlugin, PluginPermissions, RequirementStep, SettingField } from './types'
 
 type Listing = { plugin: CatalogPlugin; marketplace?: string }
 
@@ -578,6 +578,30 @@ function listingDetail(listing: Listing): HTMLElement {
 
 const settingsCache = new Map<string, { values: Record<string, string>; configured: Record<string, boolean> }>()
 
+async function putSetting(plugin: InstalledPlugin, field: SettingField, value: string): Promise<string | null> {
+  const response = await fetch(`/api/plugins/${encodeURIComponent(plugin.id)}/settings`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: field.key, value }) })
+  if (response.ok) return null
+  const payload = await response.json().catch(() => ({})) as { error?: string }
+  return payload.error ?? `Could not save ${field.label}`
+}
+
+function rememberSetting(plugin: InstalledPlugin, key: string, value: string): void {
+  const cached = settingsCache.get(plugin.id)
+  settingsCache.set(plugin.id, { values: { ...cached?.values, [key]: value }, configured: { ...cached?.configured, [key]: value !== '' } })
+}
+
+async function saveToggle(plugin: InstalledPlugin, field: SettingField, input: HTMLInputElement, scope: HTMLElement): Promise<void> {
+  const value = String(input.checked)
+  const failure = await putSetting(plugin, field, value)
+  if (failure !== null) {
+    input.checked = !input.checked
+    failNote(failure, scope)
+    return
+  }
+  rememberSetting(plugin, field.key, value)
+  toast('Settings saved')
+}
+
 function settingsSection(plugin: InstalledPlugin): HTMLElement {
   const wrap = document.createElement('div')
   wrap.className = 'connection-section field-stack'
@@ -588,7 +612,16 @@ function settingsSection(plugin: InstalledPlugin): HTMLElement {
     return wrap
   }
   const inputs = new Map<string, HTMLInputElement>()
+  const switches = new Map<string, HTMLInputElement>()
   for (const field of fields) {
+    const help = field.help === undefined ? [] : [Object.assign(document.createElement('small'), { textContent: field.help })]
+    if (field.type === 'toggle') {
+      const { label, input } = trustSwitch(field.label)
+      input.onchange = () => { void saveToggle(plugin, field, input, wrap) }
+      switches.set(field.key, input)
+      wrap.append(label, ...help)
+      continue
+    }
     const label = document.createElement('label')
     label.className = 'mk-field'
     label.append(document.createTextNode(field.label))
@@ -596,11 +629,11 @@ function settingsSection(plugin: InstalledPlugin): HTMLElement {
     input.type = field.type === 'secret' ? 'password' : 'text'
     if (field.type === 'secret') input.autocomplete = 'off'
     inputs.set(field.key, input)
-    label.append(input)
-    if (field.help !== undefined) label.append(Object.assign(document.createElement('small'), { textContent: field.help }))
+    label.append(input, ...help)
     wrap.append(label)
   }
   const apply = (view: { values: Record<string, string>; configured: Record<string, boolean> }): void => {
+    for (const [key, input] of switches) input.checked = view.values[key] === 'true'
     for (const field of fields) {
       const input = inputs.get(field.key)
       if (input === undefined) continue
@@ -618,24 +651,20 @@ function settingsSection(plugin: InstalledPlugin): HTMLElement {
     settingsCache.set(plugin.id, entry)
     apply(entry)
   })()
+  if (inputs.size === 0) return wrap
   wrap.append(button('Save settings', 'connection-button', element => {
     void runBusy(element, 'Saving…', async () => {
-      const view = { values: { ...(settingsCache.get(plugin.id)?.values ?? {}) }, configured: { ...(settingsCache.get(plugin.id)?.configured ?? {}) } }
       for (const field of fields) {
-        const input = inputs.get(field.key)!
+        const input = inputs.get(field.key)
+        if (input === undefined) continue
         if (field.type === 'secret' && input.value === '') continue
         if (input.value === (input.dataset.stored ?? '')) continue
-        const response = await fetch(`/api/plugins/${encodeURIComponent(plugin.id)}/settings`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: field.key, value: input.value }) })
-        if (!response.ok) {
-          const payload = await response.json().catch(() => ({})) as { error?: string }
-          return payload.error ?? `Could not save ${field.label}`
-        }
-        view.values[field.key] = input.value
-        view.configured[field.key] = input.value !== ''
+        const failure = await putSetting(plugin, field, input.value)
+        if (failure !== null) return failure
+        rememberSetting(plugin, field.key, input.value)
         input.dataset.stored = input.value
         if (field.type === 'secret') input.value = ''
       }
-      settingsCache.set(plugin.id, view)
       toast('Settings saved')
       return null
     }, wrap)

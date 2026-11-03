@@ -70,6 +70,7 @@ export async function setSetting(id: string, key: string, value: string | null):
   if (installed === null) return { ok: false, status: 404, error: 'That plugin is not installed' }
   const declared = (installed.settingsFields ?? []).find(field => field.key === key)
   if (declared === undefined) return { ok: false, status: 400, error: `Unknown setting: ${key}` }
+  if (declared.type === 'toggle' && value !== null && value !== 'true' && value !== 'false') return { ok: false, status: 400, error: `${declared.label} takes true or false` }
   try {
     return await withPluginLock(id, async () => {
       const current = await readSettings(id)

@@ -78,6 +78,12 @@ describe('parseManifest', () => {
     expect(parseManifest({ ...CLICKUP_MANIFEST, runtime: 'trusted', permissions: { network: ['*.com'] } }).ok).toBe(false)
   })
 
+  test('accepts an on/off toggle setting and refuses an unknown setting type', () => {
+    const settings = [...CLICKUP_MANIFEST.settings!, { key: 'autoPick', label: 'Auto-pick', type: 'toggle' as const }]
+    expect(parseManifest({ ...CLICKUP_MANIFEST, settings })).toEqual({ ok: true, manifest: { ...CLICKUP_MANIFEST, settings } })
+    expect(parseManifest({ ...CLICKUP_MANIFEST, settings: [{ key: 'x', label: 'X', type: 'switch' }] }).ok).toBe(false)
+  })
+
   test('refuses a settings key declared twice', () => {
     const result = parseManifest({ ...CLICKUP_MANIFEST, settings: [
       { key: 'token', label: 'ClickUp token', type: 'secret' },

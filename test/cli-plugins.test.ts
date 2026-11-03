@@ -146,6 +146,13 @@ describe('shiki plugin', () => {
     expect(remove.calls[0]).toEqual({ method: 'DELETE', path: '/api/plugins/clickup-board', body: { keepData: true } })
   })
 
+  test('settings shows a secret only as set and an unset toggle as false', async () => {
+    const fields = [{ key: 'token', label: 'Token', type: 'secret' }, { key: 'autoPick', label: 'Auto-pick', type: 'toggle' }, { key: 'note', label: 'Note', type: 'text' }]
+    const h = harness((call) => (call.path === '/api/plugins/fixstack/settings' ? Response.json({ fields, values: {}, configured: { token: true } }) : undefined))
+    expect(await main(['plugin', 'settings', 'fixstack'], h.deps)).toBe(0)
+    expect(h.out().split('\n').map(line => line.trim().split(/\s+/).at(-1))).toEqual(['VALUE', '(set)', 'false', '-', ''])
+  })
+
   test('a plugin too old for a command says how to update it', async () => {
     const h = harness((call) => (pluginCall(call)?.method === 'board.view' ? Response.json({ error: 'No method board.view' }, { status: 404 }) : clickupReply(call)))
     expect(await main(['clickup', 'board', 'main'], h.deps)).toBe(2)

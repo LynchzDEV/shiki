@@ -1,4 +1,4 @@
-export type SettingFieldType = 'text' | 'secret'
+export type SettingFieldType = 'text' | 'secret' | 'toggle'
 
 export type SettingField = { key: string; label: string; type: SettingFieldType; help?: string }
 

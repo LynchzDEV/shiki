@@ -94,6 +94,7 @@ let terminalCreate: (() => Response) | null = null
 let installReply: { status: number; body: Record<string, unknown> } | null = null
 let removeReplies: Array<{ status: number; body: Record<string, unknown> }> = []
 let toggleReplies: Array<{ status: number; body: Record<string, unknown> }> = []
+let settingsPutReply: { status: number; body: Record<string, unknown> } = { status: 200, body: {} }
 
 const providers = { providers: [{ id: 'claude', name: 'Claude', models: ['opus', 'sonnet'] }, { id: 'glm', name: 'GLM', models: ['glm-5.3'] }] }
 let catalogName = 'KlangTech marketplace'
@@ -128,6 +129,7 @@ const reply = (request: Sent): Response => {
     return updateGate === null ? answer() : updateGate.then(answer)
   }
   if (method === 'POST' && url === '/api/plugins/hello-board/context') return Response.json({ path: '/x/y.md' })
+  if (method === 'PUT' && url === '/api/plugins/flow-plugin/settings') return Response.json(settingsPutReply.body, { status: settingsPutReply.status })
   return Response.json({})
 }
 
@@ -795,4 +797,29 @@ test('the button is plain Install or Update when only a turned-off plugin is inv
   expect(buttonNamed('Install', dialog).disabled).toBe(false)
   buttonNamed('Cancel', dialog).click()
   await flush()
+})
+
+test('a toggle setting is a switch that saves true or false at once and goes back when refused', async () => {
+  installedPlugins = [{ ...helloPlugin, id: 'flow-plugin', name: 'Flow plugin', settingsFields: [{ key: 'autoPick', label: 'Auto-pick the recommended design', type: 'toggle', help: 'Off: a person picks.' }] }]
+  dispatchEvent(new CustomEvent('quiet:show', { detail: 'marketplace' }))
+  await flush(4)
+  ;(byId('marketplace').querySelector('.connection-list [data-plugin="flow-plugin"]') as HTMLElement).click()
+  await flush()
+  const label = [...byId('marketplace').querySelectorAll<HTMLLabelElement>('.switch-label')].find(entry => entry.textContent === 'Auto-pick the recommended design')!
+  const toggle = label.querySelector('input') as HTMLInputElement
+  expect([toggle.type, toggle.getAttribute('role'), toggle.checked]).toEqual(['checkbox', 'switch', false])
+  expect(buttonNamed('Save settings', byId('marketplace'))).toBeUndefined()
+  sent.length = 0
+  toggle.click()
+  await flush(4)
+  expect(sent.filter(entry => entry.method === 'PUT')).toEqual([{ url: '/api/plugins/flow-plugin/settings', method: 'PUT', body: { key: 'autoPick', value: 'true' } }])
+  expect(toggle.checked).toBe(true)
+  settingsPutReply = { status: 400, body: { error: 'Auto-pick the recommended design takes true or false' } }
+  sent.length = 0
+  toggle.click()
+  await flush(4)
+  expect(sent.filter(entry => entry.method === 'PUT').map(entry => entry.body)).toEqual([{ key: 'autoPick', value: 'false' }])
+  expect(toggle.checked).toBe(true)
+  expect(byId('marketplace').querySelector('.mk-fail')!.textContent).toBe('Auto-pick the recommended design takes true or false')
+  settingsPutReply = { status: 200, body: {} }
 })

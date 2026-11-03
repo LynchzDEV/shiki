@@ -73,7 +73,7 @@ Rules, all checked by the host at install time:
 - `server` and `screen` are optional (a plugin may have only one), and must be paths inside the repo.
 - `permissions.network`: plain host names only, no wildcards in v1. Only meaningful for isolated plugins; a trusted plugin has full access anyway.
 - `permissions.sessions`: a subset of `chat` and `terminal`.
-- `settings`: declared fields render in the plugin's Marketplace detail. `secret` fields are masked and never sent back to the screen in full (the screen sees `configured: true`).
+- `settings`: declared fields render in the plugin's Marketplace detail. `secret` fields are masked and never sent back to the screen in full (the screen sees `configured: true`). `toggle` fields render as an on/off switch that saves at once; the stored value is `true` or `false`, absent means off, and any other value is refused.
 
 ### 4.2 The toolkit, one API for both runtimes
 

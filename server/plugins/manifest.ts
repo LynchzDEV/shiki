@@ -19,7 +19,7 @@ export function networkPermissionText(entry: string): string {
   return entry.startsWith(WILDCARD_PREFIX) ? `Reach any address ending in ${entry.slice(1)}` : `Reach ${entry}`
 }
 
-export type SettingFieldType = 'text' | 'secret'
+export type SettingFieldType = 'text' | 'secret' | 'toggle'
 
 export type SettingField = { key: string; label: string; type: SettingFieldType; help?: string }
 
@@ -63,7 +63,7 @@ export type ParseManifestResult = { ok: true; manifest: PluginManifest } | { ok:
 const settingFieldSchema = z.object({
   key: z.string().min(1),
   label: z.string().min(1),
-  type: z.enum(['text', 'secret']),
+  type: z.enum(['text', 'secret', 'toggle']),
   help: z.string().optional(),
 })
 

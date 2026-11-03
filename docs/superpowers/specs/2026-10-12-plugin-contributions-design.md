@@ -34,7 +34,7 @@ A teammate opens Marketplace, installs **card-pipeline**, fills a few settings, 
 ### Templating
 
 Contributed files may contain `{{setting:<key>}}` and `{{mc:mctl}}` (the absolute command that runs this Mission Control's `mctl`). The host fills them when it installs the files.
-- Only `text` settings can be referenced. Referencing a `secret` setting, or a key the manifest does not declare, fails the install with the file and line.
+- Only `text` and `toggle` settings can be referenced. Referencing a `secret` setting, or a key the manifest does not declare, fails the install with the file and line.
 - An empty setting stays as the literal `{{setting:<key>}}` text and the plugin shows "needs setup" until every referenced setting is filled.
 
 ### Install, update, disable, uninstall

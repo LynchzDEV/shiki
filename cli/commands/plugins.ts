@@ -189,7 +189,7 @@ function settingsText(value: unknown): string {
   return table(fields, [
     { header: 'KEY', value: (field) => cell(field.key) },
     { header: 'LABEL', value: (field) => cell(field.label) },
-    { header: 'VALUE', value: (field) => (field.type === 'secret' ? (configured[String(field.key)] === true ? '(set)' : '(not set)') : cell(values[String(field.key)] ?? '-')) },
+    { header: 'VALUE', value: (field) => (field.type === 'secret' ? (configured[String(field.key)] === true ? '(set)' : '(not set)') : cell(values[String(field.key)] ?? (field.type === 'toggle' ? 'false' : '-'))) },
   ])
 }
 
