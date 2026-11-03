@@ -3,8 +3,8 @@ import { z } from 'zod'
 import type { Runtimes } from './plugins/runtimes'
 import type { InstalledPlugin } from './plugins/store'
 
-export type SourceItem = { title: string; url: string; contextMarkdown: string }
 export type SourceImage = { name: string; path: string }
+export type SourceItem = { title: string; url: string; contextMarkdown: string; images?: SourceImage[] }
 export type SourceReply = { id: string; author: string; text: string; images: SourceImage[] }
 export type SourceReplies = { replies: SourceReply[]; lastId: string | null }
 
@@ -20,9 +20,9 @@ export type SourceDeps = {
 }
 
 const text = z.string().max(64000)
-const itemSchema = z.object({ title: z.string().min(1).max(500), url: z.string().max(2048), contextMarkdown: z.string().max(524288) })
 const postSchema = z.object({ commentId: z.string().min(1).max(200), status: z.string().max(200).optional(), warning: z.string().max(2000).optional() })
 const imageSchema = z.object({ name: z.string().min(1).max(200), path: z.string().min(1).max(1024) })
+const itemSchema = z.object({ title: z.string().min(1).max(500), url: z.string().max(2048), contextMarkdown: z.string().max(524288), images: z.array(imageSchema).max(30).optional() })
 const repliesSchema = z.object({
   replies: z.array(z.object({ id: z.string().min(1).max(200), author: z.string().max(200), text, images: z.array(imageSchema).max(8) })).max(100),
   lastId: z.string().min(1).max(200).nullable(),

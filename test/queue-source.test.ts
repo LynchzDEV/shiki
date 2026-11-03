@@ -27,6 +27,14 @@ test('item calls source.item and returns the parsed item', async () => {
   expect(calls).toEqual([{ method: 'source.item', params: { id: '1' } }])
 })
 
+test('item images are parsed, and more than 30 are rejected', async () => {
+  const images = (count: number) => Array.from({ length: count }, (_, index) => ({ name: `s${index}.png`, path: `card/s${index}.png` }))
+  const ok = deps(() => ({ title: 'T', url: 'u', contextMarkdown: '# t', images: images(30) }))
+  expect((await pluginSource('clickup-board', ok.deps).item({ id: '1' })).images).toHaveLength(30)
+  const tooMany = deps(() => ({ title: 'T', url: 'u', contextMarkdown: '# t', images: images(31) }))
+  await expect(pluginSource('clickup-board', tooMany.deps).item({ id: '1' })).rejects.toThrow('unexpected source.item result')
+})
+
 test('post sends kind and lines and returns the comment id', async () => {
   const { deps: d, calls } = deps(() => ({ commentId: 'c9' }))
   expect(await pluginSource('clickup-board', d).post({ id: '1', kind: 'ask', lines: ['Which page?'] })).toEqual({ commentId: 'c9' })
