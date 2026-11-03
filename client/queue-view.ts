@@ -7,7 +7,7 @@ export type LandView = { stage: string; runId?: string; message?: string; plan: 
 export type QueueItemView = {
   id: string; source: string; externalId: string; title: string; url: string; flowId: string | null
   state: QueueState; runIds: string[]; questions: string[]; error: string | null; updatedAt: number
-  repo?: string; repos?: string[]; realChanged?: string[]; currentRunId?: string; step?: QueueStepView; preparing?: true; pick?: QueuePickView; land?: LandView
+  repo?: string; repos?: string[]; realChanged?: string[]; currentRunId?: string; resumeRunId?: string; step?: QueueStepView; preparing?: true; pick?: QueuePickView; land?: LandView
 }
 
 export type QueueStepView = { title: string; attempt: number; maxAttempts: number }
@@ -205,7 +205,8 @@ function actions(item: QueueItemView, now: number): HTMLElement {
   }
   if (item.state === 'failed') {
     if (failedAtStage(item)) parts.push(button('Retry stage', 'connection-button primary', { ...id, 'data-act': 'land-retry' }, 'mk-refresh'))
-    parts.push(button('Requeue', failedAtStage(item) ? 'text-button' : 'connection-button', { ...id, 'data-act': 'requeue' }, failedAtStage(item) ? undefined : 'mk-refresh'))
+    parts.push(button(item.resumeRunId === undefined ? 'Requeue' : 'Resume', failedAtStage(item) ? 'text-button' : 'connection-button', { ...id, 'data-act': 'requeue' }, failedAtStage(item) ? undefined : 'mk-refresh'))
+    if (item.resumeRunId !== undefined) parts.push(button('Start over', 'text-button', { ...id, 'data-act': 'start-over' }))
     if (openRun) parts.push(button('Open run', 'connection-button', { ...id, 'data-act': 'open-run' }, 'flow-icon'))
   }
   if (item.state === 'landing') parts.push(button('Log', 'connection-button', { ...id, 'data-act': 'land-log' }))
@@ -328,6 +329,7 @@ function readItem(value: unknown): QueueItemView | null {
     ...(isTexts(entry.repos) ? { repos: entry.repos } : {}),
     ...(isTexts(entry.realChanged) && entry.realChanged.length > 0 ? { realChanged: entry.realChanged } : {}),
     ...(isText(entry.currentRunId) ? { currentRunId: entry.currentRunId } : {}),
+    ...(isText(entry.resumeRunId) ? { resumeRunId: entry.resumeRunId } : {}),
     ...(entry.preparing === true ? { preparing: true as const } : {}),
     ...(readStep(entry.step) ?? {}),
     ...(readPick(entry.pick) ?? {}),

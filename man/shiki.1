@@ -538,6 +538,9 @@ one test database: two cards running tests at once deadlock there.
 .TP
 .BI "shiki queue requeue " id
 Put a failed, ready or waiting item back in line.
+A failed item resumes the run it failed in, keeping the steps that passed;
+.B \-\-fresh
+starts a new run instead.
 .TP
 .BI "shiki queue pick " "id option"
 Choose a design variant for an item waiting on a pick.

@@ -139,8 +139,9 @@ export const queueCommands: Command[] = [
   {
     path: ['queue', 'requeue'],
     args: ['id'],
-    summary: 'Put a failed, ready or waiting item back in line',
-    run: async (ctx) => emit(ctx, await ctx.client.post(itemPath(ctx, '/requeue'), {}), () => 'Back in the queue.\n'),
+    options: { fresh: { type: 'boolean', description: 'start a new run instead of resuming the failed one' } },
+    summary: 'Put a failed, ready or waiting item back in line; a failed item resumes its last run',
+    run: async (ctx) => emit(ctx, await ctx.client.post(itemPath(ctx, '/requeue'), flag(ctx, 'fresh') ? { fresh: true } : {}), () => 'Back in the queue.\n'),
   },
   {
     path: ['queue', 'pick'],

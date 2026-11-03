@@ -284,6 +284,17 @@ test('requeue, remove and check call their routes', async () => {
   expect(section().querySelector('.q-checked')?.textContent).toBe('Checked just now')
 })
 
+test('a failed card with a run to resume offers Resume and Start over', async () => {
+  send([{ ...failed, resumeRunId: 'r-failed' }, ready])
+  await flush()
+  expect(buttonNamed('Requeue', rowOf('f1'))).toBeUndefined()
+  expect(buttonNamed('Requeue', rowOf('r1'))).toBeDefined()
+  click(buttonNamed('Resume', rowOf('f1')))
+  click(buttonNamed('Start over', rowOf('f1')))
+  await flush()
+  expect(calls.map(call => [`${call.method} ${call.url}`, call.body])).toEqual([['POST /api/queue/f1/requeue', {}], ['POST /api/queue/f1/requeue', { fresh: true }]])
+})
+
 test('a refused action says why', async () => {
   replies.set('POST /api/queue/f1/requeue', () => Response.json({ error: 'It is building now' }, { status: 409 }))
   replies.set('DELETE /api/queue/q1', () => Response.json({ error: 'Stop its run in Studio first' }, { status: 409 }))

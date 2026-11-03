@@ -24,7 +24,7 @@ export type QueueItem = {
   state: QueueState; worktree: string | null; contextPath: string | null; answerPaths: string[]
   runIds: string[]; currentRunId: string | null; questions: string[]; lastSeenId: string | null; error: string | null
   createdAt: number; updatedAt: number; repos?: string[]; repoReruns?: number
-  realBaseline?: Record<string, string>; realChanged?: string[]; pick?: QueuePick; land?: LandProgress; autoPicks?: number
+  realBaseline?: Record<string, string>; realChanged?: string[]; pick?: QueuePick; land?: LandProgress; autoPicks?: number; resumeRunId?: string
 }
 
 export type NewQueueItem = Pick<QueueItem, 'source' | 'externalId' | 'title' | 'url' | 'repo' | 'flowId' | 'repos'>
@@ -41,6 +41,7 @@ export type QueueStore = RunEvents & {
 }
 
 const STATES = new Set<string>(['queued', 'building', 'waiting-info', 'waiting-pick', 'ready', 'failed', 'landing', 'awaiting-stage', 'landed'])
+const RESUMABLE: ReadonlySet<QueueState> = new Set(['queued', 'failed'])
 const isText = (value: unknown): value is string => typeof value === 'string'
 const isTextOrNull = (value: unknown): boolean => value === null || typeof value === 'string'
 const isTexts = (value: unknown): boolean => Array.isArray(value) && value.every(isText)
@@ -66,6 +67,7 @@ function isItem(value: unknown): value is QueueItem {
     && (item.pick === undefined || isPick(item.pick))
     && (item.land === undefined || isLand(item.land))
     && (item.repoReruns === undefined || (Number.isInteger(item.repoReruns) && (item.repoReruns as number) >= 0))
+    && (item.resumeRunId === undefined || isText(item.resumeRunId))
 }
 
 const isRecord = (value: unknown): boolean => typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -138,6 +140,7 @@ export function createQueueStore(path: string, clock: () => number = Date.now): 
       const next: QueueItem = { ...current, ...definedFields(patch), updatedAt: clock() }
       if ('pick' in patch && patch.pick === undefined) delete next.pick
       if ('land' in patch && patch.land === undefined) delete next.land
+      if (('resumeRunId' in patch && patch.resumeRunId === undefined) || !RESUMABLE.has(next.state)) delete next.resumeRunId
       await save(items.map(item => (item.id === id ? next : item)))
       return next
     },

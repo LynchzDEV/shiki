@@ -17,6 +17,7 @@ import { fileExists, freshWorktree, WorktreeGone, worktreeRestorer } from './que
 export type QueueRunner = {
   start(input: { cwd: string; request: string; label: string; workflowId?: string }, context: { startedByUser: boolean }): Promise<{ id: string }>
   get(id: string): RunView | undefined
+  retry?(id: string): Promise<{ id: string }>
 }
 
 export type QueueEngineDeps = {
@@ -41,12 +42,14 @@ export type PickChoice = { option: string; tester?: string; note?: string; answe
 
 export type AddOptions = { background?: boolean }
 
+export type RequeueOptions = { fresh?: boolean }
+
 export type QueueEngine = {
   add(input: AddInput, options?: AddOptions): Promise<QueueItem>
   kick(): Promise<void>
   onRunSettled(run: RunView): Promise<void>
   recover(): Promise<void>
-  requeue(id: string): Promise<QueueItem>
+  requeue(id: string, options?: RequeueOptions): Promise<QueueItem>
   pick(id: string, choice: PickChoice): Promise<QueueItem>
   remove(id: string): Promise<void>
   move(id: string, to: number): Promise<void>
@@ -127,10 +130,11 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
   let backoff = 0
   let timer: ReturnType<typeof setTimeout> | undefined
 
-  async function fail(item: QueueItem, reason: string): Promise<void> {
-    const failed = await store.update(item.id, { state: 'failed', error: reason, currentRunId: null, pick: undefined, questions: [] })
+  const failer = (resumeRunId?: string) => async (item: QueueItem, reason: string): Promise<void> => {
+    const failed = await store.update(item.id, { state: 'failed', error: reason, currentRunId: null, pick: undefined, questions: [], resumeRunId })
     deps.needsYou(failed, reason)
   }
+  const fail = failer()
 
   const applied = new Map<string, string>()
   const fingerprint = (run: RunView): string => JSON.stringify([run.status, run.error, run.attempts.length, run.attempts.at(-1)?.endedAt ?? null])
@@ -149,6 +153,7 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
   }
 
   async function askOrFail(settled: QueueItem, run: RunView): Promise<void> {
+    const fail = failer(run.id)
     let item = settled
     const questions = questionsOf(run)
     if (item.repos === undefined && questions.length === 0 && repoRequestsOf(run).length > 0) return fail(item, SINGLE_REPO_ASK)
@@ -206,8 +211,8 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
     return { item: await store.update(item.id, { realChanged }), moved }
   }
 
-  async function pause(item: QueueItem, unavailable: NonNullable<RunView['unavailable']>): Promise<void> {
-    const queued = await store.update(item.id, { state: 'queued', currentRunId: null, error: null, questions: [], pick: undefined })
+  async function pause(item: QueueItem, run: RunView, unavailable: NonNullable<RunView['unavailable']>): Promise<void> {
+    const queued = await store.update(item.id, { state: 'queued', currentRunId: null, error: null, questions: [], pick: undefined, resumeRunId: run.id })
     await store.toFront(item.id)
     const at = now()
     const until = unavailable.until ?? at + PAUSE_BACKOFF_MS[Math.min(backoff++, PAUSE_BACKOFF_MS.length - 1)]!
@@ -220,7 +225,7 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
   }
 
   async function settleState(item: QueueItem, run: RunView): Promise<void> {
-    if (run.unavailable) return pause(item, run.unavailable)
+    if (run.unavailable) return pause(item, run, run.unavailable)
     backoff = 0
     if (run.status !== 'done') return askOrFail(item, run)
     const stages = run.workflow?.land ?? []
@@ -235,7 +240,7 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
     if (found === undefined) return
     applied.set(run.id, fingerprint(run))
     const adopted = await withRecordedRepos(found)
-    if ('fail' in adopted) return fail(found, adopted.fail)
+    if ('fail' in adopted) return failer(run.id)(found, adopted.fail)
     const { item, moved } = await noteMovedRealRepos(adopted)
     await settleState(item, run)
     if (moved.length > 0) deps.needsYou(store.get(item.id) ?? item, movedText(item, moved))
@@ -259,7 +264,29 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
     return kept
   }
 
-  async function build(item: QueueItem): Promise<void> {
+  async function resumed(item: QueueItem): Promise<string | null> {
+    if (item.resumeRunId === undefined || deps.runner.retry === undefined || item.worktree === null) return null
+    await restore({ ...item, worktree: item.worktree })
+    try {
+      const run = await deps.runner.retry(item.resumeRunId)
+      await store.update(item.id, { state: 'building', currentRunId: run.id, resumeRunId: undefined, error: null })
+      return run.id
+    } catch (error) {
+      console.warn(`Queue item ${item.id} could not resume run ${item.resumeRunId}, starting over: ${message(error)}`)
+      await store.update(item.id, { resumeRunId: undefined })
+      return null
+    }
+  }
+
+  async function settleIfDone(runId: string): Promise<void> {
+    const now = deps.runner.get(runId)
+    if (now !== undefined && SETTLED.has(now.status)) await settle(now)
+  }
+
+  async function build(queued: QueueItem): Promise<void> {
+    const resumedRunId = await resumed(queued)
+    if (resumedRunId !== null) return settleIfDone(resumedRunId)
+    const item = store.get(queued.id) ?? queued
     const available = item.repos === undefined ? [] : await reposToOffer(item.repo)
     const worktree = item.worktree === null ? (await prepare(item)).worktree : await restore({ ...item, worktree: item.worktree })
     await refuseLinkedQueueFolders(worktree, item.source)
@@ -270,8 +297,7 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
     if (item.repos !== undefined) await store.update(item.id, { worktree })
     const run = await deps.runner.start({ cwd: worktree, request: runRequest(ready, available), label: item.title.slice(0, MAX_RUN_LABEL), ...(item.flowId ? { workflowId: item.flowId } : {}) }, { startedByUser: true })
     await store.update(item.id, { state: 'building', worktree, contextPath, currentRunId: run.id, runIds: [...item.runIds, run.id], error: null, realBaseline })
-    const now = deps.runner.get(run.id)
-    if (now !== undefined && SETTLED.has(now.status)) await settle(now)
+    await settleIfDone(run.id)
   }
 
   async function startNext(): Promise<void> {
@@ -328,11 +354,12 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
     return run !== undefined && !SETTLED.has(run.status)
   }
 
-  const requeue = (id: string): Promise<QueueItem> => serial(async () => {
+  const requeue = (id: string, options: RequeueOptions = {}): Promise<QueueItem> => serial(async () => {
     const item = found(store, id)
     if (!REQUEUEABLE.has(item.state)) throw stateRefusal(item.state)
     if (runningInStudio(item)) throw new QueueRefusal('It is running in Studio now', 409)
-    await store.update(id, { state: 'queued', error: null, currentRunId: null, pick: undefined, land: undefined, questions: [], repoReruns: item.repoReruns === undefined ? undefined : 0, realChanged: item.realChanged === undefined ? undefined : [] })
+    const resumeRunId = item.state === 'failed' && options.fresh !== true ? item.resumeRunId : undefined
+    await store.update(id, { state: 'queued', error: null, currentRunId: null, pick: undefined, land: undefined, questions: [], repoReruns: item.repoReruns === undefined ? undefined : 0, realChanged: item.realChanged === undefined ? undefined : [], resumeRunId })
     await store.move(id, store.list().length)
     await startNext()
     return found(store, id)

@@ -136,6 +136,13 @@ describe('shiki queue', () => {
     expect(check.out()).toBe('Checked 2, resumed 1\n')
   })
 
+  test('requeue resumes the last run by default and starts over with --fresh', async () => {
+    const h = harness(() => Response.json({ item: { id: 'a1' } }))
+    expect(await main(['queue', 'requeue', 'a1'], h.deps)).toBe(0)
+    expect(await main(['queue', 'requeue', 'a1', '--fresh'], h.deps)).toBe(0)
+    expect(h.calls.map(call => call.body)).toEqual([{}, { fresh: true }])
+  })
+
   test('an id with a slash stays one path segment', async () => {
     const h = harness()
     expect(await main(['queue', 'remove', 'a/b'], h.deps)).toBe(0)

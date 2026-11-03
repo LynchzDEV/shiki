@@ -46,11 +46,12 @@ async function refusing<T>(set: Status, work: () => Promise<T>, explain: (error:
   }
 }
 
-async function requeueItem(store: QueueStore, engine: QueueEngineRoutes, id: string, set: Status) {
+async function requeueItem(store: QueueStore, engine: QueueEngineRoutes, id: string, body: unknown, set: Status) {
   const item = store.get(id)
   if (item === undefined) { set.status = 404; return { error: NO_ITEM } }
   if (item.state === 'building') { set.status = 409; return { error: 'It is building now' } }
-  return refusing(set, async () => ({ item: cleaned(await engine.requeue(id)) }))
+  const fresh = (body as { fresh?: unknown } | null)?.fresh === true
+  return refusing(set, async () => ({ item: cleaned(await engine.requeue(id, { fresh })) }))
 }
 
 async function addItem(engine: QueueEngineRoutes, body: unknown, set: Status) {
@@ -151,6 +152,6 @@ export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: 
     .post('/api/queue/:id/land/:stage/preflight', ({ params, set }) => refusing(set, async () => ({ item: cleaned(await engine.refreshPreflight(params.id, params.stage)) }), explainMissing))
     .get('/api/queue/:id/land/:stage/log', ({ params, set }) => refusing(set, async () => text(await engine.landLog(params.id, params.stage), 'text/plain'), explainMissing))
     .get('/api/queue/:id/report', ({ params, set }) => refusing(set, async () => text(await engine.report(params.id), 'text/markdown'), explainMissing))
-    .post('/api/queue/:id/requeue', ({ params, set }) => requeueItem(store, engine, params.id, set))
+    .post('/api/queue/:id/requeue', ({ params, body, set }) => requeueItem(store, engine, params.id, body, set))
     .delete('/api/queue/:id', ({ params, set }) => refusing(set, async () => { await engine.remove(params.id); return { ok: true } }, removeExplanation))
 }

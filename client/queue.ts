@@ -155,6 +155,7 @@ function start(section: HTMLElement): void {
     if (button && action === 'check') { void checkReplies(button); return }
     if (button && action === 'add') { dialog.open(); return }
     if (button && item && action === 'requeue') { void act(button, () => postJson(`/api/queue/${encodeURIComponent(item.id)}/requeue`, {}), `Requeued ${item.title}`); return }
+    if (button && item && action === 'start-over') { void act(button, () => postJson(`/api/queue/${encodeURIComponent(item.id)}/requeue`, { fresh: true }), `Starting ${item.title} over`); return }
     if (button && item && action === 'pick') { pickReview.open(item); return }
     if (button && item && action === 'remove') { void act(button, () => deleteJson(`/api/queue/${encodeURIComponent(item.id)}`), `Removed ${item.title}`); return }
     if (button && item && action === 'open-run') { dispatchEvent(new CustomEvent('quiet:studio-run', { detail: { runId: item.runIds.at(-1) } })); return }

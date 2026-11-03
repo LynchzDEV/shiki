@@ -468,6 +468,92 @@ test('a card without images keeps its context unchanged and makes no image folde
 const unavailable = { engine: 'glm', reason: 'glm needs a z.ai token (Settings · GLM)', until: null }
 const MINUTE = 60_000
 
+function resumable(over: Partial<QueueEngineDeps> = {}, retryFails = false) {
+  const retried: string[] = []
+  let next = 0
+  const h = harness({ ...over, runner: {
+    start: async input => { h.started.push(input); const id = `run-${++next}`; h.runs.set(id, { id, status: 'running', error: null, attempts: [] }); return { id } },
+    get: id => h.runs.get(id),
+    retry: async id => {
+      retried.push(id)
+      if (retryFails) throw new Error('Workspace still has running work')
+      h.runs.set(id, { ...h.runs.get(id)!, status: 'running', error: null })
+      return { id }
+    },
+  } })
+  return { ...h, retried }
+}
+
+test('a failed card resumes its last run instead of starting a new one', async () => {
+  const h = resumable()
+  const item = await h.engine.add(add)
+  await h.engine.onRunSettled(h.settle('run-1', { status: 'failed', error: 'Implement reached its 3-visit limit from Review' }))
+  expect(h.store.get(item.id)).toMatchObject({ state: 'failed', resumeRunId: 'run-1' })
+  const again = await h.engine.requeue(item.id)
+  expect(h.retried).toEqual(['run-1'])
+  expect(h.started).toHaveLength(1)
+  expect(again).toMatchObject({ state: 'building', currentRunId: 'run-1', runIds: ['run-1'], error: null })
+  expect(again.resumeRunId).toBeUndefined()
+})
+
+test('start over ignores the last run', async () => {
+  const h = resumable()
+  const item = await h.engine.add(add)
+  await h.engine.onRunSettled(h.settle('run-1', { status: 'failed', error: 'boom' }))
+  const again = await h.engine.requeue(item.id, { fresh: true })
+  expect(h.retried).toEqual([])
+  expect(again).toMatchObject({ state: 'building', currentRunId: 'run-2', runIds: ['run-1', 'run-2'] })
+  expect(again.resumeRunId).toBeUndefined()
+})
+
+test('a paused card resumes the same run when the pause ends', async () => {
+  let now = 1_000_000
+  const h = resumable({ now: () => now })
+  const item = await h.engine.add(add)
+  await h.engine.onRunSettled(h.settle('run-1', { status: 'blocked', unavailable }))
+  expect(h.store.get(item.id)).toMatchObject({ state: 'queued', resumeRunId: 'run-1' })
+  now += 6 * MINUTE
+  await h.engine.kick()
+  expect(h.retried).toEqual(['run-1'])
+  expect(h.started).toHaveLength(1)
+  expect(h.store.get(item.id)).toMatchObject({ state: 'building', currentRunId: 'run-1', runIds: ['run-1'] })
+})
+
+test('a failed retry falls back to a fresh start', async () => {
+  const h = resumable({}, true)
+  const item = await h.engine.add(add)
+  await h.engine.onRunSettled(h.settle('run-1', { status: 'failed', error: 'boom' }))
+  const warn = spyOn(console, 'warn').mockImplementation(() => {})
+  try {
+    const again = await h.engine.requeue(item.id)
+    expect(again).toMatchObject({ state: 'building', currentRunId: 'run-2', runIds: ['run-1', 'run-2'] })
+    expect(again.resumeRunId).toBeUndefined()
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(String(warn.mock.calls[0]![0])).toContain('Workspace still has running work')
+  } finally { warn.mockRestore() }
+  expect(h.retried).toEqual(['run-1'])
+})
+
+test('a picked card always starts a fresh run', async () => {
+  const h = resumable({ prepareWorktree: async (_repo, label) => { const worktree = join(dir, 'wt', label); await mkdir(worktree, { recursive: true }); return { worktree } } })
+  const item = await h.engine.add(add)
+  await h.engine.onRunSettled(h.settle('run-1', { status: 'failed', error: 'boom' }))
+  const picking = { ...blockedWith(['pick: A,B | visualizer/login | A | Ploy']), nodeId: 'mockups' }
+  await h.engine.onRunSettled(h.settle('run-1', { status: 'blocked', error: null, attempts: [picking] }))
+  expect(h.store.get(item.id)!.state).toBe('waiting-pick')
+  expect(h.store.get(item.id)!.resumeRunId).toBeUndefined()
+  const picked = await h.engine.pick(item.id, { option: 'A' })
+  expect(h.retried).toEqual([])
+  expect(picked).toMatchObject({ state: 'building', currentRunId: 'run-2', runIds: ['run-1', 'run-2'] })
+})
+
+test('a card failed before its run started keeps no run to resume', async () => {
+  const h = resumable({ prepareWorktree: async () => { throw new Error('not a git repo') } })
+  const item = await h.engine.add(add)
+  expect(h.store.get(item.id)).toMatchObject({ state: 'failed', error: 'not a git repo' })
+  expect(h.store.get(item.id)!.resumeRunId).toBeUndefined()
+})
+
 test('an unavailable run puts the card back first in line and pauses the queue instead of failing it', async () => {
   let now = 1_000_000
   const h = harness({ now: () => now })

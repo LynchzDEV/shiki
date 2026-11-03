@@ -147,6 +147,20 @@ test('delete and requeue refuse a building item and 404 unknown ids', async () =
   expect((await call(app, `/api/queue/${a.id}`, { method: 'DELETE' })).status).toBe(404)
 })
 
+test('requeue passes { fresh: true } to the engine and treats any other body as not fresh', async () => {
+  const items = store()
+  const a = await items.add(newItem, 'end')
+  await items.update(a.id, { state: 'failed' })
+  const asked: Array<{ fresh?: boolean } | undefined> = []
+  const app = new Elysia().use(queueRoutes(items, engine(items, { requeue: async (id, options) => { asked.push(options); return found(items, id) } })))
+  expect((await post(app, `/api/queue/${a.id}/requeue`, { fresh: true })).status).toBe(200)
+  expect((await post(app, `/api/queue/${a.id}/requeue`)).status).toBe(200)
+  expect((await post(app, `/api/queue/${a.id}/requeue`, { fresh: 'yes' })).status).toBe(200)
+  expect(asked).toEqual([{ fresh: true }, { fresh: false }, { fresh: false }])
+})
+
+const found = (items: ReturnType<typeof store>, id: string) => items.get(id)!
+
 test('requeue maps the engine refusals to 404 and 409 and rethrows anything else', async () => {
   const items = store()
   const a = await items.add(newItem, 'end')
