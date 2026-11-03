@@ -57,6 +57,12 @@ test('codex at its weekly limit is unavailable until the weekly reset', async ()
   expect(await check({ quota: async () => past })({ engine: 'codex' })).toBeNull()
 })
 
+test('claude stays available at a full usage reading, because that reading is an estimate', async () => {
+  const reset = new Date(NOW + HOUR).toISOString()
+  const full = { ...idle, claude: { ...idle.claude, available: true, weeklyPct: 100, weeklyResetsAt: reset } } as QuotaComposite
+  expect(await check({ quota: async () => full })({ engine: 'claude' })).toBeNull()
+})
+
 test('both windows full waits for the later reset', async () => {
   const both: QuotaComposite = { ...idle, codex: { available: true, authed: true, fiveHourPct: 100, fiveHourResetsAt: new Date(NOW + HOUR).toISOString(), weeklyPct: 100, weeklyResetsAt: new Date(NOW + 5 * HOUR).toISOString() } }
   expect((await check({ quota: async () => both })({ engine: 'codex' }))?.until).toBe(NOW + 5 * HOUR)

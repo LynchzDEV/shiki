@@ -34,7 +34,7 @@ export function createAvailabilityCheck(deps: { secrets: () => Promise<Secrets>;
     const missing = isBuiltin(engine) ? missingBinary(ENGINES[engine].cmd) : connection ? missingBinary(connection.command) : null
     if (missing) return missing
     const key = connection?.family === 'grok' ? 'grok' : isBuiltin(engine) ? engine : null
-    if (!key) return null
+    if (!key || key === 'claude') return null
     const quota = await deps.quota().catch(() => null)
     const usage = quota?.[key]
     if (!usage?.available) return null
