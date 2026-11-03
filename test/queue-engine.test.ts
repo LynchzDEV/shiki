@@ -500,6 +500,20 @@ test('the queue resumes by itself after the pause time', async () => {
   expect(h.store.get(item.id)).toMatchObject({ state: 'building', currentRunId: 'run-2', runIds: ['run-1', 'run-2'] })
 })
 
+test('an expired pause tells stream listeners even when no card is waiting', async () => {
+  let now = 1_000_000
+  const h = harness({ now: () => now })
+  const item = await h.engine.add(add)
+  await h.engine.onRunSettled(h.settle('run-1', { status: 'blocked', unavailable: { ...unavailable, until: now + 5 * MINUTE } }))
+  await h.engine.remove(item.id)
+  let told = 0
+  h.engine.subscribeChecks(() => { told += 1 })
+  now += 6 * MINUTE
+  await h.engine.kick()
+  expect(h.engine.paused()).toBeNull()
+  expect(told).toBe(1)
+})
+
 test('pause backoff grows 5, 15, 60 minutes and resets after a normal settle', async () => {
   let now = 1_000_000
   const h = harness({ now: () => now })

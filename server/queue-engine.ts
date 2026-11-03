@@ -101,7 +101,7 @@ type QueueSteps = {
   paused(): QueuePause | null
 }
 
-function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string | null) => void, wake: () => void): QueueSteps {
+function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string | null) => void, wake: () => void, onPausedChange: () => void): QueueSteps {
   const { store } = deps
   const now = deps.now ?? Date.now
   let paused: QueuePause | null = null
@@ -242,7 +242,7 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
 
   async function startNext(): Promise<void> {
     if (paused !== null && now() < paused.until) return
-    paused = null
+    if (paused !== null) { paused = null; onPausedChange() }
     while (!store.list().some(item => item.state === 'building')) {
       const next = store.list().find(item => item.state === 'queued')
       if (next === undefined) return
@@ -260,7 +260,7 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
   const tell = (): void => { for (const listener of checkListeners) listener() }
   let preparingId: string | null = null
   const land = createLand(deps)
-  const { fail, settle, startNext, paused } = queueSteps(deps, land, (id) => { preparingId = id; tell() }, () => { void kick().catch(error => console.error('queue resume failed', error)) })
+  const { fail, settle, startNext, paused } = queueSteps(deps, land, (id) => { preparingId = id; tell() }, () => { void kick().catch(error => console.error('queue resume failed', error)) }, () => tell())
   let lane: Promise<unknown> = Promise.resolve()
   const serial = <T>(work: () => Promise<T>): Promise<T> => {
     const result = lane.then(work)
