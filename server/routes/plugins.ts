@@ -37,7 +37,7 @@ function consentList(value: unknown): RequirementConsent[] | undefined {
     const record = typeof entry === 'object' && entry !== null ? entry as Record<string, unknown> : {}
     const action = CONSENT_ACTIONS.find(candidate => candidate === record.action)
     if (typeof record.id !== 'string' || action === undefined) return []
-    return [{ id: record.id, action, ...(typeof record.commit === 'string' ? { commit: record.commit } : {}) }]
+    return [{ id: record.id, action, ...(typeof record.commit === 'string' ? { commit: record.commit } : {}), ...(typeof record.repo === 'string' ? { repo: record.repo } : {}), ...(typeof record.marketplace === 'string' ? { marketplace: record.marketplace } : {}) }]
   })
 }
 

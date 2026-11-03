@@ -1,9 +1,10 @@
 import type { PluginContributions, PluginManifest, PluginPermissions, PluginRequirement, PluginRuntime } from './manifest'
+import { errorMessage } from './errors'
 import type { InstallStep } from './installer'
 import { listInstalled, type InstalledPlugin } from './store'
 
 function versionParts(version: string): number[] {
-  const numeric = version.match(/^[\d.]*/)?.[0] ?? ''
+  const numeric = version.replace(/^[vV]/, '').match(/^[\d.]*/)?.[0] ?? ''
   return numeric.split('.').filter(part => part !== '').map(Number)
 }
 
@@ -91,31 +92,64 @@ async function resolveOne(requirement: PluginRequirement, origin: string | undef
   return { step: installed.enabled ? { ...head, status: 'ok', installedVersion: installed.version } : { ...head, status: 'enable', installedVersion: installed.version, name: installed.name } }
 }
 
-async function resolveLevel(manifest: PluginManifest, origin: string | undefined, depth: number, visited: Set<string>, ports: ResolverPorts): Promise<RequirementStep[]> {
+type Entry = { requirement: PluginRequirement; resolved: Resolved; tooDeep: boolean }
+
+type Pending = { requirement: PluginRequirement; origin: string | undefined; depth: number }
+
+function higherMinimum(a: string | undefined, b: string | undefined): string | undefined {
+  if (a === undefined) return b
+  if (b === undefined) return a
+  return compareVersions(b, a) > 0 ? b : a
+}
+
+async function resolveAtDepth(requirement: PluginRequirement, origin: string | undefined, depth: number, ports: ResolverPorts): Promise<{ resolved: Resolved; tooDeep: boolean }> {
+  const resolved = await resolveOne(requirement, origin, ports)
+  const needsFetch = resolved.step.status === 'install' || resolved.step.status === 'update'
+  if (depth > MAX_DEPTH && needsFetch) return { resolved: unavailable(requirement, 'Requirements nest too deep'), tooDeep: true }
+  return { resolved, tooDeep: false }
+}
+
+function inDependencyOrder(roots: PluginRequirement[], entries: Map<string, Entry>): RequirementStep[] {
+  const seen = new Set<string>()
   const steps: RequirementStep[] = []
-  for (const requirement of manifest.requires ?? []) {
-    if (visited.has(requirement.id)) continue
-    visited.add(requirement.id)
-    if (depth > MAX_DEPTH) {
-      steps.push(unavailable(requirement, 'Requirements nest too deep').step)
-      continue
+  const visit = (requirements: PluginRequirement[]): void => {
+    for (const requirement of requirements) {
+      const entry = entries.get(requirement.id)
+      if (entry === undefined || seen.has(requirement.id)) continue
+      seen.add(requirement.id)
+      visit(entry.resolved.manifest?.requires ?? [])
+      steps.push(entry.resolved.step)
     }
-    const { step, manifest: required } = await resolveOne(requirement, origin, ports)
-    if (required !== undefined && (step.status === 'install' || step.status === 'update')) {
-      steps.push(...await resolveLevel(required, step.listing.marketplace, depth + 1, visited, ports))
-    }
-    steps.push(step)
   }
+  visit(roots)
   return steps
 }
 
-export function resolveRequirements(manifest: PluginManifest, origin: string | undefined, ports: ResolverPorts): Promise<RequirementStep[]> {
-  return resolveLevel(manifest, origin, 1, new Set([manifest.id]), ports)
+export async function resolveRequirements(manifest: PluginManifest, origin: string | undefined, ports: ResolverPorts): Promise<RequirementStep[]> {
+  const entries = new Map<string, Entry>()
+  const queue: Pending[] = (manifest.requires ?? []).map(requirement => ({ requirement, origin, depth: 1 }))
+  for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
+    const { requirement, depth } = next
+    if (requirement.id === manifest.id) continue
+    const known = entries.get(requirement.id)
+    const minimum = higherMinimum(known?.requirement.version, requirement.version)
+    const raised = known !== undefined && minimum !== known.requirement.version
+    const nearer = known?.tooDeep === true && depth <= MAX_DEPTH
+    if (known !== undefined && !raised && !nearer) continue
+    const merged: PluginRequirement = { id: requirement.id, ...(minimum !== undefined ? { version: minimum } : {}) }
+    const { resolved, tooDeep } = await resolveAtDepth(merged, next.origin, depth, ports)
+    entries.set(requirement.id, { requirement: merged, resolved, tooDeep })
+    if (resolved.manifest !== undefined && (resolved.step.status === 'install' || resolved.step.status === 'update')) {
+      const childOrigin = resolved.step.listing.marketplace
+      queue.push(...(resolved.manifest.requires ?? []).map(child => ({ requirement: child, origin: childOrigin, depth: depth + 1 })))
+    }
+  }
+  return inDependencyOrder(manifest.requires ?? [], entries)
 }
 
-export type RequirementConsent = { id: string; action: 'install' | 'update' | 'enable'; commit?: string }
+export type RequirementConsent = { id: string; action: 'install' | 'update' | 'enable'; commit?: string; repo?: string; marketplace?: string }
 
-export type ActionOutcome = { ok: true } | { ok: false; status: number; error: string; step?: InstallStep }
+export type ActionOutcome = { ok: true } | { ok: false; status: number; error: string; step?: InstallStep; dependents?: Dependent[] }
 
 export type RequirementActions = {
   install: (input: { repo: string; ref: string; commit: string; trust: boolean; marketplace: string }) => Promise<ActionOutcome>
@@ -128,9 +162,9 @@ export type NeedsRequirementsFailure = { ok: false; status: 409; needsRequiremen
 
 export type RequirementFailure = { ok: false; status: number; error: string; step: InstallStep; requirement?: string }
 
-export function outcomeOf(result: { ok: true } | { ok: false; status: number; error?: string; step?: InstallStep }): ActionOutcome {
+export function outcomeOf(result: { ok: true } | { ok: false; status: number; error?: string; step?: InstallStep; dependents?: Dependent[] }): ActionOutcome {
   if (result.ok) return { ok: true }
-  return { ok: false, status: result.status, error: result.error ?? 'This change needs your approval', ...(result.step !== undefined ? { step: result.step } : {}) }
+  return { ok: false, status: result.status, error: result.error ?? 'This change needs your approval', ...(result.step !== undefined ? { step: result.step } : {}), ...(result.dependents !== undefined ? { dependents: result.dependents } : {}) }
 }
 
 export type RequirementContext = {
@@ -146,12 +180,19 @@ type ActionableStep = Extract<RequirementStep, { status: 'install' | 'update' | 
 
 const isActionable = (step: RequirementStep): step is ActionableStep => step.status === 'install' || step.status === 'update' || step.status === 'enable'
 
+export function joinNames(names: string[]): string {
+  return names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`
+}
+
+export const needText = (dependents: Dependent[]): string => `${joinNames(dependents.map(dependent => dependent.name))} ${dependents.length > 1 ? 'need' : 'needs'} it`
+
 const stepName = (step: ActionableStep): string => (step.status === 'enable' ? step.name : step.preview.manifest.name)
 
 const needsTrust = (step: ActionableStep): boolean => step.status !== 'enable' && (step.preview.runtime === 'trusted' || step.preview.contributes !== undefined)
 
 function consented(step: ActionableStep, given: RequirementConsent[]): boolean {
-  return given.some(entry => entry.id === step.id && entry.action === step.status && (step.status === 'enable' || entry.commit === step.preview.commit))
+  return given.some(entry => entry.id === step.id && entry.action === step.status && (step.status === 'enable'
+    || (entry.commit === step.preview.commit && entry.repo === step.listing.repo && entry.marketplace === step.listing.marketplace)))
 }
 
 function gateFailure(context: RequirementContext): NeedsRequirementsFailure | RequirementFailure | null {
@@ -175,10 +216,12 @@ async function undoStep(step: ActionableStep, actions: RequirementActions): Prom
   if (step.status === 'update') return `${name} was updated to v${step.preview.manifest.version}`
   if (step.status === 'enable') {
     const outcome = await actions.setEnabled(step.id, false)
-    return outcome.ok ? `${name} was turned back off` : `${name} is still turned on: ${outcome.error}`
+    if (outcome.ok) return `${name} was turned back off`
+    return outcome.dependents === undefined ? `${name} is still turned on: ${outcome.error}` : `${name} was kept turned on because ${needText(outcome.dependents)}`
   }
   const outcome = await actions.uninstall(step.id)
-  return outcome.ok ? `${name} was removed again` : `${name} was installed and could not be removed: ${outcome.error}`
+  if (outcome.ok) return `${name} was removed again`
+  return outcome.dependents === undefined ? `${name} was installed and could not be removed: ${outcome.error}` : `${name} was kept because ${needText(outcome.dependents)}`
 }
 
 async function undoAll(done: ActionableStep[], actions: RequirementActions): Promise<string[]> {
@@ -211,15 +254,19 @@ export async function withRequirements<R extends Succeeded | Failed>(context: Re
   const refused = gateFailure(context)
   if (refused !== null) return refused
   const done: ActionableStep[] = []
-  for (const step of context.steps.filter(isActionable)) {
-    const outcome = await runStep(step, context)
-    if (!outcome.ok) return failAfterRollback(context, done, outcome, step)
-    done.push(step)
+  try {
+    for (const step of context.steps.filter(isActionable)) {
+      const outcome = await runStep(step, context)
+      if (!outcome.ok) return await failAfterRollback(context, done, outcome, step)
+      done.push(step)
+    }
+    const result = await main()
+    if (result.ok) return withApplied(result, done.map(step => step.id))
+    const failed = result as Failed
+    return await failAfterRollback(context, done, { status: failed.status, error: failed.error ?? 'The change needs your approval', step: failed.step })
+  } catch (error) {
+    return failAfterRollback(context, done, { status: 500, error: errorMessage(error), step: 'requirements' })
   }
-  const result = await main()
-  if (result.ok) return withApplied(result, done.map(step => step.id))
-  const failed = result as Failed
-  return failAfterRollback(context, done, { status: failed.status, error: failed.error ?? 'The change needs your approval', step: failed.step })
 }
 
 export type Dependent = { id: string; name: string }

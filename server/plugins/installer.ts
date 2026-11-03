@@ -12,7 +12,7 @@ import { checkFlows, contributionTargets, cliCommand, removeContributions, syncC
 import { catalog } from './marketplaces'
 import { contributionsAdded, parseManifest, permissionsAdded, type PluginManifest } from './manifest'
 import { isAllowedRepoUrl } from './repo-url'
-import { dependentsOf, outcomeOf, resolveRequirements, withRequirements, type CheckoutPreview, type Dependent, type NeedsRequirementsFailure, type RequirementActions, type RequirementConsent, type RequirementListing, type RequirementStep, type ResolverPorts } from './requirements'
+import { dependentsOf, joinNames, outcomeOf, resolveRequirements, withRequirements, type CheckoutPreview, type Dependent, type NeedsRequirementsFailure, type RequirementActions, type RequirementConsent, type RequirementListing, type RequirementStep, type ResolverPorts } from './requirements'
 import { invalidateRuntime } from './runtimes'
 import { getInstalled, pluginFolder, pluginsRoot, removeInstalled, saveInstalled, type InstalledPlugin } from './store'
 
@@ -298,8 +298,8 @@ export function createInstaller(overrides: Partial<InstallerDeps> = {}) {
   const requirementActions: RequirementActions = {
     install: async input => outcomeOf(await installCore(input)),
     update: async (id, input) => outcomeOf(await updateCore(id, input)),
-    setEnabled: async (id, enabled) => outcomeOf(await setEnabled(id, enabled, { force: true })),
-    uninstall: async id => outcomeOf(await uninstall(id, { keepData: false, force: true })),
+    setEnabled: async (id, enabled) => outcomeOf(await setEnabled(id, enabled)),
+    uninstall: async id => outcomeOf(await uninstall(id, { keepData: false })),
   }
 
   async function installLocked(manifest: PluginManifest, body: InstallInput, tmp: string, sha: string): Promise<InstallResult> {
@@ -330,7 +330,16 @@ export function createInstaller(overrides: Partial<InstallerDeps> = {}) {
       await rm(target, { recursive: true, force: true })
       return { ok: false, status: 500, error: errorMessage(error), step: 'move' }
     }
-    if (manifest.contributes !== undefined) await deps.syncEngineAssets()
+    if (manifest.contributes !== undefined) {
+      try {
+        await deps.syncEngineAssets()
+      } catch (error) {
+        await removeInstalled(manifest.id)
+        await removeContributions(manifest.id, applied.written)
+        await rm(target, { recursive: true, force: true })
+        throw error
+      }
+    }
     return { ok: true, plugin: record }
   }
 
@@ -383,7 +392,7 @@ export function createInstaller(overrides: Partial<InstallerDeps> = {}) {
     })
   }
 
-  async function replaceInstalled(id: string, tmp: string, record: InstalledPlugin): Promise<StepFailure | null> {
+  async function replaceInstalled(id: string, tmp: string, record: InstalledPlugin): Promise<StepFailure | { backup: string }> {
     const target = pluginFolder(id)
     const backup = `${target}.old-${Date.now()}`
     try {
@@ -403,12 +412,31 @@ export function createInstaller(overrides: Partial<InstallerDeps> = {}) {
       }
       return { ok: false, status: 500, error: errorMessage(error), step: 'move' }
     }
+    return { backup }
+  }
+
+  async function restorePrevious(previous: InstalledPlugin, backup: string): Promise<void> {
+    const target = pluginFolder(previous.id)
     try {
-      await rm(backup, { recursive: true, force: true })
-    } catch (cleanupError) {
-      console.error(`[plugins] could not remove ${backup}:`, cleanupError)
+      await rm(target, { recursive: true, force: true })
+      await deps.rename(backup, target)
+      await deps.saveInstalled(previous)
+      await invalidateRuntime(previous.id)
+      if (previous.contributes !== undefined) await syncContributions(previous, contributionOptions())
+    } catch (restoreError) {
+      console.error(`[plugins] could not restore ${previous.id} from ${backup}:`, restoreError)
     }
-    return null
+  }
+
+  async function finishReplacement(installed: InstalledPlugin, replacement: InstalledPlugin): Promise<PluginOk | InstallFailure> {
+    await invalidateRuntime(installed.id)
+    if (installed.contributes === undefined && replacement.contributes === undefined) return { ok: true, plugin: replacement }
+    const applied = await syncContributions({ ...replacement, contributedPaths: installed.contributedPaths ?? [] }, contributionOptions())
+    if (!applied.ok) return { ok: false, status: 409, error: applied.error, step: 'contributions' }
+    const record: InstalledPlugin = { ...replacement, contributedPaths: applied.written }
+    await deps.saveInstalled(record)
+    await deps.syncEngineAssets()
+    return { ok: true, plugin: record }
   }
 
   async function applyUpdate(installed: InstalledPlugin, manifest: PluginManifest, source: { repo: string; ref: string; tmp: string; sha: string }): Promise<PluginOk | InstallFailure> {
@@ -423,15 +451,20 @@ export function createInstaller(overrides: Partial<InstallerDeps> = {}) {
       ...(installed.runtime === 'trusted' && manifest.runtime === 'trusted' ? { restartRequired: true } : {}),
     }
     const replaced = await replaceInstalled(id, source.tmp, replacement)
-    if (replaced !== null) return replaced
-    await invalidateRuntime(id)
-    if (installed.contributes === undefined && replacement.contributes === undefined) return { ok: true, plugin: replacement }
-    const applied = await syncContributions({ ...replacement, contributedPaths: installed.contributedPaths ?? [] }, contributionOptions())
-    if (!applied.ok) return { ok: false, status: 409, error: applied.error, step: 'contributions' }
-    const record: InstalledPlugin = { ...replacement, contributedPaths: applied.written }
-    await deps.saveInstalled(record)
-    await deps.syncEngineAssets()
-    return { ok: true, plugin: record }
+    if ('ok' in replaced) return replaced
+    let finished: PluginOk | InstallFailure
+    try {
+      finished = await finishReplacement(installed, replacement)
+    } catch (error) {
+      await restorePrevious(installed, replaced.backup)
+      throw error
+    }
+    if (!finished.ok) {
+      await restorePrevious(installed, replaced.backup)
+      return finished
+    }
+    await rm(replaced.backup, { recursive: true, force: true }).catch(cleanupError => console.error(`[plugins] could not remove ${replaced.backup}:`, cleanupError))
+    return finished
   }
 
   async function updateFrom<R>(
@@ -505,7 +538,7 @@ export function createInstaller(overrides: Partial<InstallerDeps> = {}) {
     if (force === true) return null
     const dependents = await dependentsOf(id)
     if (dependents.length === 0) return null
-    return { ok: false, status: 409, error: `${dependents.map(dependent => dependent.name).join(', ')} need this plugin`, dependents }
+    return { ok: false, status: 409, error: `${joinNames(dependents.map(dependent => dependent.name))} ${dependents.length > 1 ? 'need' : 'needs'} this plugin`, dependents }
   }
 
   async function uninstall(id: string, options: { keepData?: boolean; force?: boolean } = {}): Promise<UninstallResult> {

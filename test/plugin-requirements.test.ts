@@ -13,6 +13,12 @@ describe('compareVersions', () => {
     expect(compareVersions('2', '1.9.9')).toBeGreaterThan(0)
   })
 
+  test('one leading v is ignored', () => {
+    expect(compareVersions('v1.8.0', '1.8.0')).toBe(0)
+    expect(compareVersions('V1.8.0', 'v1.7.0')).toBeGreaterThan(0)
+    expect(satisfies('v1.8.0', '1.7.0')).toBe(true)
+  })
+
   test('anything from the first non-digit, non-dot character is ignored', () => {
     expect(compareVersions('1.7.0-beta', '1.7.0')).toBe(0)
     expect(compareVersions('1.7.1-rc1', '1.7.0')).toBeGreaterThan(0)

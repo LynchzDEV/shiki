@@ -122,7 +122,8 @@ describe('plugin requirements', () => {
     const market = await createPluginRepo(join(fixtureRoot, 'req-market'), { name: 'Req market', plugins: [{ id: 'board-core', repo: fileUrl(dependency), ref: 'v1.8.0', name: 'Board core', description: '', runtime: 'isolated' }] }, { manifestName: 'marketplace.json' })
     expect((await json('POST', '/api/plugins/marketplaces', { url: fileUrl(market) })).status).toBe(200)
     const main = await createPluginRepo(join(fixtureRoot, 'needs-core'), isolatedManifest({ id: 'needs-core', name: 'Needs core', requires: [{ id: 'board-core', version: '1.7.0' }] }), { files: { 'src/screen.ts': TRIVIAL_SCREEN }, tag: 'v1.0.0' })
-    return { market: fileUrl(market), dependencySha: await fixtureSha(dependency), main: { url: fileUrl(main), sha: await fixtureSha(main) } }
+    const dependencyConsent = (commit: string) => ({ id: 'board-core', action: 'install', commit, repo: fileUrl(dependency), marketplace: fileUrl(market) })
+    return { market: fileUrl(market), dependencyConsent, dependencySha: await fixtureSha(dependency), main: { url: fileUrl(main), sha: await fixtureSha(main) } }
   }
 
   test('preview returns requires, searching the given marketplace', async () => {
@@ -144,7 +145,7 @@ describe('plugin requirements', () => {
   })
 
   test('install asks for the steps, then installs them when they are sent back', async () => {
-    const { main, dependencySha } = await setUpPair()
+    const { main, dependencySha, dependencyConsent } = await setUpPair()
     const asked = await json('POST', '/api/plugins/install', { repo: main.url, ref: 'v1.0.0', commit: main.sha })
     expect(asked.status).toBe(409)
     const askedBody = await asked.json()
@@ -154,7 +155,7 @@ describe('plugin requirements', () => {
     const junk = await json('POST', '/api/plugins/install', { repo: main.url, ref: 'v1.0.0', commit: main.sha, requirements: 'yes please' })
     expect(junk.status).toBe(409)
 
-    const landed = await json('POST', '/api/plugins/install', { repo: main.url, ref: 'v1.0.0', commit: main.sha, requirements: [{ id: 'board-core', action: 'install', commit: dependencySha, extra: 1 }, 7, null] })
+    const landed = await json('POST', '/api/plugins/install', { repo: main.url, ref: 'v1.0.0', commit: main.sha, requirements: [{ ...dependencyConsent(dependencySha), extra: 1 }, 7, null] })
     expect(landed.status).toBe(200)
     const body = await landed.json()
     expect(body.plugin.id).toBe('needs-core')
@@ -163,7 +164,7 @@ describe('plugin requirements', () => {
   })
 
   test('update takes requirements the same way', async () => {
-    const { dependencySha } = await setUpPair()
+    const { dependencySha, dependencyConsent } = await setUpPair()
     const plain = await createPluginRepo(join(fixtureRoot, 'grows'), isolatedManifest({ id: 'grows' }), { files: { 'src/screen.ts': TRIVIAL_SCREEN }, tag: 'v1.0.0' })
     await json('POST', '/api/plugins/install', { repo: fileUrl(plain), ref: 'v1.0.0', commit: await fixtureSha(plain) })
     await commitFixture(plain, { 'mc-plugin.json': `${JSON.stringify(isolatedManifest({ id: 'grows', version: '2.0.0', requires: [{ id: 'board-core' }] }), null, 2)}\n` }, { tag: 'v2.0.0' })
@@ -173,18 +174,18 @@ describe('plugin requirements', () => {
     expect(asked.status).toBe(409)
     expect((await asked.json()).needsRequirements).toBe(true)
 
-    const landed = await json('POST', '/api/plugins/grows/update', { ref: 'v2.0.0', commit: sha, requirements: [{ id: 'board-core', action: 'install', commit: dependencySha }] })
+    const landed = await json('POST', '/api/plugins/grows/update', { ref: 'v2.0.0', commit: sha, requirements: [dependencyConsent(dependencySha)] })
     expect(landed.status).toBe(200)
     expect((await landed.json()).installedRequirements).toEqual(['board-core'])
   })
 
   test('DELETE and PATCH name the plugins that need it, and force goes ahead', async () => {
-    const { main, dependencySha } = await setUpPair()
-    await json('POST', '/api/plugins/install', { repo: main.url, ref: 'v1.0.0', commit: main.sha, requirements: [{ id: 'board-core', action: 'install', commit: dependencySha }] })
+    const { main, dependencySha, dependencyConsent } = await setUpPair()
+    await json('POST', '/api/plugins/install', { repo: main.url, ref: 'v1.0.0', commit: main.sha, requirements: [dependencyConsent(dependencySha)] })
 
     const refusedRemove = await json('DELETE', '/api/plugins/board-core', {})
     expect(refusedRemove.status).toBe(409)
-    expect(await refusedRemove.json()).toEqual({ error: 'Needs core need this plugin', dependents: [{ id: 'needs-core', name: 'Needs core' }] })
+    expect(await refusedRemove.json()).toEqual({ error: 'Needs core needs this plugin', dependents: [{ id: 'needs-core', name: 'Needs core' }] })
 
     const refusedOff = await json('PATCH', '/api/plugins/board-core', { enabled: false })
     expect(refusedOff.status).toBe(409)

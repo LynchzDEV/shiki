@@ -891,7 +891,7 @@ describe('plugin requirements', () => {
   describe('install and update', () => {
     const consentFor = (requires: RequirementStep[]) => requires
       .filter(step => step.status === 'install' || step.status === 'update' || step.status === 'enable')
-      .map(step => ({ id: step.id, action: step.status as 'install' | 'update' | 'enable', ...(step.status === 'install' || step.status === 'update' ? { commit: step.preview.commit } : {}) }))
+      .map(step => ({ id: step.id, action: step.status as 'install' | 'update' | 'enable', ...(step.status === 'install' || step.status === 'update' ? { commit: step.preview.commit, repo: step.listing.repo, marketplace: step.listing.marketplace } : {}) }))
 
     let saved: string[]
     const recording = () => createInstaller({ saveInstalled: async plugin => { saved.push(plugin.id); await saveInstalled(plugin) } })
@@ -1114,7 +1114,7 @@ describe('plugin requirements', () => {
     test('uninstall is refused with the plugins that need it, and force removes it', async () => {
       await installPair()
       const refused = await installer().uninstall(REQUIRED)
-      expect(refused).toEqual({ ok: false, status: 409, error: 'Plugin main-plugin need this plugin', dependents: [{ id: 'main-plugin', name: 'Plugin main-plugin' }] })
+      expect(refused).toEqual({ ok: false, status: 409, error: 'Plugin main-plugin needs this plugin', dependents: [{ id: 'main-plugin', name: 'Plugin main-plugin' }] })
       expect(await getInstalled(REQUIRED)).not.toBeNull()
 
       const forced = await installer().uninstall(REQUIRED, { force: true })
@@ -1147,7 +1147,7 @@ describe('plugin requirements', () => {
       await installOk(fileUrl(other), await fixtureSha(other))
       const refused = await installer().uninstall(REQUIRED)
       expect(refused.ok === false && 'dependents' in refused && refused.dependents.map(entry => entry.id).sort()).toEqual(['main-plugin', 'second-plugin'])
-      expect(refused.ok === false && refused.error).toBe('Plugin main-plugin, Plugin second-plugin need this plugin')
+      expect(refused.ok === false && refused.error).toBe('Plugin main-plugin and Plugin second-plugin need this plugin')
     })
 
     test('a failed install can still take back a requirement that something else needed', async () => {
@@ -1156,9 +1156,156 @@ describe('plugin requirements', () => {
       await marketplaceOf('main', [{ id: 'dep-middle', source: middle }, { id: 'dep-bottom', source: bottom }])
       const source = await createPluginRepo(join(fixtureRoot, 'main-plugin'), needing('main-plugin', [{ id: 'dep-middle' }]), { files: { 'src/screen.ts': 'const x = = = broken\n' }, tag: 'v1.0.0' })
       const steps = await previewRequires({ url: fileUrl(source) })
-      const failed = await installer().install({ repo: fileUrl(source), ref: 'v1.0.0', commit: await fixtureSha(source), requirements: steps.flatMap(step => step.status === 'install' ? [{ id: step.id, action: 'install' as const, commit: step.preview.commit }] : []) })
+      const failed = await installer().install({ repo: fileUrl(source), ref: 'v1.0.0', commit: await fixtureSha(source), requirements: steps.flatMap(step => step.status === 'install' ? [{ id: step.id, action: 'install' as const, commit: step.preview.commit, repo: step.listing.repo, marketplace: step.listing.marketplace }] : []) })
       expect(failed.ok).toBe(false)
       expect(await listInstalled()).toEqual([])
+    })
+  })
+
+
+  describe('failures after the files are replaced', () => {
+    const SKILL = '---\nname: card-refine\ndescription: x\n---\n'
+    const consenting = (steps: RequirementStep[]) => steps.flatMap(step => step.status === 'install' ? [{ id: step.id, action: 'install' as const, repo: step.listing.repo, marketplace: step.listing.marketplace, commit: step.preview.commit }] : [])
+
+    test('an update that fails on contributions goes back to the old version and takes back the requirement', async () => {
+      const targets = [join(configDir, 'home-claude')]
+      await mkdir(join(targets[0]!, 'skills', 'card-refine'), { recursive: true })
+      await writeFile(join(targets[0]!, 'skills', 'card-refine', 'SKILL.md'), 'user owned\n')
+      const contributing = () => createInstaller({ contributionTargets: () => targets, cliCommand: () => 'shiki', syncEngineAssets: async () => {} })
+      const dependency = await pluginAt(REQUIRED)
+      await marketplaceOf('main', [{ id: REQUIRED, source: dependency }])
+      const source = await repo('main-plugin', needing('main-plugin', []), { 'src/screen.ts': TRIVIAL_SCREEN })
+      await installOk(fileUrl(source), await fixtureSha(source))
+      const before = await getInstalled('main-plugin')
+      await commitFixture(source, {
+        'mc-plugin.json': `${JSON.stringify(needing('main-plugin', [{ id: REQUIRED }], { version: '2.0.0', pluginApi: 2, contributes: { skills: ['skills/card-refine'] } }), null, 2)}\n`,
+        'skills/card-refine/SKILL.md': SKILL,
+      }, { tag: 'v2.0.0' })
+      const sha = await fixtureSha(source)
+      const asked = await contributing().update('main-plugin', { ref: 'v2.0.0', commit: sha, trust: true, accept: true }) as { requirements: RequirementStep[] }
+
+      const failed = await contributing().update('main-plugin', { ref: 'v2.0.0', commit: sha, trust: true, accept: true, requirements: consenting(asked.requirements) })
+      expect(failed.ok).toBe(false)
+      if (!failed.ok) expect(failed.error).toStartWith(`Plugin ${REQUIRED} was removed again; Plugin main-plugin was not updated: `)
+      expect(await getInstalled('main-plugin')).toEqual(before)
+      expect(await getInstalled(REQUIRED)).toBeNull()
+      expect(await readFile(join(pluginFolder('main-plugin'), 'mc-plugin.json'), 'utf8')).not.toContain('2.0.0')
+      expect((await readdir(join(configDir, 'plugins'))).filter(entry => entry.includes('.old-'))).toEqual([])
+      expect(await readFile(join(targets[0]!, 'skills', 'card-refine', 'SKILL.md'), 'utf8')).toBe('user owned\n')
+    })
+
+    test('an exception in the plugin install takes back the requirement and answers 500', async () => {
+      const dependency = await pluginAt(REQUIRED)
+      await marketplaceOf('main', [{ id: REQUIRED, source: dependency }])
+      const source = await createPluginRepo(join(fixtureRoot, 'main-plugin'), needing('main-plugin', [{ id: REQUIRED }], { pluginApi: 2, contributes: { skills: ['skills/card-refine'] } }), { files: { 'src/screen.ts': TRIVIAL_SCREEN, 'skills/card-refine/SKILL.md': SKILL }, tag: 'v1.0.0' })
+      const main = { url: fileUrl(source), sha: await fixtureSha(source) }
+      const throwing = createInstaller({ contributionTargets: () => [join(configDir, 'home-claude')], cliCommand: () => 'shiki', syncEngineAssets: async () => { throw new Error('sync exploded') } })
+      const result = await throwing.install({ repo: main.url, ref: 'v1.0.0', commit: main.sha, trust: true, requirements: consenting(await previewRequires(main)) })
+
+      expect(result).toMatchObject({ ok: false, status: 500, step: 'requirements' })
+      if (!result.ok) expect(result.error).toBe(`Plugin ${REQUIRED} was removed again; Plugin main-plugin was not installed: sync exploded`)
+      expect(await listInstalled()).toEqual([])
+    })
+
+    test('a requirement another plugin started needing meanwhile is kept, and the message says so', async () => {
+      const dependency = await pluginAt(REQUIRED)
+      await marketplaceOf('main', [{ id: REQUIRED, source: dependency }])
+      const other = await createPluginRepo(join(fixtureRoot, 'other-plugin'), needing('other-plugin', [{ id: REQUIRED }]), { files: { 'src/screen.ts': TRIVIAL_SCREEN }, tag: 'v1.0.0' })
+      const source = await mainNeeding([{ id: REQUIRED }])
+      let builds = 0
+      let release!: () => void
+      const gate = new Promise<void>(resolve => { release = resolve })
+      const slow = createInstaller({ build: async () => {
+        builds += 1
+        if (builds === 1) return
+        await gate
+        throw new Error('build broke')
+      } })
+      const first = slow.install({ repo: source.url, ref: 'v1.0.0', commit: source.sha, requirements: consenting(await previewRequires(source)) })
+      for (let tries = 0; tries < 200 && await getInstalled(REQUIRED) === null; tries += 1) await Bun.sleep(20)
+      expect((await installer().install({ repo: fileUrl(other), ref: 'v1.0.0', commit: await fixtureSha(other) })).ok).toBe(true)
+      release()
+
+      const result = await first
+      expect(result.ok).toBe(false)
+      if (!result.ok) expect(result.error).toStartWith(`Plugin ${REQUIRED} was kept because Plugin other-plugin needs it; Plugin main-plugin was not installed: `)
+      expect(await getInstalled(REQUIRED)).not.toBeNull()
+      expect(await getInstalled('main-plugin')).toBeNull()
+    })
+  })
+
+
+  describe('several requirers and nesting', () => {
+    async function twoMinimums(listedRef: string) {
+      const shared = await pluginAt('dep-c', { version: '1.5.0' })
+      await release(shared, 'dep-c', '2.0.0')
+      const nested = await pluginAt('dep-b', { requires: [{ id: 'dep-c', version: '2.0.0' }] })
+      await marketplaceOf('main', [{ id: 'dep-c', source: shared, ref: listedRef }, { id: 'dep-b', source: nested }])
+      await installOk(fileUrl(shared), (await Bun.$`git -C ${shared} rev-parse v1.0.0`.text()).trim())
+    }
+
+    test.each([
+      ['listed first', [{ id: 'dep-c', version: '1.0.0' }, { id: 'dep-b' }]],
+      ['listed last', [{ id: 'dep-b' }, { id: 'dep-c', version: '1.0.0' }]],
+    ])('the highest minimum wins when the marketplace is too old (%s)', async (_label, requires) => {
+      await twoMinimums('v1.0.0')
+      const steps = await previewRequires(await mainNeeding(requires))
+      expect(steps.find(step => step.id === 'dep-c')).toMatchObject({ status: 'unavailable', minVersion: '2.0.0' })
+    })
+
+    test.each([
+      ['listed first', [{ id: 'dep-c', version: '1.0.0' }, { id: 'dep-b' }]],
+      ['listed last', [{ id: 'dep-b' }, { id: 'dep-c', version: '1.0.0' }]],
+    ])('an installed requirement the highest minimum outgrows becomes an update (%s)', async (_label, requires) => {
+      await twoMinimums('v2.0.0')
+      const steps = await previewRequires(await mainNeeding(requires))
+      expect(steps.find(step => step.id === 'dep-c')).toMatchObject({ status: 'update', minVersion: '2.0.0', installedVersion: '1.5.0' })
+      expect(steps.filter(step => step.id === 'dep-c')).toHaveLength(1)
+    })
+
+    async function chainTo(leaf: string) {
+      const chain = ['dep-one', 'dep-two', 'dep-three']
+      const sources: Array<{ id: string; source: string }> = []
+      for (const [index, id] of chain.entries()) sources.push({ id, source: await pluginAt(id, { requires: [{ id: chain[index + 1] ?? leaf }] }) })
+      return sources
+    }
+
+    test.each([
+      ['listed after the chain', ['dep-one', 'dep-leaf']],
+      ['listed before the chain', ['dep-leaf', 'dep-one']],
+    ])('an id reached directly is not blocked because it is also nested deep (%s)', async (_label, order) => {
+      const sources = await chainTo('dep-leaf')
+      sources.push({ id: 'dep-leaf', source: await pluginAt('dep-leaf') })
+      await marketplaceOf('main', sources)
+      const steps = await previewRequires(await mainNeeding(order.map(id => ({ id }))))
+      expect(steps.find(step => step.id === 'dep-leaf')?.status).toBe('install')
+    })
+
+    test('an installed requirement nested deeper than three levels is fine', async () => {
+      const sources = await chainTo('dep-leaf')
+      await marketplaceOf('main', sources)
+      const leaf = await pluginAt('dep-leaf')
+      await installOk(fileUrl(leaf), await fixtureSha(leaf))
+      const steps = await previewRequires(await mainNeeding([{ id: 'dep-one' }]))
+      expect(steps.find(step => step.id === 'dep-leaf')?.status).toBe('ok')
+    })
+  })
+
+  describe('consent is tied to where the plugin comes from', () => {
+    test('the same id and commit from another repo or marketplace is refused', async () => {
+      const dependency = await pluginAt(REQUIRED)
+      await marketplaceOf('main', [{ id: REQUIRED, source: dependency }])
+      const main = await mainNeeding([{ id: REQUIRED }])
+      const [step] = await previewRequires(main)
+      if (step?.status !== 'install') throw new Error('expected install')
+      const consent = { id: REQUIRED, action: 'install' as const, commit: step.preview.commit, repo: step.listing.repo, marketplace: step.listing.marketplace }
+
+      for (const forged of [{ ...consent, repo: 'https://evil.example/x.git' }, { ...consent, marketplace: 'https://evil.example/m.git' }, { id: REQUIRED, action: 'install' as const, commit: step.preview.commit }]) {
+        const refused = await installer().install({ repo: main.url, ref: 'v1.0.0', commit: main.sha, requirements: [forged] })
+        expect(refused).toMatchObject({ ok: false, status: 409, needsRequirements: true })
+      }
+      expect(await listInstalled()).toEqual([])
+      expect((await installer().install({ repo: main.url, ref: 'v1.0.0', commit: main.sha, requirements: [consent] })).ok).toBe(true)
     })
   })
 
