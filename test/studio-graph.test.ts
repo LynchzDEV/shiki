@@ -33,6 +33,10 @@ test('agentLabel reads Chat decides, the provider name, or Unavailable for a rem
   expect(agentLabel({agent:{role:'execute'}},providers)).toBe('Chat decides')
   expect(agentLabel({agent:{role:'execute',engine:'qwen'}},providers)).toBe('Qwen Code')
   expect(agentLabel({agent:{role:'execute',engine:'grok'}},providers)).toBe('Unavailable · grok')
+  const roles=[{name:'execute',engine:'qwen',model:null}]
+  expect(agentLabel({agent:{role:'execute'}},providers,roles)).toBe('Qwen Code')
+  expect(agentLabel({agent:{role:'builder'}},providers,roles)).toBe('Missing role')
+  expect(agentLabel({agent:{role:'execute',engine:'qwen'}},providers,roles)).toBe('Qwen Code')
 })
 
 test('agentLabel reads In Session for the session engine, whatever the providers are',()=>{

@@ -114,7 +114,7 @@ function Studio() {
   const disabled = busy || building
   const builtin = workflows.find(item => item.id === 'default')
   const templates = builtin ? workflowTemplates(builtin) : []
-  const label = (node: Pick<WorkflowNode, 'agent'>) => agentLabel(node, providers)
+  const label = (node: Pick<WorkflowNode, 'agent'>) => agentLabel(node, providers, roles)
   const runStates = useMemo(() => nodeRunStates(canvasRun), [canvasRun])
   const runSince = (id: string) => canvasRun?.attempts.findLast(attempt => attempt.nodeId === id && attempt.status !== 'settled')?.startedAt
   const shownNodes = useMemo(() => isLiveRun(canvasRun?.status) ? nodes.map(node => ({ ...node, data: { ...node.data, runState: runStates[node.id] ?? 'waiting' as const, runSince: runSince(node.id) } })) : nodes, [nodes, canvasRun, runStates])

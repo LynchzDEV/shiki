@@ -31,8 +31,10 @@ export function workflowTemplates(defaultFlow: Workflow): Workflow[] {
 }
 export type Provider = { id: string; name: string; models: string[]; builtin?: boolean; family?: string | null }
 export const IN_SESSION = 'session'
-export function agentLabel(node: Pick<WorkflowNode, 'agent'>, providers: readonly Provider[]): string {
-  const engine = node.agent.engine
+export function agentLabel(node: Pick<WorkflowNode, 'agent'>, providers: readonly Provider[], roles?: readonly RoleOption[] | null): string {
+  const role = roles?.find(entry => entry.name === node.agent.role)
+  if (!node.agent.engine && roles && !role) return 'Missing role'
+  const engine = node.agent.engine ?? role?.engine
   if (!engine) return 'Chat decides'
   if (engine === IN_SESSION) return 'In Session'
   return providers.find(provider => provider.id === engine)?.name ?? `Unavailable · ${engine}`
