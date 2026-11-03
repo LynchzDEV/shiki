@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { defaultWorkflow, validateWorkflow } from '../server/workflows'
 import { classicWorkflow } from './support/classic-workflow'
-import { agentHelp, agentIcon, agentLabel, insertWorkflowStep, runNote, showsModelFields, kindIcon, nodeRunStates, roleWord, removeWorkflowStep, taskPreset, workflowTemplates } from '../client/studio-graph'
+import { agentHelp, agentIcon, agentLabel, insertWorkflowStep, runNote, showsModelFields, kindIcon, nodeRunStates, roleOptions, roleWord, rolesBody, removeWorkflowStep, taskPreset, validRoleName, workflowTemplates } from '../client/studio-graph'
 
 test('adding a custom step keeps the following review connected and preserves failure routes',()=>{
   const graph=classicWorkflow()
@@ -57,6 +57,39 @@ test('roleWord capitalises the role shown on the AI tag',()=>{
   expect(roleWord('plan')).toBe('Plan')
   expect(roleWord('execute')).toBe('Execute')
   expect(roleWord('review')).toBe('Review')
+})
+
+test('roleWord capitalises any role name and keeps the rest',()=>{
+  expect(roleWord('builder')).toBe('Builder')
+  expect(roleWord('deepReview')).toBe('DeepReview')
+})
+
+test('roleOptions lists the built-in roles first, then the rest by name, without autoReview, fallback or engineless entries',()=>{
+  const roles={review:{engine:'codex',model:'gpt-5'},zeta:{engine:'glm',model:null},autoReview:true,fallback:{engine:'claude',model:null},plan:{engine:'claude'},builder:{engine:'qwen',model:'q3'},broken:{model:'x'},execute:{engine:'glm',model:null},odd:'claude'}
+  expect(roleOptions(roles)).toEqual([
+    {name:'plan',engine:'claude',model:null},
+    {name:'execute',engine:'glm',model:null},
+    {name:'review',engine:'codex',model:'gpt-5'},
+    {name:'builder',engine:'qwen',model:'q3'},
+    {name:'zeta',engine:'glm',model:null},
+  ])
+})
+
+test('validRoleName accepts a new name and rejects reserved, duplicate and malformed ones',()=>{
+  expect(validRoleName('builder',['plan','execute','review'])).toBe(true)
+  expect(validRoleName('fallback',[])).toBe(false)
+  expect(validRoleName('autoReview',[])).toBe(false)
+  expect(validRoleName('plan',['plan','execute','review'])).toBe(false)
+  expect(validRoleName('-x',[])).toBe(false)
+  expect(validRoleName('a'.repeat(64),[])).toBe(true)
+  expect(validRoleName('a'.repeat(65),[])).toBe(false)
+})
+
+test('rolesBody sends every role from the last read plus edits, drops removed roles and keeps autoReview',()=>{
+  const read={plan:{engine:'claude',model:null},execute:{engine:'glm',model:null},review:{engine:'codex',model:null},old:{engine:'qwen',model:null},hidden:{model:'kept'},autoReview:true,fallback:null}
+  const edited=[{name:'plan',engine:'codex',model:'gpt-5'},{name:'execute',engine:'glm',model:null},{name:'review',engine:'codex',model:null},{name:'builder',engine:'claude',model:null}]
+  expect(rolesBody(read,edited,{engine:'claude',model:null})).toEqual({plan:{engine:'codex',model:'gpt-5'},execute:{engine:'glm',model:null},review:{engine:'codex',model:null},builder:{engine:'claude',model:null},hidden:{model:'kept'},autoReview:true,fallback:{engine:'claude',model:null}})
+  expect(rolesBody(read,edited,null).fallback).toBeNull()
 })
 
 const settled=(nodeId:string,outcome:string,startedAt:number)=>({nodeId,status:'settled',result:{outcome},startedAt})

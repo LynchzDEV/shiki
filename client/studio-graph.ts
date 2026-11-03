@@ -53,7 +53,30 @@ export function runNote(graph: Pick<Workflow, 'nodes'>): string | null {
 }
 const kindIcons: Record<WorkflowNode['kind'], string> = { plan: 'plan-icon', 'verify-plan': 'check-circle-icon', implement: 'code-icon', review: 'eye-icon', task: 'spark-icon', join: 'spark-icon' }
 export function kindIcon(kind: WorkflowNode['kind']): string { return kindIcons[kind] }
-export function roleWord(role: 'plan' | 'execute' | 'review'): string { return role[0]!.toUpperCase() + role.slice(1) }
+export function roleWord(role: string): string { return role.charAt(0).toUpperCase() + role.slice(1) }
+export type RoleAssignment = { engine: string; model: string | null }
+export type RoleOption = RoleAssignment & { name: string }
+export const BUILTIN_ROLES = ['plan', 'execute', 'review'] as const
+const RESERVED_KEYS = new Set(['autoReview', 'fallback'])
+const ROLE_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/
+const builtinRank = (name: string) => { const index = (BUILTIN_ROLES as readonly string[]).indexOf(name); return index < 0 ? BUILTIN_ROLES.length : index }
+export function roleOptions(roles: Record<string, unknown>): RoleOption[] {
+  return Object.entries(roles)
+    .filter(([name]) => !RESERVED_KEYS.has(name))
+    .flatMap(([name, value]) => {
+      const entry = typeof value === 'object' && value !== null ? value as Record<string, unknown> : {}
+      return typeof entry.engine === 'string' ? [{ name, engine: entry.engine, model: typeof entry.model === 'string' ? entry.model : null }] : []
+    })
+    .sort((a, b) => builtinRank(a.name) - builtinRank(b.name) || a.name.localeCompare(b.name))
+}
+export function validRoleName(name: string, existing: readonly string[]): boolean {
+  return ROLE_NAME.test(name) && !RESERVED_KEYS.has(name) && !existing.includes(name)
+}
+export function rolesBody(read: Record<string, unknown>, roles: readonly RoleOption[], fallback: RoleAssignment | null): Record<string, unknown> {
+  const shown = new Set(roleOptions(read).map(role => role.name))
+  const unshown = Object.entries(read).filter(([name]) => !shown.has(name))
+  return { ...Object.fromEntries(unshown), ...Object.fromEntries(roles.map(({ name, engine, model }) => [name, { engine, model }])), fallback }
+}
 export type NodeRunState = 'passed' | 'running' | 'failed' | 'waiting'
 export type CanvasRun = { status: string; tokens: { nodeId: string; state: string }[]; attempts: { nodeId: string; status: string; result: { outcome: string } | null; startedAt: number }[] }
 export function nodeRunStates(run: CanvasRun | null): Record<string, NodeRunState> {

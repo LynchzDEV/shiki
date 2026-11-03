@@ -434,8 +434,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .run-state { transition: color 240ms cubic-bezier(.2, .8, .2, 1); }
 .step-inspector h2 { font-size: 17px; margin-bottom: 24px; }
 .step-inspector p { font-size: 13px; line-height: 1.7; }
-.step-inspector label, .field-stack label, .default-roles label, .secondary-studio label { display: grid; gap: 10px; font-size: 13px; margin-bottom: 20px; }
-.step-inspector input, .step-inspector textarea, .step-inspector select, .field-stack input, .field-stack select, .field-stack textarea, .default-roles select, .default-roles input, .secondary-studio textarea { box-shadow: var(--inset); padding: 12px; border-radius: var(--r-md); corner-shape: var(--corner); width: 100%; min-width: 0; font-size: 14px; }
+.step-inspector label, .field-stack label, .secondary-studio label { display: grid; gap: 10px; font-size: 13px; margin-bottom: 20px; }
+.step-inspector input, .step-inspector textarea, .step-inspector select, .field-stack input, .field-stack select, .field-stack textarea, .roles-settings select, .roles-settings input, .secondary-studio textarea { box-shadow: var(--inset); padding: 12px; border-radius: var(--r-md); corner-shape: var(--corner); width: 100%; min-width: 0; font-size: 14px; }
 textarea { line-height: 1.6; }
 .step-inspector textarea, .field-stack textarea, .secondary-studio textarea { resize: vertical; }
 .step-inspector summary, .work-defaults summary, .secondary-studio summary, .field-stack summary { padding: 16px 0; font-size: 14px; }
@@ -497,7 +497,15 @@ textarea { line-height: 1.6; }
 .connection-example { display: flex; align-items: center; gap: 24px; margin: 28px 0; font-size: 13px; }
 .work-defaults { margin-top: 36px; border-top: 1px solid var(--line); }
 .work-defaults > p { font-size: 13px; margin: 12px 0 24px; }
-.default-roles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+.roles-settings { grid-column: 1 / -1; max-width: none; }
+.roles-settings header p { margin: 4px 0 0; }
+.role-rows { display: grid; gap: 10px; }
+.role-row { display: grid; grid-template-columns: 140px minmax(0, 1fr) minmax(0, 1fr) 90px; gap: 12px; align-items: center; }
+.role-row strong { font-size: 14px; font-weight: 500; }
+.role-row .chat-error, .role-row > p { grid-column: 1 / -1; margin: 0; }
+.role-add { grid-template-columns: 140px auto; justify-content: start; }
+.role-add svg { width: 14px; height: 14px; vertical-align: -2px; margin-right: 6px; }
+.role-fallback { border-top: 1px solid var(--line); padding-top: 18px; }
 .switch-label { display: flex; align-items: center; gap: 12px; font-size: 14px; padding: 16px 0; }
 .switch-label input { accent-color: var(--accent); width: 18px; height: 18px; }
 .secondary-studio { max-width: 850px; margin: 48px auto 0; }
@@ -524,7 +532,7 @@ dialog[open]::backdrop { opacity: 1; }
   .workflow-canvas { min-height: 320px; }
   .connections-view { grid-template-columns: 220px minmax(0, 1fr); gap: 28px; }
   .connection-columns { grid-template-columns: minmax(0, 1fr); }
-  .default-roles { grid-template-columns: minmax(0, 1fr); }
+  .role-row { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 600px) {
   .toolbar nav:last-child { margin-left: auto; }

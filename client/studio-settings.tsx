@@ -6,7 +6,7 @@ import type { WorkflowNode } from '../server/workflows'
 import { normalizeUsage, weeklyOnly, type ProviderUsage, type QuotaWindow } from './provider-usage'
 import { readRecord } from './shared'
 import { api, apiDelete } from './studio-api'
-import { roleWord } from './studio-graph'
+import { BUILTIN_ROLES, roleOptions, roleWord, rolesBody, validRoleName, type RoleAssignment, type RoleOption } from './studio-graph'
 import { DISARM_MS } from './confirm-button'
 
 export type ConnectionList = { builtins: string[]; connections: AgentConnection[]; presets: Array<Partial<AgentConnection>>; models: Record<string, string[]>; roles?: Record<string, { engine: string; model: string | null }>; discovery?: Record<string, DiscoveryState | null> }
@@ -46,7 +46,6 @@ function GlmSettings({ report, onError }: { report: (text: string) => void; onEr
 
 const ENGINE_TINTS: Record<string, string> = { claude: '#d4a091', glm: '#91b0dc', codex: '#bfd38b' }
 const LOGOS = new Set(['claude', 'glm', 'codex', 'qwen', 'grok'])
-const ROLES = ['plan', 'execute', 'review'] as const
 type Details = { usage: Record<string, unknown>; roles: Record<string, unknown>; models: Record<string, string[]>; glmConfigured: boolean }
 const adapterLine = (adapter: AgentConnection['adapter'] | undefined) => adapter === 'cli' ? 'Headless CLI' : adapter === 'opencode' ? 'OpenCode' : 'ACP agent'
 const tint = (id: string) => ({ '--engine': ENGINE_TINTS[id] ?? 'var(--line)' }) as CSSProperties
@@ -73,6 +72,73 @@ function ConfirmRemove({ label, busy, warning, onConfirm }: { label: string; bus
 function ModelDiscoveryLine({ adapter, state, checking, onRefresh }: { adapter: AgentConnection['adapter'] | undefined; state: DiscoveryState | null | undefined; checking: boolean; onRefresh: () => void }) {
   const line = discoveryLine(adapter, state, Date.now())
   return <p className="muted connection-small connection-discovery" data-state={state?.error ? 'error' : undefined}><span>{line.text}</span>{line.refresh && <button type="button" className="connection-button connection-refresh" disabled={checking} onClick={onRefresh}><Icon id="history-icon" />{checking ? 'Checking…' : 'Refresh'}</button>}</p>
+}
+
+type AiChoice = { id: string; name: string }
+const readFallback = (value: unknown): RoleAssignment | null => { const entry = readRecord(value); return typeof entry.engine === 'string' && entry.engine ? { engine: entry.engine, model: typeof entry.model === 'string' ? entry.model : null } : null }
+
+function AiSelect({ label, value, ais, off, onChange }: { label: string; value: string; ais: readonly AiChoice[]; off?: boolean; onChange: (engine: string) => void }) {
+  return <select aria-label={label} value={value} onChange={event => onChange(event.target.value)}>
+    {off && <option value="">Off</option>}
+    {ais.map(ai => <option key={ai.id} value={ai.id}>{ai.name}</option>)}
+    {value && !ais.some(ai => ai.id === value) && <option value={value}>Unavailable · {value}</option>}
+  </select>
+}
+
+function ModelInput({ label, id, value, models, disabled, onChange }: { label: string; id: string; value: string | null; models: readonly string[]; disabled?: boolean; onChange: (model: string | null) => void }) {
+  return <><input aria-label={label} list={id} value={value ?? ''} disabled={disabled} placeholder="This AI's default" onChange={event => onChange(event.target.value.trim() ? event.target.value : null)} /><datalist id={id}>{models.map(model => <option key={model} value={model} />)}</datalist></>
+}
+
+function RolesSettings({ read, ais, models, onSaved }: { read: Record<string, unknown>; ais: readonly AiChoice[]; models: Record<string, string[]>; onSaved: (saved: Record<string, unknown>) => void }) {
+  const [roles, setRoles] = useState<RoleOption[]>([])
+  const [fallback, setFallback] = useState<RoleAssignment | null>(null)
+  const [newName, setNewName] = useState('')
+  const [nameError, setNameError] = useState('')
+  const [status, setStatus] = useState<{ saved: true } | { error: string } | null>(null)
+  const [busy, setBusy] = useState(false)
+  useEffect(() => { setRoles(roleOptions(read)); setFallback(readFallback(read.fallback)) }, [read])
+  const edit = (name: string, patch: Partial<RoleAssignment>) => { setRoles(current => current.map(role => role.name === name ? { ...role, ...patch } : role)); setStatus(null) }
+  const add = () => {
+    const name = newName.trim()
+    const names = roles.map(role => role.name)
+    if (!validRoleName(name, names)) { setNameError(names.includes(name) ? `A role named ${name} already exists.` : 'Use up to 64 letters, numbers, - or _, starting with a letter or number. autoReview and fallback are taken.'); return }
+    setRoles([...roles, { name, engine: roles.find(role => role.name === 'execute')?.engine ?? ais[0]?.id ?? '', model: null }]); setNewName(''); setNameError(''); setStatus(null)
+  }
+  const save = async () => {
+    setBusy(true)
+    try {
+      const response = await fetch('/api/roles', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(rolesBody(read, roles, fallback)) })
+      const data = readRecord(await response.json().catch(() => ({})))
+      if (!response.ok) { setStatus({ error: typeof data.error === 'string' ? data.error : `Could not save the roles (${response.status})` }); return }
+      setStatus({ saved: true }); onSaved(data)
+    } catch (error) { setStatus({ error: (error as Error).message }) } finally { setBusy(false) }
+  }
+  return <section className="connection-settings roles-settings" aria-labelledby="roles-title">
+    <header><h2 id="roles-title">Roles</h2><p className="muted connection-small">Each flow step names a role. Pick the AI and model that plays it.</p></header>
+    <div className="role-rows">
+      {roles.map(role => <div className="role-row" key={role.name}>
+        <strong>{roleWord(role.name)}</strong>
+        <AiSelect label={`AI for ${roleWord(role.name)}`} value={role.engine} ais={ais} onChange={engine => edit(role.name, { engine })} />
+        <ModelInput label={`Model for ${roleWord(role.name)}`} id={`role-models-${role.name}`} value={role.model} models={models[role.engine] ?? []} onChange={model => edit(role.name, { model })} />
+        {(BUILTIN_ROLES as readonly string[]).includes(role.name) ? <span /> : <button type="button" className="connection-button" aria-label={`Remove role ${roleWord(role.name)}`} onClick={() => { setRoles(roles.filter(item => item.name !== role.name)); setStatus(null) }}>Remove</button>}
+      </div>)}
+      <form className="role-row role-add" onSubmit={event => { event.preventDefault(); add() }}>
+        <input aria-label="New role name" value={newName} placeholder="builder" aria-invalid={nameError ? true : undefined} aria-describedby={nameError ? 'role-name-error' : undefined} onChange={event => { setNewName(event.target.value); setNameError('') }} />
+        <button type="submit" className="connection-button" disabled={!newName.trim()}><Icon id="plus-icon" />Add role</button>
+        {nameError && <p id="role-name-error" role="alert" className="chat-error">{nameError}</p>}
+      </form>
+    </div>
+    <div className="role-row role-fallback">
+      <strong>Fallback AI</strong>
+      <AiSelect label="Fallback AI" value={fallback?.engine ?? ''} ais={ais} off onChange={engine => { setFallback(engine ? { engine, model: fallback?.engine === engine ? fallback.model : null } : null); setStatus(null) }} />
+      <ModelInput label="Fallback model" id="fallback-models" value={fallback?.model ?? null} models={fallback ? models[fallback.engine] ?? [] : []} disabled={!fallback} onChange={model => { if (fallback) { setFallback({ ...fallback, model }); setStatus(null) } }} />
+      <p className="muted connection-small">Takes over when a step's AI cannot start or keeps crashing.</p>
+    </div>
+    <div className="connection-foot">
+      <button type="button" className="connection-button primary" disabled={busy} onClick={() => void save()}>Save roles</button>
+      {status && ('saved' in status ? <span className="muted connection-small" role="status">Saved</span> : <p role="alert" className="chat-error">{status.error}</p>)}
+    </div>
+  </section>
 }
 
 export function Connections({ list, refresh, report, onError, onConnect }: { list: ConnectionList; refresh: () => Promise<void>; report: (text: string) => void; onError: (text: string) => void; onConnect?: () => void }) {
@@ -119,13 +185,15 @@ export function Connections({ list, refresh, report, onError, onConnect }: { lis
   const remove = async () => { setBusy(true); try { await apiDelete(`/connections/${editing.id}`); await refresh(); pick({ kind: 'builtin', id: 'claude' }); report('Connection removed.') } catch (error) { onError((error as Error).message) } finally { setBusy(false) } }
   const current = (test: (item: Choice) => boolean) => test(choice)
   const aiId = choice.kind === 'builtin' ? choice.id : choice.kind === 'presets' ? '' : editing.id ?? ''
-  const usedFor = ROLES.filter(role => readRecord(details.roles[role]).engine === aiId)
+  const usedFor = roleOptions(details.roles).filter(role => role.engine === aiId).map(role => role.name)
+  const ais: AiChoice[] = [...list.builtins.map(id => ({ id, name: BUILTIN[id]?.name ?? id })), ...list.connections.map(connection => ({ id: connection.id, name: connection.name }))]
   const models = choice.kind === 'builtin' ? details.models[aiId] ?? [] : configured ? list.models[aiId] ?? details.models[aiId] ?? [] : (editing.models ?? []).filter(Boolean)
   const header = choice.kind === 'builtin'
     ? { name: BUILTIN[choice.id]?.name ?? choice.id, line: BUILTIN[choice.id]?.line ?? 'Built in', description: BUILTIN[choice.id]?.description ?? 'Built-in integration.' }
     : { name: editing.name || 'New connection', line: `${adapterLine(editing.adapter)}${configured ? '' : ' · not saved yet'}`, description: 'Install the app and sign in, then check the connection. Advanced settings are below.' }
 
   return <section className="studio-view connections-view">
+    <RolesSettings read={details.roles} ais={ais} models={{ ...details.models, ...list.models }} onSaved={saved => { setDetails(current => ({ ...current, roles: saved })); void refresh() }} />
     <aside className="connection-list" aria-label="AI connections">
       <h2>AIs <span className="muted">{list.builtins.length + list.connections.length} connected</span></h2>
       {list.builtins.map(id => <button key={id} type="button" className="connection-choice" aria-pressed={current(item => item.kind === 'builtin' && item.id === id)} onClick={() => pick({ kind: 'builtin', id })}><Logo id={id} size={28} /><span><strong>{BUILTIN[id]?.name ?? id}</strong><small>{BUILTIN[id]?.line ?? 'Built in'}</small></span><i className="connection-dot" /></button>)}
@@ -139,7 +207,7 @@ export function Connections({ list, refresh, report, onError, onConnect }: { lis
       <p className="connection-note">{header.description}</p>
       <div className="connection-columns">
         <div className="connection-section"><h3>Usage</h3><UsageBars usage={normalizeUsage(aiId, details.usage[aiId])} /></div>
-        <div className="connection-section"><h3>Used for</h3>{usedFor.length ? usedFor.map(role => <span className="connection-role" key={role}>{roleWord(role)}</span>) : <span className="muted connection-small">Not assigned</span>}<p className="muted connection-small">Change in Workflows · Roles</p></div>
+        <div className="connection-section"><h3>Used for</h3>{usedFor.length ? usedFor.map(role => <span className="connection-role" key={role}>{roleWord(role)}</span>) : <span className="muted connection-small">Not assigned</span>}<p className="muted connection-small">Change in Roles above</p></div>
       </div>
       {(models.length > 0 || configured) && <div className="connection-section"><h3>Models</h3>{models.length > 0 && <div>{models.map(model => <span className="connection-chip" key={model}>{model}</span>)}</div>}{configured && <ModelDiscoveryLine adapter={editing.adapter} state={list.discovery?.[aiId]} checking={checking} onRefresh={() => void refreshModels()} />}</div>}
       {choice.kind === 'builtin' && choice.id === 'glm' && <div className="connection-section"><h3>z.ai settings</h3><GlmSettings report={report} onError={onError} /></div>}

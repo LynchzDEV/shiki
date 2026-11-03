@@ -95,7 +95,7 @@ The sidebar on the left lists your chats and live terminals, grouped by Today, Y
 **Studio** (top right) is where you shape how your AI team works:
 
 - **Workflows**: describe one and an AI drafts it, or start from the default (**pstack Feature**: explore → design → verify → build → cross-family review), a template, or scratch. Steps sit on a canvas with success, failure and needs-help branches. Each step shows what it does and which AI does it (**Chat decides**, or a pinned AI and model), and can carry skills, tools and acceptance checks. While a workflow runs, the canvas shows which steps passed, which one is running, and where it failed.
-- **Manage AIs**: every connected AI with its usage, the role it plays, its models and its settings.
+- **Manage AIs**: the **Roles** section (which AI and model plays plan, execute, review and any role you add, plus the **Fallback AI** that takes over when a step's AI cannot start), then every connected AI with its usage, the roles it plays, its models and its settings.
 - **Runs**: every run with its attempts, evidence and checks.
 - **Rules**: the core rules every step follows.
 

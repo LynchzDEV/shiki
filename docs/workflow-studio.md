@@ -45,7 +45,9 @@ A custom task can use a tool such as Jev when you choose and configure it. There
 
 ## Agent connections
 
-Open **Manage AIs** to select a preset or custom connection. Technical fields live under **Advanced connection settings**. Existing Claude, GLM, and Codex settings continue to work. Studio connections also appear in job/model selectors and role settings. After adding a connection, reload previously opened settings/terminal forms to refresh their available agents.
+Open **Manage AIs** to select a preset or custom connection. Technical fields live under **Advanced connection settings**. Existing Claude, GLM, and Codex settings continue to work. Studio connections also appear in job/model selectors and role settings.
+
+The **Roles** section at the top of **Manage AIs** assigns an AI and an optional model to each role. **Plan**, **Execute** and **Review** always exist. **Add role** creates another one, such as `builder`: names use up to 64 letters, numbers, `-` or `_`, start with a letter or number, and cannot be `autoReview` or `fallback`. Leave the model empty to use that AI's default. **Fallback AI** (off by default) takes over when a step's AI cannot start or keeps crashing. **Save roles** saves every role at once. Each AI's **Used for** badges list the roles it plays. After adding a connection, reload previously opened settings/terminal forms to refresh their available agents.
 
 | Connection | Configuration |
 | --- | --- |
