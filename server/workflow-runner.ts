@@ -42,7 +42,7 @@ export type WorkflowAttempt = {
   inSession?: true; sessionNotifiedAt?: number | null; workspaceSnapshot?: WorkspaceState;
   reportedBy?: { via: ApprovalContext['via']; id: string; at: number }; interrupted?: true;
   shape?: FlowShape; nudgedFrom?: string;
-  crashes?: number; tried?: string[]; sameFamily?: true; family?: string | null;
+  crashes?: number; tried?: string[]; sameFamily?: true; families?: Array<string | null>;
 }
 export type TokenState = 'ready' | 'working' | 'settled' | 'waiting'
 export type WorkflowToken = { id: string; nodeId: string; pathId: string; workspace: string; state: TokenState; attempt: number | null; from: number[] }
@@ -413,7 +413,7 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
     if (!node.agent.engine || node.agent.engine === SESSION_ENGINE) return false
     return run.workflow.nodes.some(source => { const targets = passTargets(run.workflow, source.id); return targets.length > 1 && targets.includes(node.id) })
   }
-  const authorFamily = (run: WorkflowRun, attempt: WorkflowAttempt) => attempt.family !== undefined ? attempt.family : run.agents[attempt.nodeId]?.family
+  const authorFamilies = (run: WorkflowRun, attempt: WorkflowAttempt) => attempt.families ?? [run.agents[attempt.nodeId]?.family ?? null]
   const sameFamilyUses = (run: WorkflowRun) => run.attempts.filter(attempt => attempt.sameFamily).length
   async function replacementFor(run: WorkflowRun, node: WorkflowNode, tried: string[], reason: string): Promise<ResolvedAgent | null> {
     const current = run.agents[node.id]!
@@ -436,7 +436,7 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
     if (node.kind !== 'review') return candidates[0] ? { ...candidates[0], swappedFrom } : null
     const implemented = new Set([
       ...run.workflow.nodes.filter(other => other.kind === 'implement').map(other => run.agents[other.id]?.family),
-      ...run.attempts.filter(attempt => kindOf(run, attempt) === 'implement').map(attempt => authorFamily(run, attempt)),
+      ...run.attempts.filter(attempt => kindOf(run, attempt) === 'implement').flatMap(attempt => authorFamilies(run, attempt)),
     ])
     const crossFamily = candidates.find(agent => !implemented.has(agent.family))
     if (crossFamily) return { ...crossFamily, swappedFrom }
@@ -471,7 +471,7 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
     const verification = related.findLastIndex(attempt => kindOf(run, attempt) === 'verify-plan')
     const verified = verification > lastPlan && related[verification]?.result?.outcome === 'pass'
     if (node.kind === 'implement' && !verified) return block(run, 'Implementation requires a successfully verified plan')
-    if (node.kind === 'review' && unreviewedImplementations(run, token.pathId).some(attempt => authorFamily(run, attempt) === run.agents[node.id]!.family)) {
+    if (node.kind === 'review' && unreviewedImplementations(run, token.pathId).some(attempt => authorFamilies(run, attempt).includes(run.agents[node.id]!.family))) {
       const reviewer = run.agents[node.id]!
       const reason = 'no reviewer of a different family is available'
       const replacement = reviewer.sameFamily ? null : await replacementFor(run, node, [reviewer.engine], 'it shares a family with the implementation')
@@ -504,7 +504,7 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
     if (halted()) return null
     if (down) return recoverStep(run, node, attempt, token, down.reason)
     if (agent.sameFamily) attempt.sameFamily = true
-    attempt.family = agent.family
+    attempt.families = [...new Set([...attempt.families ?? [], agent.family])]
     const result = await deps.manager.createJob(stepJob(run, node, attempt, token, attempt.prompt), deps.resolver)
     if (!result.ok) return recoverStep(run, node, attempt, token, result.error)
     Object.assign(attempt, { jobId: result.job.id, status: 'running' })
@@ -1124,6 +1124,7 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
       if (run.versions[0]?.state !== 'approved') throw new RunActionError('Approve the flow before retrying', 409)
       if (workspaceBusy(run.cwd, id) || deps.manager.listJobs().some(job => job.workflowRunId === id && job.status === 'running')) throw new Error('Workspace still has running work')
       if (run.attempts.some(attempt => processAlive(attempt.checkPid))) throw new Error('The interrupted acceptance process may still be running; inspect it before retrying')
+      for (const attempt of run.attempts) attempt.families ??= authorFamilies(run, attempt)
       await reresolve(run)
       delete run.unavailable
       interrupt(run)

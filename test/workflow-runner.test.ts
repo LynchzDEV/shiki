@@ -352,6 +352,35 @@ test('after a retry with new Settings, the review is still checked against the f
   expect(reviews.at(-1)!.engine).not.toBe('glm')
 })
 
+test('a family whose job crashed mid-implementation still counts as an author for the review', async () => {
+  await build(({ engine }) => engine === 'glm' ? { cmd: '/bin/sh', args: ['-c', 'exit 1'], env: {} } : { cmd: '/bin/echo', args: [report()], env: {} })
+  await createWorkflowStore(dir).save({ ...withoutSession(), id: 'crashed-author' })
+  down = downFor(['codex'])
+  const run = await runner.start({ workflowId: 'crashed-author', cwd: repo, request: 'Implement', label: 'crashed-author' })
+  const done = await finished(run.id)
+  const review = done.attempts.findLast(attempt => attempt.nodeId === 'review')!
+  expect(done.attempts.find(attempt => attempt.nodeId === 'execute')!.families).toEqual(['glm', 'claude'])
+  expect(review.sameFamily).toBe(true)
+})
+
+test('a run saved before families were recorded keeps its authors across a retry with new Settings', async () => {
+  let calls = 0
+  const store = await build(() => ({ cmd: '/bin/echo', args: [report(calls++ === 3 ? 'blocked' : 'pass')], env: {} }))
+  await store.save({ ...withoutSession(), id: 'legacy-author' })
+  const run = await runner.start({ workflowId: 'legacy-author', cwd: repo, request: 'Implement', label: 'legacy-author' })
+  expect((await finished(run.id)).status).toBe('blocked')
+  const file = join(dir, 'workflow-runs', `${run.id}.json`)
+  const saved = JSON.parse(await readFile(file, 'utf8')) as WorkflowRun
+  for (const attempt of saved.attempts as Array<Record<string, unknown>>) { delete attempt.families; delete attempt.family }
+  await writeFile(file, JSON.stringify(saved))
+  runner = createWorkflowRunner({ manager, resolver: () => ({ cmd: '/bin/echo', args: [report()], env: {} }), store, base: dir, availability: async ({ engine }) => down(engine) })
+  await runner.recover()
+  await writeConfig({ roles: { ...ROLES, execute: { engine: 'codex', model: null }, review: { engine: 'glm', model: null } } })
+  await runner.retry(run.id)
+  expect((await finished(run.id)).status).toBe('done')
+  expect(stepJobs().filter(job => job.workflowRunId === run.id && job.workflowNodeId === 'review').at(-1)!.engine).not.toBe('glm')
+})
+
 test('a stop that lands while a crashed step is being recovered never starts another job', async () => {
   let spawns = 0
   const store = await build(({ engine }) => { if (engine === 'glm') { spawns += 1; throw new Error('glm will not start') } return { cmd: '/bin/echo', args: [report()], env: {} } })
