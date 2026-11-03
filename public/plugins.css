@@ -45,6 +45,7 @@
 .mk-fail { color: var(--danger); }
 .mk-req { display: grid; gap: 6px; padding: 12px 0; border-top: 1px solid var(--line); }
 .mk-req p { margin: 0; }
+.mk-req .mk-tag { justify-self: start; }
 .mk-force { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .mk-force p { margin: 0; }
 
