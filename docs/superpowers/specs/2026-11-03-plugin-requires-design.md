@@ -140,3 +140,11 @@ Known failures that already exist, which you can ignore: `test/plugins-ui.test.t
 ## Docs
 
 Copy this file to `docs/superpowers/specs/2026-11-03-plugin-requires-design.md`.
+
+## Known limits
+
+- An `enable` step turns a plugin on without re-resolving that plugin's own requirements.
+- A disabled plugin that requires another still counts as a dependent when removing or turning off.
+- Resolution has no cache: every preview and install clones each listing again.
+- Rollback never forces. A requirement that another plugin started needing in the meantime is kept, and the error says so.
+- When one plugin is listed several times in the tree, the highest minimum version wins.

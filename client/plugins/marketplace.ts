@@ -46,13 +46,18 @@ function stepNeedsTrust(step: RequirementStep): boolean {
   return step.preview.runtime === 'trusted' || contributionLines({ contributes: step.preview.contributes }).length > 0
 }
 
-function trustCount(preview: Preview): number {
-  return (needsTrust(preview) ? 1 : 0) + preview.requires.filter(stepNeedsTrust).length
+function trustNames(preview: Preview): string[] {
+  return [...(needsTrust(preview) ? [preview.manifest.name] : []), ...preview.requires.filter(stepNeedsTrust).flatMap(stepName)]
 }
 
-function consentOf(steps: RequirementStep[]): Array<{ id: string; action: string; commit?: string }> {
+function stepName(step: RequirementStep): string[] {
+  if (step.status === 'install' || step.status === 'update') return [step.preview.manifest.name]
+  return step.status === 'enable' ? [step.name] : [step.id]
+}
+
+function consentOf(steps: RequirementStep[]): Array<{ id: string; action: string; commit?: string; repo?: string; marketplace?: string }> {
   return pendingSteps(steps).flatMap(step => {
-    if (step.status === 'install' || step.status === 'update') return [{ id: step.id, action: step.status, commit: step.preview.commit }]
+    if (step.status === 'install' || step.status === 'update') return [{ id: step.id, action: step.status, commit: step.preview.commit, repo: step.listing.repo, marketplace: step.listing.marketplace }]
     return step.status === 'enable' ? [{ id: step.id, action: 'enable' }] : []
   })
 }
@@ -63,11 +68,7 @@ function joinNames(names: string[]): string {
 
 function appliedNames(steps: RequirementStep[], ids: unknown): string[] {
   if (!Array.isArray(ids)) return []
-  return steps.flatMap(step => {
-    if (!ids.includes(step.id)) return []
-    if (step.status === 'install' || step.status === 'update') return [step.preview.manifest.name]
-    return step.status === 'enable' ? [step.name] : [step.id]
-  })
+  return steps.filter(step => ids.includes(step.id)).flatMap(stepName)
 }
 
 type InstallDraft = { listing: Listing; preview: Preview; error: string }
@@ -221,6 +222,12 @@ function requirementRow(step: RequirementStep): HTMLElement {
   }
   row.append(Object.assign(document.createElement('p'), { className: 'muted connection-small', textContent: stepNote(step) }))
   if (step.status === 'ok' || step.status === 'enable') return row
+  row.insertAdjacentHTML('beforeend', tag(step.preview.runtime))
+  row.append(Object.assign(document.createElement('p'), { className: 'muted connection-small', textContent: `from ${REPO_DISPLAY(step.listing.marketplace)}` }))
+  if (step.preview.runtime === 'trusted') {
+    row.insertAdjacentHTML('beforeend', `<div class="mk-warn">${icon('mk-warn')}<div></div></div>`)
+    row.querySelector('.mk-warn div')!.textContent = `${step.preview.manifest.name} gets full access: it can read your files and saved tokens and reach any website.`
+  }
   row.append(permList(step.preview.permissions, 'It asks for').querySelector('.mk-perm')!)
   const lines = contributionLines({ contributes: step.preview.contributes })
   if (lines.length > 0) {
@@ -495,7 +502,7 @@ function installDialog(): HTMLElement {
   head.append(intro)
   head.insertAdjacentHTML('beforeend', tag(preview.runtime))
   card.append(head)
-  const label = pendingSteps(preview.requires).length > 0 ? `Install all (${installCount(preview.requires)})` : 'Install'
+  const label = installCount(preview.requires) > 1 ? `Install all (${installCount(preview.requires)})` : 'Install'
   const install = button(label, 'connection-button primary', element => { void confirmInstall(element, card) })
   if (preview.runtime === 'isolated') {
     card.append(Object.assign(document.createElement('p'), { className: 'connection-note', textContent: 'It will be able to:' }))
@@ -507,11 +514,11 @@ function installDialog(): HTMLElement {
   }
   const needs = requirementsSection(preview.requires)
   if (needs !== null) card.append(needs)
-  const trusting = trustCount(preview)
-  const trust = trustSwitch(trusting > 1 ? 'I trust these plugins' : 'I trust this plugin')
-  const refresh = (): void => { install.disabled = hasBlockedStep(preview.requires) || (trusting > 0 && !trust.input.checked) }
+  const trusting = trustNames(preview)
+  const trust = trustSwitch(`I trust ${joinNames(trusting)}`)
+  const refresh = (): void => { install.disabled = hasBlockedStep(preview.requires) || (trusting.length > 0 && !trust.input.checked) }
   trust.input.onchange = refresh
-  if (trusting > 0) card.append(trust.label)
+  if (trusting.length > 0) card.append(trust.label)
   refresh()
   if (draft.error !== '') card.append(Object.assign(document.createElement('p'), { className: 'mk-fail muted', textContent: draft.error }))
   const footer = document.createElement('footer')
@@ -529,7 +536,7 @@ async function confirmInstall(target: HTMLButtonElement, scope: ParentNode): Pro
       repo: draft.listing.plugin.repo,
       ref: draft.listing.plugin.ref,
       commit: draft.preview.commit,
-      ...(trustCount(draft.preview) > 0 ? { trust: true } : {}),
+      ...(trustNames(draft.preview).length > 0 ? { trust: true } : {}),
       ...(draft.listing.marketplace === undefined ? {} : { marketplace: draft.listing.marketplace }),
       ...(pendingSteps(draft.preview.requires).length > 0 ? { requirements: consentOf(draft.preview.requires) } : {}),
     })
@@ -754,13 +761,13 @@ function updateArea(plugin: InstalledPlugin): HTMLElement | null {
   const needs = requirementsSection(state.requires)
   if (needs !== null) wrap.append(needs)
   if (state.message !== '') wrap.append(Object.assign(document.createElement('p'), { className: 'connection-note', textContent: state.message }))
-  const trusting = state.requires.some(stepNeedsTrust)
-  const trust = trustSwitch('I trust these plugins')
-  const label = pendingSteps(state.requires).length > 0 ? `Update all (${installCount(state.requires)})` : `Update to ${state.version}`
+  const trusting = state.requires.filter(stepNeedsTrust).flatMap(stepName)
+  const trust = trustSwitch(`I trust ${joinNames(trusting)}`)
+  const label = installCount(state.requires) > 1 ? `Update all (${installCount(state.requires)})` : `Update to ${state.version}`
   const update = button(label, 'connection-button primary', () => void runUpdate(plugin, trust.input.checked ? { trust: true } : {}))
-  const refresh = (): void => { update.disabled = hasBlockedStep(state.requires) || (trusting && !trust.input.checked) }
+  const refresh = (): void => { update.disabled = hasBlockedStep(state.requires) || (trusting.length > 0 && !trust.input.checked) }
   trust.input.onchange = refresh
-  if (trusting) wrap.append(trust.label)
+  if (trusting.length > 0) wrap.append(trust.label)
   refresh()
   wrap.append(update)
   return wrap
@@ -783,7 +790,7 @@ function uninstallArea(plugin: InstalledPlugin): HTMLElement {
       if (!response.ok) {
         const payload = await response.json().catch(() => ({})) as { error?: string; dependents?: unknown }
         if (isDependentsRefusal(response, payload)) {
-          forcePrompt(wrap, `${payload.error ?? 'Other plugins need this plugin'}. Remove anyway?`, 'Remove anyway', again => attempt(again, true))
+          forcePrompt(wrap, `${payload.error ?? 'Another plugin needs this plugin'}. Remove anyway?`, 'Remove anyway', again => attempt(again, true))
           return null
         }
         return payload.error ?? 'Could not uninstall this plugin'
@@ -809,7 +816,7 @@ async function toggleEnabled(plugin: InstalledPlugin, input: HTMLInputElement, p
     const payload = await response.json().catch(() => ({})) as { error?: string; dependents?: unknown }
     input.checked = !next
     if (!next && isDependentsRefusal(response, payload)) {
-      forcePrompt(pane, `${payload.error ?? 'Other plugins need this plugin'}. Turn off anyway?`, 'Turn off anyway', () => { input.checked = false; void toggleEnabled(plugin, input, pane, true) })
+      forcePrompt(pane, `${payload.error ?? 'Another plugin needs this plugin'}. Turn off anyway?`, 'Turn off anyway', () => { input.checked = false; void toggleEnabled(plugin, input, pane, true) })
       return
     }
     toast(payload.error ?? 'That change did not go through')

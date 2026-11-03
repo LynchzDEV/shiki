@@ -636,7 +636,7 @@ test('a plugin that needs another lists it, counts it on the button and sends th
   install.click()
   await flush(4)
   const request = sent.find(entry => entry.url === '/api/plugins/install')!
-  expect(request.body).toEqual({ repo: 'https://github.com/LynchzDEV/mc-plugin-needs-core', ref: 'v1.0.0', commit: 'main111', requirements: [{ id: 'board-core', action: 'install', commit: 'dep111' }] })
+  expect(request.body).toEqual({ repo: 'https://github.com/LynchzDEV/mc-plugin-needs-core', ref: 'v1.0.0', commit: 'main111', requirements: [{ id: 'board-core', action: 'install', commit: 'dep111', repo: 'https://github.com/LynchzDEV/mc-plugin-board-core', marketplace: 'https://github.com/LynchzDEV/mc-marketplace' }] })
   expect(byId('toast').textContent).toBe('Installed Needs core and Board core')
   installReply = null
 })
@@ -654,13 +654,13 @@ test('an outdated or turned-off requirement says what will happen to it, and ste
   sent.length = 0
   install.click()
   await flush(4)
-  expect(sent.find(entry => entry.url === '/api/plugins/install')!.body!.requirements).toEqual([{ id: 'board-old', action: 'update', commit: 'old222' }, { id: 'board-off', action: 'enable' }])
+  expect(sent.find(entry => entry.url === '/api/plugins/install')!.body!.requirements).toEqual([{ id: 'board-old', action: 'update', commit: 'old222', repo: 'https://github.com/LynchzDEV/mc-plugin-board-core', marketplace: 'https://github.com/LynchzDEV/mc-marketplace' }, { id: 'board-off', action: 'enable' }])
 })
 
 test('a requirement that cannot be found says why and blocks the install', async () => {
   const dialog = await openLinkDialog([{ id: 'board-gone', status: 'unavailable', reason: 'board-gone is not in your marketplaces. Add the marketplace that has it, or install it first.' }])
   expect(dialog.querySelector('.mk-req .mk-fail')!.textContent).toBe('board-gone is not in your marketplaces. Add the marketplace that has it, or install it first.')
-  expect(buttonNamed('Install all (1)', dialog).disabled).toBe(true)
+  expect(buttonNamed('Install', dialog).disabled).toBe(true)
   buttonNamed('Cancel', dialog).click()
   await flush()
 })
@@ -682,7 +682,7 @@ test('trust covers the whole set: one switch, worded for several plugins, and tr
   const trusted = dependencyStep({ preview: { manifest: { id: 'board-core', name: 'Board core', version: '1.8.0' }, commit: 'dep111', permissions: {}, runtime: 'trusted' } })
   const dialog = await openLinkDialog([trusted], { runtime: 'trusted' })
   expect(dialog.querySelectorAll('input[role="switch"]')).toHaveLength(1)
-  expect(dialog.querySelector('.switch-label')!.textContent).toBe('I trust these plugins')
+  expect(dialog.querySelector('.switch-label')!.textContent).toBe('I trust Needs core and Board core')
   const install = buttonNamed('Install all (2)', dialog)
   expect(install.disabled).toBe(true)
   ;(dialog.querySelector('input[role="switch"]') as HTMLInputElement).click()
@@ -697,7 +697,7 @@ test('trust covers the whole set: one switch, worded for several plugins, and tr
 test('a trusted requirement alone also needs the switch', async () => {
   const trusted = dependencyStep({ preview: { manifest: { id: 'board-core', name: 'Board core', version: '1.8.0' }, commit: 'dep111', permissions: {}, runtime: 'trusted' } })
   const dialog = await openLinkDialog([trusted])
-  expect(dialog.querySelector('.switch-label')!.textContent).toBe('I trust this plugin')
+  expect(dialog.querySelector('.switch-label')!.textContent).toBe('I trust Board core')
   expect(buttonNamed('Install all (2)', dialog).disabled).toBe(true)
   buttonNamed('Cancel', dialog).click()
   await flush()
@@ -715,7 +715,7 @@ test('when the server says the steps changed, the dialog shows the new list and 
   sent.length = 0
   buttonNamed('Install all (2)', again).click()
   await flush(4)
-  expect(sent.find(entry => entry.url === '/api/plugins/install')!.body!.requirements).toEqual([{ id: 'board-core', action: 'install', commit: 'dep999' }])
+  expect(sent.find(entry => entry.url === '/api/plugins/install')!.body!.requirements).toEqual([{ id: 'board-core', action: 'install', commit: 'dep999', repo: 'https://github.com/LynchzDEV/mc-plugin-board-core', marketplace: 'https://github.com/LynchzDEV/mc-marketplace' }])
 })
 
 test('an update that needs more lists it in the update area and sends the steps with the update', async () => {
@@ -736,7 +736,7 @@ test('an update that needs more lists it in the update area and sends the steps 
   sent.length = 0
   buttonNamed('Update all (2)', byId('marketplace')).click()
   await flush()
-  expect(sent.find(entry => entry.url === '/api/plugins/hello-board/update')!.body).toEqual({ ref: 'v2.0.0', commit: '222222', requirements: [{ id: 'board-core', action: 'install', commit: 'dep111' }] })
+  expect(sent.find(entry => entry.url === '/api/plugins/hello-board/update')!.body).toEqual({ ref: 'v2.0.0', commit: '222222', requirements: [{ id: 'board-core', action: 'install', commit: 'dep111', repo: 'https://github.com/LynchzDEV/mc-plugin-board-core', marketplace: 'https://github.com/LynchzDEV/mc-marketplace' }] })
   previewBody = {}
 })
 
@@ -776,4 +776,23 @@ test('turning off a plugin that others need asks first, puts the switch back, an
   buttonNamed('Turn off anyway', byId('marketplace')).click()
   await flush(4)
   expect(sent.filter(entry => entry.method === 'PATCH').map(entry => entry.body)).toEqual([{ enabled: false, force: true }])
+})
+
+test('a trusted requirement under an isolated plugin is shown as full access and the switch names it', async () => {
+  const trusted = dependencyStep({ preview: { manifest: { id: 'board-core', name: 'Board core', version: '1.8.0' }, commit: 'dep111', permissions: {}, runtime: 'trusted' } })
+  const dialog = await openLinkDialog([trusted])
+  const row = dialog.querySelector('.mk-req') as HTMLElement
+  expect(row.textContent).toContain('Trusted')
+  expect(row.querySelector('.mk-warn')!.textContent).toBe('Board core gets full access: it can read your files and saved tokens and reach any website.')
+  expect(row.textContent).toContain('from github.com/LynchzDEV/mc-marketplace')
+  expect(dialog.querySelector('.switch-label')!.textContent).toBe('I trust Board core')
+  buttonNamed('Cancel', dialog).click()
+  await flush()
+})
+
+test('the button is plain Install or Update when only a turned-off plugin is involved', async () => {
+  const dialog = await openLinkDialog([{ id: 'board-off', status: 'enable', installedVersion: '1.0.0', name: 'Board off' }])
+  expect(buttonNamed('Install', dialog).disabled).toBe(false)
+  buttonNamed('Cancel', dialog).click()
+  await flush()
 })
