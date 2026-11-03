@@ -72,6 +72,8 @@ Keep exactly one `{{core_rules}}`, `{{workflow}}`, and `{{assignment}}` slot in 
 
 Every run stores its workflow, policy, connection settings, skill contents, and rendered node instructions. Credential references are stored; credential values are resolved when used. Model aliases and a native agent's unspecified default model remain provider/CLI-controlled; pin an explicit model ID when that distinction matters. Claude receives core rules through its append-system-prompt option, Codex through developer instructions, and generic ACP agents receive the composed assignment through ACP's prompt message. ACP has no universal system-prompt override.
 
+In **Runs**, each step names the AI and model that did it. A step the fallback AI took over adds `· instead of <AI> (<reason>)`, and a review that had to run on the same model family as the work adds `· same-family review`.
+
 Runs store workspace HEAD and a diff fingerprint with each settled node. Prior node output, acceptance results, and evidence pass to subsequent nodes. A workflow reserves its directory against other Shikidan jobs while running. Unrelated terminals or external programs can still edit that directory.
 
 Stop terminates the active job/check. Retry repeats the current step with the same revisions and may repeat side effects. After a restart, Shikidan reconnects the workflow to its existing job. An interrupted check or uncertain dispatch is blocked for inspection rather than silently repeated. Studio jobs cannot be continued through the legacy job reply endpoint, which would discard their pinned instructions.

@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { defaultWorkflow, validateWorkflow } from '../server/workflows'
 import { classicWorkflow } from './support/classic-workflow'
-import { agentChoice, agentFromChoice, agentHelp, agentIcon, agentLabel, roleChoice, insertWorkflowStep, runNote, showsModelFields, kindIcon, nodeRunStates, roleOptions, roleWord, rolesBody, removeWorkflowStep, taskPreset, validRoleName, workflowTemplates } from '../client/studio-graph'
+import { agentChoice, agentFromChoice, agentHelp, agentIcon, agentLabel, roleChoice, insertWorkflowStep, runNote, showsModelFields, kindIcon, nodeRunStates, roleOptions, roleWord, rolesBody, removeWorkflowStep, swapNote, taskPreset, validRoleName, workflowTemplates } from '../client/studio-graph'
 
 test('adding a custom step keeps the following review connected and preserves failure routes',()=>{
   const graph=classicWorkflow()
@@ -95,6 +95,14 @@ test('picking a role drops the pinned AI and model; picking an AI keeps the curr
   expect(agentFromChoice(roleChoice('builder'),{role:'execute',engine:'codex'})).toEqual({role:'builder'})
   expect(agentFromChoice('glm',{role:'builder'})).toEqual({role:'builder',engine:'glm'})
   expect(agentFromChoice('session',{role:'plan'})).toEqual({role:'plan',engine:'session'})
+})
+
+test('swapNote marks a step another AI took over and a same-family review, and stays empty otherwise',()=>{
+  expect(swapNote({engine:'claude',swappedFrom:{engine:'codex',model:'gpt-5',reason:'codex is not installed'}})).toBe(' · instead of codex (codex is not installed)')
+  expect(swapNote({engine:'claude',sameFamily:true})).toBe(' · same-family review')
+  expect(swapNote({engine:'claude',swappedFrom:{engine:'codex',model:null,reason:'crashed 3 times'},sameFamily:true})).toBe(' · instead of codex (crashed 3 times) · same-family review')
+  expect(swapNote({engine:'claude'})).toBe('')
+  expect(swapNote(undefined)).toBe('')
 })
 
 test('rolesBody sends every role from the last read plus edits, drops removed roles and keeps autoReview',()=>{

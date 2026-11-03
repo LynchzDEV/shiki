@@ -8,7 +8,7 @@ import type { RunStatus, WorkflowRun } from '../server/workflow-runner'
 import type { DraftJob, WorkflowDraft } from '../server/workflow-builder'
 import { api, openRun } from './studio-api'
 import { Connections, StepAttachments, type ConnectionList } from './studio-settings'
-import { agentChoice, agentFromChoice, agentHelp, agentIcon, agentLabel, IN_SESSION, roleChoice, insertWorkflowStep, kindIcon, nodeRunStates, roleOptions, roleWord, removeWorkflowStep, runNote, showsModelFields, stepPresets, taskPreset, workflowTemplates, type NodeRunState, type Provider, type RoleOption } from './studio-graph'
+import { agentChoice, agentFromChoice, agentHelp, agentIcon, agentLabel, IN_SESSION, roleChoice, insertWorkflowStep, kindIcon, nodeRunStates, roleOptions, roleWord, removeWorkflowStep, runNote, showsModelFields, stepPresets, swapNote, taskPreset, workflowTemplates, type NodeRunState, type Provider, type RoleOption } from './studio-graph'
 
 type TaskNode = Node<WorkflowNode & { agentLabel: string; branches: Outcome[]; runState?: NodeRunState; runSince?: number }, 'task'>
 type Screen = 'home' | 'templates' | 'editor' | 'connections' | 'runs' | 'rules'
@@ -308,7 +308,7 @@ function Studio() {
           {run.error && <p role="alert" className="chat-error">{run.error}</p>}
           <ol className="attempts">{run.attempts.map(attempt => <li key={`${attempt.nodeId}-${attempt.number}`}>
             <h3>{run.workflow.nodes.find(node => node.id === attempt.nodeId)?.title ?? attempt.nodeId}<span className="status" data-state={attempt.result?.outcome ?? attempt.status}>{attempt.result?.outcome ?? attempt.status}</span></h3>
-            <p className="muted">{label({ agent: { role: 'execute', engine: run.agents[attempt.nodeId]?.engine } })}{run.agents[attempt.nodeId]?.model ? ` · ${run.agents[attempt.nodeId]?.model}` : ''}</p>
+            <p className="muted">{label({ agent: { role: 'execute', engine: run.agents[attempt.nodeId]?.engine } })}{run.agents[attempt.nodeId]?.model ? ` · ${run.agents[attempt.nodeId]?.model}` : ''}{swapNote(run.agents[attempt.nodeId])}</p>
             {attempt.result && <><p>{attempt.result.summary}</p>{attempt.result.evidence.length > 0 && <ul>{attempt.result.evidence.map((evidence, index) => <li key={index}>{evidence}</li>)}</ul>}</>}
             {attempt.checks.map((check, index) => <details key={index}><summary>{check.command} {check.args.join(' ')} · {check.exitCode === 0 ? 'Passed' : 'Failed'}</summary><pre className="studio-output">{check.output}</pre></details>)}
             {attempt.jobId && <p><button type="button" className="text-button" onClick={() => dispatchEvent(new CustomEvent('quiet:flow-watch', { detail: { runId: run.id, jobId: attempt.jobId } }))}><Icon id="terminal-icon" />Show this step’s output</button></p>}

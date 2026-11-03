@@ -72,6 +72,11 @@ export function roleOptions(roles: Record<string, unknown>): RoleOption[] {
 export function validRoleName(name: string, existing: readonly string[]): boolean {
   return ROLE_NAME.test(name) && !RESERVED_KEYS.has(name) && !existing.includes(name)
 }
+export type RunAgentMarks = { engine?: string; swappedFrom?: { engine: string; model: string | null; reason: string }; sameFamily?: boolean }
+export function swapNote(agent: RunAgentMarks | undefined): string {
+  const instead = agent?.swappedFrom ? ` · instead of ${agent.swappedFrom.engine} (${agent.swappedFrom.reason})` : ''
+  return `${instead}${agent?.sameFamily ? ' · same-family review' : ''}`
+}
 const ROLE_CHOICE = 'role:'
 export type AgentPick = { role: string; engine?: string }
 export function agentChoice(agent: AgentPick): string { return agent.engine ?? `${ROLE_CHOICE}${agent.role}` }
