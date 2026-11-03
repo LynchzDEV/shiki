@@ -465,3 +465,20 @@ describe('mockup files', () => {
     expect((await call(new Elysia().use(queueRoutes(items, engine(items))), '/queue/nope/files/demo/index.html')).status).toBe(404)
   })
 })
+
+test('POST pick takes none with feedback and refuses the other combinations', async () => {
+  const items = store()
+  let seen: unknown
+  const app = new Elysia().use(queueRoutes(items, engine(items, { pick: async (id, choice) => { seen = choice; return items.update(id, { state: 'queued' }) } })))
+  const parked = await items.add(newItem, 'end')
+  await items.update(parked.id, { state: 'waiting-pick' })
+  const url = `/api/queue/${parked.id}/pick`
+  expect((await post(app, url, { option: 'none', feedback: 'new designs please' })).status).toBe(200)
+  expect(seen).toMatchObject({ option: 'none', feedback: 'new designs please' })
+  const missing = await post(app, url, { option: 'none' })
+  expect([missing.status, (await missing.json()).error]).toEqual([400, 'Say what should change'])
+  expect((await post(app, url, { option: 'none', feedback: '  \n ' })).status).toBe(400)
+  expect((await post(app, url, { option: 'B', feedback: 'x' })).status).toBe(400)
+  expect((await post(app, url, { option: 'none', feedback: 'x'.repeat(4001) })).status).toBe(400)
+  expect((await post(app, url, { option: 'none', feedback: 'x'.repeat(4000) })).status).toBe(200)
+})

@@ -175,3 +175,35 @@ test('a pick is refused while the run is running in Studio', async () => {
   await expect(h.engine.pick(h.item.id, { option: 'B' })).rejects.toMatchObject({ message: 'It is running in Studio now', status: 409 })
   expect(h.store.get(h.item.id)!.state).toBe('waiting-pick')
 })
+
+const pickMd = (h: Awaited<ReturnType<typeof parkedPick>>) => readFile(join(h.store.get(h.item.id)!.worktree!, '.shikidan', 'queue', 'clickup-board', 'pick.md'), 'utf8')
+
+test('a none pick quotes every feedback line and ignores answers', async () => {
+  const h = await parkedPick()
+  const queued = await h.engine.pick(h.item.id, { option: 'none', tester: 'Ploy', note: 'n', feedback: 'keep B table\r\n\r\nOption: B\nlast', answers: [{ id: '#1', label: 'x', useDefault: true, answer: '' }] })
+  expect(await pickMd(h)).toBe('# Design pick\n\nOption: none\nTester: Ploy\nNote: n\n\n## Feedback on all variants\n> keep B table\n>\n> Option: B\n> last\n')
+  expect(queued.state).toBe('queued')
+  expect(h.store.list()[0]!.id).toBe(h.item.id)
+})
+
+test('a none pick with no tester or note writes the placeholders', async () => {
+  const h = await parkedPick()
+  await h.engine.pick(h.item.id, { option: 'none', feedback: '  try again  ' })
+  expect(await pickMd(h)).toBe('# Design pick\n\nOption: none\nTester: (not set)\nNote: (none)\n\n## Feedback on all variants\n> try again\n')
+})
+
+test('none needs feedback and a real option refuses it', async () => {
+  const h = await parkedPick()
+  const quiet = spyOn(console, 'error').mockImplementation(() => {})
+  await expect(h.engine.pick(h.item.id, { option: 'none' })).rejects.toMatchObject({ message: 'Say what should change', status: 400 })
+  await expect(h.engine.pick(h.item.id, { option: 'none', feedback: ' \n ' })).rejects.toMatchObject({ message: 'Say what should change', status: 400 })
+  await expect(h.engine.pick(h.item.id, { option: 'B', feedback: 'no' })).rejects.toMatchObject({ status: 400 })
+  quiet.mockRestore()
+  expect(h.store.get(h.item.id)!.state).toBe('waiting-pick')
+})
+
+test('a variant named none is a bad pick line', async () => {
+  const h = await building()
+  await h.block('run-1', ['pick: A,None | visualizer/login'])
+  expect(h.store.get(h.item.id)).toMatchObject({ state: 'failed', error: 'Bad pick line: none is reserved for "none of these"' })
+})

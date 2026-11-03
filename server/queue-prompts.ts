@@ -111,6 +111,11 @@ export function stillOpenMarkdown(answers: readonly PickAnswer[]): string {
   return `\n## Still open\n${lines.join('\n')}\n`
 }
 
+export function noPickMarkdown(feedback: string): string {
+  const quoted = feedback.trim().split(/\r\n|\r|\n/).map(line => (line.trim() === '' ? '>' : `> ${line.trim()}`))
+  return `\n## Feedback on all variants\n${quoted.join('\n')}\n`
+}
+
 const pickBody = (line: string): string | null => {
   const body = PICK_LINE.exec(line.replace(BULLET, '').replace(QUOTES, '').trim())?.[1] ?? null
   return body !== null && body.includes('|') ? body : null
@@ -139,6 +144,7 @@ export function cardImagesMarkdown(outcomes: CardImageOutcome[]): string {
 }
 
 const OPTION_ID = /^[A-Z][A-Za-z0-9]{0,15}$/
+export const NO_PICK = 'none'
 const MOCKUP_ROOT = 'visualizer/'
 const MIN_OPTIONS = 2
 const MAX_OPTIONS = 6
@@ -150,6 +156,7 @@ function pickProblem(options: string[], path: string, recommended: string | null
   if (options.length < MIN_OPTIONS || options.length > MAX_OPTIONS) return `give ${MIN_OPTIONS} to ${MAX_OPTIONS} options`
   const bad = options.find(id => !OPTION_ID.test(id))
   if (bad !== undefined) return `bad option id ${bad}`
+  if (options.some(id => id.toLowerCase() === NO_PICK)) return `${NO_PICK} is reserved for "none of these"`
   if (new Set(options).size !== options.length) return 'option ids must be unique'
   if (path.startsWith('/') || !path.startsWith(MOCKUP_ROOT) || path.length === MOCKUP_ROOT.length || path.split('/').includes('..')) return `the folder must be relative and inside ${MOCKUP_ROOT}`
   if (recommended !== null && !options.includes(recommended)) return `recommended ${recommended} is not an option`

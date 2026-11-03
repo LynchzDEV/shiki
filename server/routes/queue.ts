@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { requireLocal, type GuardContext } from '../auth'
 import { peerAddress, trustedHostRequest } from '../local-access'
 import { QueueRefusal, SourceFailure, type QueueEngine } from '../queue-engine'
-import { cleanPickSummary } from '../queue-prompts'
+import { cleanPickSummary, NO_PICK } from '../queue-prompts'
 import type { QueueItem, QueueStore } from '../queue-store'
 import { mockupResponse } from '../queue-mockups'
 import { queueStep, type QueueStep, type QueueStepRun } from '../queue-step'
@@ -28,7 +28,7 @@ const addSchema = z.object({
 const oneLineText = (max: number) => z.string().max(max).refine(text => !/[\r\n]/.test(text))
 const pickAnswerSchema = z.object({ id: oneLineText(16).pipe(z.string().min(1)), label: oneLineText(200), answer: z.string().max(1000), useDefault: z.boolean().optional() })
   .refine(entry => entry.useDefault === true || entry.answer.trim() !== '')
-const pickSchema = z.object({ option: z.string().min(1).max(16), tester: oneLineText(200).optional(), note: z.string().max(4000).optional(), answers: z.array(pickAnswerSchema).max(20).optional() })
+const pickSchema = z.object({ option: z.string().min(1).max(16), tester: oneLineText(200).optional(), note: z.string().max(4000).optional(), answers: z.array(pickAnswerSchema).max(20).optional(), feedback: z.string().max(4000).optional() })
 const confirmSchema = z.object({ confirm: z.literal(true) })
 const moveSchema = z.object({ to: z.number().int().min(0) })
 const NO_ITEM = 'No such queue item'
@@ -127,7 +127,10 @@ export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: 
     })
     .post('/api/queue/:id/pick', ({ params, body, set }) => {
       const parsed = pickSchema.safeParse(body)
-      if (!parsed.success) { set.status = 400; return { error: 'option is required; tester is at most 200 characters and note at most 4000; each answer needs an id, a label and an answer, at most 20' } }
+      if (!parsed.success) { set.status = 400; return { error: 'option is required; tester is at most 200 characters and note at most 4000; each answer needs an id, a label and an answer, at most 20; feedback is at most 4000' } }
+      const { option, feedback } = parsed.data
+      if (option === NO_PICK && (feedback ?? '').trim() === '') { set.status = 400; return { error: 'Say what should change' } }
+      if (option !== NO_PICK && feedback !== undefined) { set.status = 400; return { error: 'Feedback is only for none of these' } }
       return refusing(set, async () => ({ item: cleaned(await engine.pick(params.id, parsed.data)) }))
     })
     .get('/queue/:id/files/*', ({ params }) => mockupResponse(store.get(params.id)?.worktree ?? null, params['*']))
