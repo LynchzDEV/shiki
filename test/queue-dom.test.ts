@@ -3,7 +3,7 @@ import { JSDOM } from 'jsdom'
 
 import type { QueueItem } from '../server/queue-store'
 
-const { window } = new JSDOM('<body><main><section id="queue" class="studio" aria-label="Queue"></section></main></body>', { url: 'http://127.0.0.1:7777/' })
+const { window } = new JSDOM('<body><main><section id="queue" class="studio" aria-label="Queue"></section><section id="queue-review" class="studio q-review" aria-label="Pick a design"></section></main></body>', { url: 'http://127.0.0.1:7777/' })
 const doc = window.document
 const section = () => doc.getElementById('queue') as HTMLElement
 
@@ -55,7 +55,7 @@ beforeAll(async () => {
   const dialogProto = window.HTMLDialogElement.prototype as unknown as Record<string, unknown>
   dialogProto.showModal = function (this: HTMLDialogElement): void { this.open = true }
   dialogProto.close = function (this: HTMLDialogElement): void { if (!this.open) return; this.open = false; this.dispatchEvent(new window.Event('close')) }
-  Object.assign(globalThis, { window, document: doc, EventSource: FakeSource, localStorage: window.localStorage, Element: window.Element, HTMLElement: window.HTMLElement, location: window.location })
+  Object.assign(globalThis, { window, document: doc, EventSource: FakeSource, localStorage: window.localStorage, Element: window.Element, HTMLElement: window.HTMLElement, HTMLInputElement: window.HTMLInputElement, location: window.location })
   window.localStorage.setItem('skd.term.recentCwd', JSON.stringify(['/Users/me/api', '/Users/me/web']))
   globalThis.fetch = (async (url: string, init?: RequestInit) => {
     const call = { method: init?.method ?? 'GET', url: String(url), body: typeof init?.body === 'string' ? JSON.parse(init.body) as unknown : null }
@@ -68,6 +68,7 @@ beforeAll(async () => {
     return Response.json({ ok: true })
   }) as typeof fetch
   addEventListener('quiet:toast', (event) => toasts.push(String((event as CustomEvent).detail)))
+  addEventListener('quiet:show', (event) => shown.push(String((event as CustomEvent).detail)))
   addEventListener('quiet:studio-run', (event) => studioRuns.push((event as CustomEvent).detail))
   addEventListener('quiet:flow-watch', (event) => watched.push((event as CustomEvent).detail))
   queue = await import('../client/queue')
@@ -81,6 +82,7 @@ beforeEach(async () => {
   await flush()
   calls.length = 0
   toasts.length = 0
+  shown.length = 0
   studioRuns.length = 0
   watched.length = 0
   replies.clear()
@@ -89,7 +91,7 @@ beforeEach(async () => {
 afterAll(() => {
   section().remove()
   globalThis.fetch = realFetch
-  for (const key of ['window', 'document', 'EventSource', 'localStorage', 'Element', 'HTMLElement', 'location']) Reflect.deleteProperty(globalThis, key)
+  for (const key of ['window', 'document', 'EventSource', 'localStorage', 'Element', 'HTMLElement', 'HTMLInputElement', 'location']) Reflect.deleteProperty(globalThis, key)
   window.close()
 })
 
@@ -483,15 +485,31 @@ test('a drag that ends outside the screen still lets go', async () => {
   expect(over.defaultPrevented).toBe(false)
 })
 
-const picking = item({ id: 'p1', state: 'waiting-pick', title: 'Login button wording', questions: ['Which tenant?'], runIds: ['r-p1'], pick: { options: ['A', 'B', 'C'], path: 'visualizer/login', recommended: 'B', tester: 'Ploy', summary: '**Three** variants' } } as Partial<QueueItem>)
-const pickDialog = () => doc.querySelector('dialog.q-pick-dialog') as HTMLDialogElement
-const openPick = async (reply: () => Response = () => new Response('<h1>x</h1>')) => {
-  replies.set('GET /queue/p1/files/login/index.html', reply)
-  send([picking])
+const STRUCTURED = [
+  '## Recommendation', 'B — Wide panel reads best.',
+  '## Options', '- A | Narrow | Squeezes the table.', '- B | Wide | Full `table`.', '- C | Popup | Adds a screen.',
+  '## Points', '| # | Point | File | Fix |', '| - | - | - | - |', '| 1 | Cannot type | `a.erb` | Fixed by #2. |', '| 2 | No page | `b.rb` | Decision needed: pick a page. |', '', 'Specs are listed elsewhere.',
+  '## Still open', '- #7 Promo replies | default: grey verdict | other hint: drop promo pairs', '- #5 No page | default: keep blocked',
+  '## Out of scope', '- AURA takes questions from one page',
+  '## Facts', '- 2 points | all still present',
+  '## Tag', '- Natthida | assignee', '- Kanchana | watcher',
+].join('\n')
+const pickItem = (summary: string) => item({ id: 'p1', state: 'waiting-pick', title: 'Login button wording', questions: ['Which tenant?'], runIds: ['r-p1'], pick: { options: ['A', 'B', 'C'], path: 'visualizer/login', recommended: 'B', tester: 'Ploy', summary } } as Partial<QueueItem>)
+const picking = pickItem(STRUCTURED)
+const review = () => doc.getElementById('queue-review') as HTMLElement
+const shown: string[] = []
+const sel = <T extends Element = HTMLElement>(css: string) => review().querySelector(css) as T
+const all$ = <T extends Element = HTMLElement>(css: string) => [...review().querySelectorAll<T>(css)]
+const stageFrames = () => all$<HTMLIFrameElement>('.pk-d-stage iframe')
+const previewSrc = () => stageFrames().at(-1)?.getAttribute('src')
+const openPick = async (target: QueueItem = picking) => {
+  send([target])
   await flush()
   click(buttonNamed('Pick', rowOf('p1')))
   await flush()
 }
+const tab = (name: string) => buttonNamed(name, sel('.pk-d-right'))
+const radio = (value: string) => all$<HTMLInputElement>('input[name=option]').find(input => input.value === value) as HTMLInputElement
 
 test('a waiting-pick row shows the Pick a variant pill and a Pick button', () => {
   const view = queue.renderQueue([picking], context())
@@ -500,46 +518,220 @@ test('a waiting-pick row shows the Pick a variant pill and a Pick button', () =>
   expect(buttonNamed('Pick', view)).toBeDefined()
 })
 
-test('Pick opens the mockup in a sandboxed frame, the summary, the questions and one button per option', async () => {
+test('Pick opens the review screen with every section of a structured summary', async () => {
   await openPick()
-  const frame = pickDialog().querySelector('iframe') as HTMLIFrameElement
-  expect(pickDialog().open).toBe(true)
-  expect(frame.getAttribute('src')).toBe('/queue/p1/files/login/index.html')
-  expect(frame.getAttribute('sandbox')).toBe('allow-scripts')
-  expect(pickDialog().querySelector('.q-pick-summary strong')?.textContent).toBe('Three')
-  expect(pickDialog().querySelector('.q-pick-asked')?.textContent).toContain('Which tenant?')
-  expect([...pickDialog().querySelectorAll('.q-pick-options button')].map(button => button.textContent)).toEqual(['A', 'B (recommended)', 'C'])
-  expect(pickDialog().querySelector('.q-pick-options .primary')?.textContent).toBe('B (recommended)')
-  expect((pickDialog().querySelector('[name="tester"]') as HTMLInputElement).value).toBe('Ploy')
+  expect(shown.at(-1)).toBe('queue-review')
+  expect(sel('h1').textContent).toBe('Login button wording')
+  expect(all$('.pk-nav a').map(link => link.textContent)).toEqual(['1Summary', '2Points', '3Decide'])
+  expect(sel('.pk-rec').textContent).toContain('Recommended: B')
+  expect(sel('.pk-rec').textContent).toContain('Wide panel reads best.')
+  expect(sel('.pk-stat').textContent).toBe('2 pointsall still present')
+  expect(sel('#points h3').textContent).toBe('Points (2 · 1 needs a decision)')
+  expect(all$('.pk-points tr[data-decision]').map(row => row.children[0]?.textContent)).toEqual(['2'])
+  expect(sel('.pk-points tr[data-decision] .pill-state').textContent).toBe('Decision needed')
+  expect(sel('.pk-points tr[data-decision] td:last-child').textContent).toBe('Decision needed: pick a page.')
+  expect(sel('.pk-foot-note').textContent).toBe('Specs are listed elsewhere.')
+  expect(all$('.pk-opt').map(card => card.textContent)).toEqual(['ANarrowSqueezes the table.', 'BRecommendedWideFull table.', 'CPopupAdds a screen.'])
+  expect(sel('.pk-opt code').textContent).toBe('table')
+  expect(sel<HTMLImageElement>('.pk-opt img').getAttribute('src')).toBe('/queue/p1/files/login/renders/a.png')
+  expect(all$('.pk-open legend').map(legend => legend.textContent)).toEqual(['#7 Promo replies', '#5 No page'])
+  expect(all$('.pk-open .pk-radio:first-of-type').map(label => label.textContent)).toEqual(['Use default: grey verdict', 'Use default: keep blocked'])
+  expect(sel('[data-defaults]').textContent).toBe('2 open choices use defaults')
+  expect(sel('.pk-asked').textContent).toContain('Which tenant?')
+  expect(sel('.pk-oos:not(.pk-asked)').textContent).toContain('AURA takes questions from one page')
+  expect(all$('[data-tag]').map(chip => chip.textContent)).toEqual(['Natthida', 'Kanchana watcher'])
+  expect(sel<HTMLInputElement>('[name="tester"]').value).toBe('Ploy')
+  expect(sel('[role=radiogroup]').getAttribute('aria-label')).toBe('Design to build')
+  expect(radio('B').checked).toBe(true)
+  expect(all$('.pk-build').map(button => button.textContent)).toEqual(['Build with B', 'Build with B'])
+  expect(previewSrc()).toBe('/queue/p1/files/login/b.html')
+  expect(stageFrames()[0]?.getAttribute('sandbox')).toBe('allow-scripts')
 })
 
-test('a mockup that is missing says so instead of showing an empty frame', async () => {
-  await openPick(() => new Response('Not found', { status: 404 }))
-  expect(pickDialog().querySelector('iframe')).toBeNull()
-  expect(pickDialog().querySelector('.q-pick-stage')?.textContent).toBe("Mockup files not found in this item's workspace")
+test('a summary without headings falls back to markdown and has no Points section', async () => {
+  await openPick(pickItem('**Three** variants\n\nSee them.'))
+  expect(sel('#summary strong').textContent).toBe('Three')
+  expect(review().querySelector('#points')).toBeNull()
+  expect(all$('.pk-nav a').map(link => link.textContent)).toEqual(['1Summary', '2Decide'])
+  expect(all$('.pk-opt').map(card => card.querySelector('strong')?.textContent)).toEqual(['Option A', 'Option B', 'Option C'])
+  expect(review().querySelector('.pk-open')).toBeNull()
 })
 
-test('choosing an option posts it with the tester and note, then closes with a toast', async () => {
+test('summary text is never parsed as markup', async () => {
+  await openPick(pickItem('## Facts\n- <img src=x onerror=alert(1)> | <b>bold</b>'))
+  expect(review().querySelector('img[src=x]')).toBeNull()
+  expect(sel('.pk-stat strong').textContent).toBe('<img src=x onerror=alert(1)>')
+})
+
+test('with no recommendation the first option is selected and previewed', async () => {
+  await openPick({ ...picking, pick: { ...picking.pick!, recommended: null } } as QueueItem)
+  expect(radio('A').checked).toBe(true)
+  expect(previewSrc()).toBe('/queue/p1/files/login/a.html')
+})
+
+test('selecting an option card previews it and relabels both Build buttons', async () => {
   await openPick()
-  ;(pickDialog().querySelector('[name="tester"]') as HTMLInputElement).value = ' Mint '
-  ;(pickDialog().querySelector('[name="note"]') as HTMLTextAreaElement).value = 'wide one'
+  radio('C').checked = true
+  radio('C').dispatchEvent(new window.Event('change', { bubbles: true }))
+  expect(previewSrc()).toBe('/queue/p1/files/login/c.html')
+  expect(all$('.pk-build').map(button => button.textContent)).toEqual(['Build with C', 'Build with C'])
+  expect(tab('C').getAttribute('aria-pressed')).toBe('true')
+})
+
+test('previewing another option shows the hint and keeps the selection until Select is clicked', async () => {
+  await openPick()
+  click(tab('C'))
+  expect(previewSrc()).toBe('/queue/p1/files/login/c.html')
+  expect(radio('B').checked).toBe(true)
+  expect(sel('.pk-d-cap').textContent).toBe('Option C · PopupPreviewing C · selected: B — Select C')
+  expect(sel('[data-hint]').hidden).toBe(false)
+  click(tab('NOW'))
+  expect(sel('[data-hint]').hidden).toBe(true)
+  click(tab('All'))
+  expect(sel('[data-cap]').textContent).toBe('All variants')
+  expect(sel('[data-hint]').hidden).toBe(true)
+  click(tab('A'))
+  click(buttonNamed('Select A', review()))
+  expect(radio('A').checked).toBe(true)
+  expect(sel('[data-hint]').hidden).toBe(true)
+  expect(all$('.pk-build').map(button => button.textContent)).toEqual(['Build with A', 'Build with A'])
+})
+
+test('Compare with NOW shows two iframes and goes back to one', async () => {
+  await openPick()
+  click(tab('C'))
+  click(buttonNamed('Compare with NOW', review()))
+  expect(sel('[data-cmp]').getAttribute('aria-pressed')).toBe('true')
+  expect(stageFrames().map(frame => frame.getAttribute('src'))).toEqual(['/queue/p1/files/login/now.html', '/queue/p1/files/login/c.html'])
+  expect(all$('.pk-d-col > strong').map(label => label.textContent)).toEqual(['NOW', 'C'])
+  click(tab('NOW'))
+  expect(stageFrames().map(frame => frame.getAttribute('src'))).toEqual(['/queue/p1/files/login/now.html', '/queue/p1/files/login/b.html'])
+  expect(all$('.pk-d-col > strong').map(label => label.textContent)).toEqual(['NOW', 'B'])
+  click(buttonNamed('Compare with NOW', review()))
+  expect(sel('[data-cmp]').getAttribute('aria-pressed')).toBe('false')
+  expect(stageFrames()).toHaveLength(1)
+})
+
+test('each iframe is scaled to fit the pane width from a 1256px mockup', async () => {
+  const width = Object.getOwnPropertyDescriptor(window.HTMLElement.prototype, 'clientWidth')
+  const height = Object.getOwnPropertyDescriptor(window.HTMLElement.prototype, 'clientHeight')
+  Object.defineProperty(window.HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 628 })
+  Object.defineProperty(window.HTMLElement.prototype, 'clientHeight', { configurable: true, get: () => 500 })
+  try {
+    await openPick()
+    const frame = stageFrames()[0] as HTMLIFrameElement
+    expect(frame.style.width).toBe('1256px')
+    expect(frame.style.transform).toBe('scale(0.5)')
+    expect(frame.style.height).toBe('1000px')
+  } finally {
+    if (width) Object.defineProperty(window.HTMLElement.prototype, 'clientWidth', width); else Reflect.deleteProperty(window.HTMLElement.prototype, 'clientWidth')
+    if (height) Object.defineProperty(window.HTMLElement.prototype, 'clientHeight', height); else Reflect.deleteProperty(window.HTMLElement.prototype, 'clientHeight')
+  }
+})
+
+test('Full screen opens an unscaled viewer; Esc closes it and returns focus to the button', async () => {
+  await openPick()
+  click(tab('C'))
+  const opener = buttonNamed('Full screen', review())
+  opener.focus()
+  click(opener)
+  const viewer = sel('.pk-viewer')
+  expect(viewer.hidden).toBe(false)
+  expect(viewer.getAttribute('role')).toBe('dialog')
+  expect(viewer.getAttribute('aria-modal')).toBe('true')
+  expect(viewer.querySelector('.pk-viewer-title')?.textContent).toBe('Option C · Popup')
+  expect(viewer.querySelector('iframe')?.getAttribute('src')).toBe('/queue/p1/files/login/c.html')
+  expect(viewer.querySelector('iframe')?.getAttribute('style')).toBeNull()
+  click(viewer.querySelector('[data-vtab="now"]') as HTMLElement)
+  expect(viewer.querySelector('iframe')?.getAttribute('src')).toBe('/queue/p1/files/login/now.html')
+  expect(doc.activeElement).toBe(viewer.querySelector('.round'))
+  doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  expect(viewer.hidden).toBe(true)
+  expect(doc.activeElement).toBe(opener)
+  click(opener)
+  click(viewer.querySelector('.round') as HTMLElement)
+  expect(viewer.hidden).toBe(true)
+  expect(doc.activeElement).toBe(opener)
+})
+
+test('an Other text input is only enabled while Other is chosen', async () => {
+  await openPick()
+  const fieldset = sel('[data-open="#7"]')
+  const other = fieldset.querySelector('input[type=text]') as HTMLInputElement
+  const choose = (value: string) => { const input = fieldset.querySelector(`input[value=${value}]`) as HTMLInputElement; input.checked = true; input.dispatchEvent(new window.Event('change', { bubbles: true })) }
+  expect(other.disabled).toBe(true)
+  expect(other.placeholder).toBe('e.g. drop promo pairs')
+  choose('other')
+  expect(other.disabled).toBe(false)
+  expect(sel('[data-defaults]').textContent).toBe('1 open choice uses its default')
+  choose('default')
+  expect(other.disabled).toBe(true)
+  expect(sel('[data-defaults]').textContent).toBe('2 open choices use defaults')
+})
+
+test('a tag chip fills and extends the tester field', async () => {
+  await openPick()
+  const tester = sel<HTMLInputElement>('[name="tester"]')
+  tester.value = ''
+  click(buttonNamed('Natthida', review()))
+  expect(tester.value).toBe('Natthida')
+  click(all$('[data-tag]')[1] as HTMLElement)
+  expect(tester.value).toBe('Natthida, Kanchana')
+})
+
+test('a thumbnail that fails to load is hidden', async () => {
+  await openPick()
+  const thumb = sel<HTMLImageElement>('.pk-opt img')
+  thumb.dispatchEvent(new window.Event('error'))
+  expect(thumb.hasAttribute('data-broken')).toBe(true)
+})
+
+test('a mockup that is missing says so in the pane', async () => {
+  replies.set('GET /queue/p1/files/login/b.html', () => new Response('Not found', { status: 404 }))
+  await openPick()
+  expect(sel('.pk-d-stage .q-status').hidden).toBe(false)
+  expect(sel('.pk-d-stage .q-status').textContent).toBe("Mockup files not found in this item's workspace")
+  expect(stageFrames()[0]?.hidden).toBe(true)
+})
+
+test('Build posts the option, tester, note and every Still open answer, then returns to the queue', async () => {
+  await openPick()
+  sel<HTMLInputElement>('[name="tester"]').value = ' Mint '
+  sel<HTMLTextAreaElement>('[name="note"]').value = 'wide one'
+  const fieldset = sel('[data-open="#7"]')
+  const other = fieldset.querySelector('input[value=other]') as HTMLInputElement
+  other.checked = true
+  other.dispatchEvent(new window.Event('change', { bubbles: true }))
+  ;(fieldset.querySelector('input[type=text]') as HTMLInputElement).value = ' drop promo pairs '
+  const blank = sel('[data-open="#5"]').querySelector('input[value=other]') as HTMLInputElement
+  blank.checked = true
+  blank.dispatchEvent(new window.Event('change', { bubbles: true }))
   replies.set('POST /api/queue/p1/pick', () => Response.json({ item: { id: 'p1' } }))
-  click(buttonNamed('B (recommended)', pickDialog()))
+  click(all$('.pk-build')[1] as HTMLElement)
+  expect(all$('.pk-build').every(button => (button as HTMLButtonElement).disabled)).toBe(true)
   await flush()
-  expect(calls.find(entry => entry.method === 'POST')).toMatchObject({ url: '/api/queue/p1/pick', body: { option: 'B', tester: 'Mint', note: 'wide one' } })
-  expect(pickDialog().open).toBe(false)
+  expect(calls.find(entry => entry.method === 'POST')).toMatchObject({ url: '/api/queue/p1/pick', body: { option: 'B', tester: 'Mint', note: 'wide one', answers: [{ id: '#7', label: 'Promo replies', answer: 'drop promo pairs' }, { id: '#5', label: 'No page', answer: 'default' }] } })
   expect(toasts).toEqual(['Picked B for Login button wording'])
+  expect(shown.at(-1)).toBe('queue')
 })
 
-test('a refused pick shows the server message inline and keeps the dialog open', async () => {
+test('a refused pick shows the server message inline and re-enables the buttons', async () => {
   await openPick()
   replies.set('POST /api/queue/p1/pick', () => Response.json({ error: 'It is queued now' }, { status: 409 }))
-  click(buttonNamed('A', pickDialog()))
+  click(all$('.pk-build')[0] as HTMLElement)
   await flush()
-  expect(pickDialog().open).toBe(true)
-  expect(pickDialog().querySelector('.q-add-error')?.textContent).toContain('It is queued now')
-  expect(buttonNamed('A', pickDialog()).hasAttribute('disabled')).toBe(false)
+  expect(sel('.q-add-error').textContent).toContain('It is queued now')
+  expect(sel('.q-add-error').getAttribute('role')).toBe('alert')
+  expect(sel('.q-add-error').hidden).toBe(false)
+  expect(all$('.pk-build').some(button => (button as HTMLButtonElement).disabled)).toBe(false)
   expect(toasts).toEqual([])
+  expect(shown.at(-1)).toBe('queue-review')
+})
+
+test('the back link returns to the queue', async () => {
+  await openPick()
+  click(sel('.flow-back'))
+  expect(shown.at(-1)).toBe('queue')
 })
 
 const stagePlan = [{ id: 'uat', run: 'auto' }, { id: 'prod', run: 'button', label: 'Deploy prod' }]

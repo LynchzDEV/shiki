@@ -1,13 +1,13 @@
 import { fold, morph, reveal } from './morph'
 
 const $ = (id: string): HTMLElement => document.getElementById(id) as HTMLElement
-const screens = ['welcome', 'history', 'conversation', 'studio', 'plugin', 'marketplace', 'queue'] as const
+const screens = ['welcome', 'history', 'conversation', 'studio', 'plugin', 'marketplace', 'queue', 'queue-review'] as const
 const agents = $('agents') as HTMLDialogElement
 const flow = $('flow')
 const message = $('message') as HTMLTextAreaElement
 const composer = $('composer') as HTMLFormElement
 
-const STUDIO_LAYOUT = new Set<string>(['plugin', 'marketplace', 'queue'])
+const STUDIO_LAYOUT = new Set<string>(['plugin', 'marketplace', 'queue', 'queue-review'])
 const layoutOf = (name: (typeof screens)[number]): string => STUDIO_LAYOUT.has(name) ? 'studio' : name
 
 function showScreen(name: (typeof screens)[number]): void {

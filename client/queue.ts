@@ -1,6 +1,6 @@
 import type { QueueTree } from '../server/queue-tree'
 import { createAddDialog } from './queue-dialog'
-import { createPickDialog } from './queue-pick'
+import { createPickReview } from './queue-review'
 import { createLandDialogs } from './queue-land'
 import { readQueueTree, renderTree } from './queue-tree'
 import { readQueueItems, renderQueue, watchRunId, type QueueFlow, type QueueItemView, type QueueLayout, type QueuePlugin } from './queue-view'
@@ -74,7 +74,7 @@ function start(section: HTMLElement): void {
   const rowFor = (target: EventTarget | null): HTMLElement | null => (target instanceof Element ? target.closest<HTMLElement>(ROW_SELECTOR) : null)
   const itemFor = (id: string | undefined): QueueItemView | undefined => items.find(item => item.id === id)
   const dialog = createAddDialog(() => ({ plugins, flows, items }), toast)
-  const pickDialog = createPickDialog(toast)
+  const pickReview = createPickReview(toast)
   const landDialogs = createLandDialogs(() => items, toast)
 
   function applyFocus(): void {
@@ -150,7 +150,7 @@ function start(section: HTMLElement): void {
     if (button && action === 'check') { void checkReplies(button); return }
     if (button && action === 'add') { dialog.open(); return }
     if (button && item && action === 'requeue') { void act(button, () => postJson(`/api/queue/${encodeURIComponent(item.id)}/requeue`, {}), `Requeued ${item.title}`); return }
-    if (button && item && action === 'pick') { pickDialog.open(item); return }
+    if (button && item && action === 'pick') { pickReview.open(item); return }
     if (button && item && action === 'remove') { void act(button, () => deleteJson(`/api/queue/${encodeURIComponent(item.id)}`), `Removed ${item.title}`); return }
     if (button && item && action === 'open-run') { dispatchEvent(new CustomEvent('quiet:studio-run', { detail: { runId: item.runIds.at(-1) } })); return }
     if (button && item && action === 'watch') { watch(item); return }

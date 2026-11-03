@@ -162,7 +162,7 @@ let renaming = false
 
 function selectedKey(): string | null {
   if (document.body.dataset.live === 'true') { const id = new URL(location.href).searchParams.get('terminal'); return id ? `terminal:${id}` : null }
-  if (screen === 'queue') return QUEUE_KEY
+  if (screen === 'queue' || screen === 'queue-review') return QUEUE_KEY
   return openChatId && !document.getElementById('conversation')?.hidden ? `chat:${openChatId}` : null
 }
 
