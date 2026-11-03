@@ -381,6 +381,18 @@ test('a run saved before families were recorded keeps its authors across a retry
   expect(stepJobs().filter(job => job.workflowRunId === run.id && job.workflowNodeId === 'review').at(-1)!.engine).not.toBe('glm')
 })
 
+test('an AI with no known family is never picked to build or review in place of another', async () => {
+  const { createConnectionStore } = await import('../server/agent-connections')
+  const store = await build()
+  await store.save({ ...withoutSession(), id: 'mystery-family' })
+  await createConnectionStore(dir).save({ id: 'mystery', name: 'Mystery CLI', adapter: 'cli', command: '/bin/echo', args: ['{{prompt}}'] })
+  await writeConfig({ roles: { ...ROLES, execute: { engine: 'claude', model: null } }, fallback: { engine: 'mystery', model: null } })
+  down = downFor(['codex'])
+  const run = await runner.start({ workflowId: 'mystery-family', cwd: repo, request: 'Implement', label: 'mystery-family' })
+  expect(run.agents.review).toMatchObject({ engine: 'glm', family: 'glm' })
+  await finished(run.id)
+})
+
 test('a stop that lands while a crashed step is being recovered never starts another job', async () => {
   let spawns = 0
   const store = await build(({ engine }) => { if (engine === 'glm') { spawns += 1; throw new Error('glm will not start') } return { cmd: '/bin/echo', args: [report()], env: {} } })

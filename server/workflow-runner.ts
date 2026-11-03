@@ -430,7 +430,8 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
       if (option.engine === current.engine || tried.includes(option.engine)) continue
       if (!BUILTIN_AGENTS.includes(option.engine as typeof BUILTIN_AGENTS[number]) && !option.connection) continue
       const agent = await agentOn(node, option.engine, option.model, option.connection).catch(() => null)
-      if (agent && !await availability(agent)) candidates.push(agent)
+      if (!agent || (agent.family === null && (node.kind === 'implement' || node.kind === 'review'))) continue
+      if (!await availability(agent)) candidates.push(agent)
     }
     const swappedFrom = { engine: current.engine, model: current.model, reason }
     if (node.kind !== 'review') return candidates[0] ? { ...candidates[0], swappedFrom } : null
