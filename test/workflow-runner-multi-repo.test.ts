@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, setDefaultTimeout, test } from 'bun:test'
+import { afterEach, beforeAll, beforeEach, expect, setDefaultTimeout, test } from 'bun:test'
 import { existsSync } from 'node:fs'
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { createJobManager, type JobManager } from '../server/jobs'
 import type { EngineResolver } from '../server/jobs-engine-iface'
 import { prepareRepoWorkspace } from '../server/repo-workspace'
+import { homeScratch, sweepHomeScratch } from './support/home-scratch'
 import { createWorkflowRunner, type WorkflowRun, type WorkflowRunner } from '../server/workflow-runner'
 import { createWorkflowStore, type Workflow } from '../server/workflows'
 import { classicWorkflow } from './support/classic-workflow'
@@ -18,8 +19,9 @@ let dir: string, parent: string, workspace: string, manager: JobManager, runner:
 const passing = (text = '') => JSON.stringify({ type: 'result', result: `${text}SKD_RESULT ${JSON.stringify({ outcome: 'pass', summary: 'Completed fixture', evidence: ['fixture assertion'] })}` })
 const echo: EngineResolver = () => ({ cmd: '/bin/echo', args: [passing()], env: {} })
 
+beforeAll(sweepHomeScratch)
 beforeEach(async () => {
-  dir = await mkdtemp(join(homedir(), 'mc-multi-runner-config-'))
+  dir = await homeScratch('multi-runner-config-')
   parent = await mkdtemp(join(homedir(), 'mc-multi-runner-'))
   process.env.SKD_CONFIG_DIR = dir
   for (const name of ['a', 'b', 'c']) await repoAt(join(parent, name))

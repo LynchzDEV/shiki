@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test'
+import { afterEach, beforeAll, beforeEach, expect, spyOn, test } from 'bun:test'
 import { mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,6 +9,7 @@ import { changeSize, covers, createWorkflowRunner, lineage, RunActionError, type
 import * as worktrees from '../server/job-worktrees'
 import { initScratchGitRepo } from './support/scratch-git-repo'
 import { classicWorkflow } from './support/classic-workflow'
+import { homeScratch, sweepHomeScratch } from './support/home-scratch'
 import type { TerminalRecord } from '../server/terminals'
 import type { Unavailable } from '../server/engine-availability'
 import { mcUrl, writeConfig } from '../server/secrets'
@@ -17,6 +18,7 @@ let dir: string, repo: string, manager: JobManager, runner: WorkflowRunner, sett
 let down: (engine: string) => Unavailable | null = () => null
 const report = (outcome = 'pass') => JSON.stringify({ type: 'result', result: `SKD_RESULT ${JSON.stringify({ outcome, summary: 'Completed fixture', evidence: ['fixture assertion'] })}` })
 const resolver: EngineResolver = () => ({ cmd: '/bin/echo', args: [report()], env: {} })
+beforeAll(sweepHomeScratch)
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'mc-workflow-runner-'))
   repo = await mkdtemp(join(homedir(), 'mc-workflow-repo-'))
@@ -1148,7 +1150,7 @@ test('stop answers at once while an acceptance check is still running', async ()
 
 async function homeConfig() {
   await rm(dir, { recursive: true, force: true })
-  dir = await mkdtemp(join(homedir(), 'mc-workflow-config-'))
+  dir = await homeScratch('workflow-config-')
   process.env.SKD_CONFIG_DIR = dir
 }
 const writes = (file: string, text: string, before = '') => [{ command: '/bin/sh', args: ['-c', `${before}echo ${text} > ${file}`] }]
