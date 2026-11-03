@@ -723,3 +723,167 @@ describe('contributed agents, skills and flows', () => {
     expect(result).toEqual({ ok: false, status: 409, needsConsent: true, added: ['Add the skill skills/card-refine to your engines', 'Add the Studio flow flows/card-pipeline.json'] })
   })
 })
+
+describe('plugin requirements', () => {
+  const REQUIRED = 'board-core'
+
+  const needing = (id: string, requires: Array<{ id: string; version?: string }>, overrides: Record<string, unknown> = {}) =>
+    isolatedManifest({ id, name: `Plugin ${id}`, requires, ...overrides })
+
+  async function pluginAt(id: string, overrides: Record<string, unknown> = {}, tag = 'v1.0.0'): Promise<string> {
+    return createPluginRepo(join(fixtureRoot, id), isolatedManifest({ id, name: `Plugin ${id}`, ...overrides }), { files: { 'src/screen.ts': TRIVIAL_SCREEN }, tag })
+  }
+
+  async function release(source: string, id: string, version: string, overrides: Record<string, unknown> = {}): Promise<void> {
+    await commitFixture(source, { 'mc-plugin.json': `${JSON.stringify(isolatedManifest({ id, name: `Plugin ${id}`, version, ...overrides }), null, 2)}\n` }, { tag: `v${version}` })
+  }
+
+  async function marketplaceOf(name: string, entries: Array<{ id: string; source: string; ref?: string }>): Promise<string> {
+    const plugins = entries.map(entry => ({ id: entry.id, repo: fileUrl(entry.source), ref: entry.ref ?? 'v1.0.0', name: entry.id, description: '', runtime: 'isolated' }))
+    const market = await createPluginRepo(join(fixtureRoot, `market-${name}`), { name, plugins }, { manifestName: 'marketplace.json' })
+    const url = fileUrl(market)
+    expect((await addMarketplace(url)).ok).toBe(true)
+    return url
+  }
+
+  async function mainNeeding(requires: Array<{ id: string; version?: string }>, id = 'main-plugin'): Promise<{ source: string; url: string; sha: string }> {
+    const source = await createPluginRepo(join(fixtureRoot, id), needing(id, requires), { files: { 'src/screen.ts': TRIVIAL_SCREEN }, tag: 'v1.0.0' })
+    return { source, url: fileUrl(source), sha: await fixtureSha(source) }
+  }
+
+  async function previewRequires(main: { url: string }, marketplace?: string) {
+    const result = await installer().preview({ repo: main.url, ref: 'v1.0.0', ...(marketplace === undefined ? {} : { marketplace }) })
+    if (!result.ok) throw new Error(`preview failed: ${JSON.stringify(result)}`)
+    return result.requires
+  }
+
+  describe('preview', () => {
+    test('a missing requirement is an install step with its version, commit and permissions', async () => {
+      const dependency = await pluginAt(REQUIRED, { version: '1.0.0' })
+      const market = await marketplaceOf('main', [{ id: REQUIRED, source: dependency }])
+      const main = await mainNeeding([{ id: REQUIRED, version: '1.0.0' }])
+
+      const requires = await previewRequires(main)
+      expect(requires).toEqual([{
+        id: REQUIRED,
+        minVersion: '1.0.0',
+        status: 'install',
+        listing: { repo: fileUrl(dependency), ref: 'v1.0.0', marketplace: market },
+        preview: { manifest: { id: REQUIRED, name: `Plugin ${REQUIRED}`, version: '1.0.0' }, commit: await fixtureSha(dependency), permissions: { network: ['api.example.com'], sessions: ['chat'], settings: true }, runtime: 'isolated' },
+      }])
+    })
+
+    test('a plugin without requires previews with an empty list', async () => {
+      const source = await repo('plain', isolatedManifest(), { 'src/screen.ts': TRIVIAL_SCREEN })
+      expect(await previewRequires({ url: fileUrl(source) })).toEqual([])
+    })
+
+    test('contributions in a required plugin are shown on its step', async () => {
+      const dependency = await createPluginRepo(join(fixtureRoot, REQUIRED), isolatedManifest({ id: REQUIRED, pluginApi: 2, contributes: { skills: ['skills/card-refine'] } }), { files: { 'src/screen.ts': TRIVIAL_SCREEN, 'skills/card-refine/SKILL.md': '---\nname: card-refine\ndescription: x\n---\n' }, tag: 'v1.0.0' })
+      await marketplaceOf('main', [{ id: REQUIRED, source: dependency }])
+      const [step] = await previewRequires(await mainNeeding([{ id: REQUIRED }]))
+      expect(step?.status === 'install' && step.preview.contributes).toEqual({ skills: ['skills/card-refine'] })
+    })
+
+    test('reports ok, enable, update and the two unavailable cases', async () => {
+      const okRepo = await pluginAt('dep-ok')
+      const offRepo = await pluginAt('dep-off')
+      const staleRepo = await pluginAt('dep-stale')
+      await release(staleRepo, 'dep-stale', '2.0.0')
+      const youngRepo = await pluginAt('dep-young')
+      const market = await marketplaceOf('main', [
+        { id: 'dep-stale', source: staleRepo, ref: 'v2.0.0' },
+        { id: 'dep-young', source: youngRepo },
+      ])
+      await installOk(fileUrl(okRepo), await fixtureSha(okRepo))
+      await installOk(fileUrl(offRepo), await fixtureSha(offRepo))
+      await installer().setEnabled('dep-off', false)
+      const staleOld = await installer().install({ repo: fileUrl(staleRepo), ref: 'v1.0.0', commit: (await Bun.$`git -C ${staleRepo} rev-parse v1.0.0`.text()).trim(), marketplace: market })
+      expect(staleOld.ok).toBe(true)
+
+      const main = await mainNeeding([
+        { id: 'dep-ok', version: '1.0.0' },
+        { id: 'dep-off' },
+        { id: 'dep-stale', version: '2.0.0' },
+        { id: 'dep-gone' },
+        { id: 'dep-young', version: '3.0.0' },
+      ])
+      const byId = Object.fromEntries((await previewRequires(main)).map(step => [step.id, step]))
+
+      expect(byId['dep-ok']).toEqual({ id: 'dep-ok', minVersion: '1.0.0', status: 'ok', installedVersion: '1.0.0' })
+      expect(byId['dep-off']).toEqual({ id: 'dep-off', status: 'enable', installedVersion: '1.0.0', name: 'Plugin dep-off' })
+      expect(byId['dep-stale']).toMatchObject({ status: 'update', installedVersion: '1.0.0', listing: { ref: 'v2.0.0' }, preview: { manifest: { version: '2.0.0' } } })
+      expect(byId['dep-gone']).toEqual({ id: 'dep-gone', status: 'unavailable', reason: 'dep-gone is not in your marketplaces. Add the marketplace that has it, or install it first.' })
+      expect(byId['dep-young']).toEqual({ id: 'dep-young', minVersion: '3.0.0', status: 'unavailable', reason: 'The marketplace has dep-young v1.0.0; this needs v3.0.0 or newer' })
+    })
+
+    test('an installed plugin whose marketplace now lists a different repo cannot be updated', async () => {
+      const installedFrom = await pluginAt('dep-moved')
+      await installOk(fileUrl(installedFrom), await fixtureSha(installedFrom))
+      const elsewhere = await createPluginRepo(join(fixtureRoot, 'dep-moved-elsewhere'), isolatedManifest({ id: 'dep-moved', version: '2.0.0' }), { files: { 'src/screen.ts': TRIVIAL_SCREEN }, tag: 'v1.0.0' })
+      const market = await marketplaceOf('main', [{ id: 'dep-moved', source: elsewhere }])
+      await saveInstalled({ ...(await getInstalled('dep-moved'))!, source: { repo: fileUrl(installedFrom), ref: 'v1.0.0', marketplace: market } })
+
+      const [step] = await previewRequires(await mainNeeding([{ id: 'dep-moved', version: '2.0.0' }]))
+      expect(step).toEqual({ id: 'dep-moved', minVersion: '2.0.0', status: 'unavailable', reason: 'The marketplace copy of dep-moved comes from a different repo' })
+    })
+
+    test('a listing that points at a different plugin is unavailable', async () => {
+      const impostor = await pluginAt('someone-else')
+      await marketplaceOf('main', [{ id: REQUIRED, source: impostor }])
+      const [step] = await previewRequires(await mainNeeding([{ id: REQUIRED }]))
+      expect(step?.status).toBe('unavailable')
+    })
+
+    test('a listing that cannot be cloned is unavailable with the clone error', async () => {
+      const dependency = await pluginAt(REQUIRED)
+      await marketplaceOf('main', [{ id: REQUIRED, source: dependency, ref: 'v9.9.9' }])
+      const [step] = await previewRequires(await mainNeeding([{ id: REQUIRED }]))
+      expect(step?.status).toBe('unavailable')
+      expect(step?.status === 'unavailable' && step.reason.length).toBeGreaterThan(0)
+    })
+
+    test('with a marketplace given only that marketplace is searched; without one the first match wins', async () => {
+      const first = await pluginAt('dep-first')
+      const second = await pluginAt('dep-second')
+      const firstMarket = await marketplaceOf('first', [{ id: 'dep-first', source: first }])
+      const secondMarket = await marketplaceOf('second', [{ id: 'dep-second', source: second }, { id: 'dep-first', source: second }])
+      const main = await mainNeeding([{ id: 'dep-first' }, { id: 'dep-second' }])
+
+      const scoped = await previewRequires(main, firstMarket)
+      expect(scoped.map(step => step.status)).toEqual(['install', 'unavailable'])
+
+      const open = await previewRequires(main)
+      expect(open.map(step => step.status === 'install' && step.listing.marketplace)).toEqual([firstMarket, secondMarket])
+    })
+
+    test('requirements of requirements come first, once each, and a cycle stops', async () => {
+      const top = await pluginAt('dep-top')
+      const middle = await pluginAt('dep-middle')
+      const bottom = await pluginAt('dep-bottom')
+      await release(top, 'dep-top', '1.0.1', { requires: [{ id: 'dep-middle' }, { id: 'dep-bottom' }] })
+      await release(middle, 'dep-middle', '1.0.1', { requires: [{ id: 'dep-bottom' }, { id: 'main-plugin' }] })
+      await marketplaceOf('main', [
+        { id: 'dep-top', source: top, ref: 'v1.0.1' },
+        { id: 'dep-middle', source: middle, ref: 'v1.0.1' },
+        { id: 'dep-bottom', source: bottom },
+      ])
+      const requires = await previewRequires(await mainNeeding([{ id: 'dep-top' }]))
+      expect(requires.map(step => step.id)).toEqual(['dep-bottom', 'dep-middle', 'dep-top'])
+    })
+
+    test('requirements nested deeper than three levels are unavailable', async () => {
+      const chain = ['dep-one', 'dep-two', 'dep-three', 'dep-four']
+      const sources: Array<{ id: string; source: string }> = []
+      for (const [index, id] of chain.entries()) {
+        const next = chain[index + 1]
+        sources.push({ id, source: await pluginAt(id, next === undefined ? {} : { requires: [{ id: next }] }) })
+      }
+      await marketplaceOf('main', sources)
+      const requires = await previewRequires(await mainNeeding([{ id: 'dep-one' }]))
+      expect(requires.map(step => [step.id, step.status])).toEqual([['dep-four', 'unavailable'], ['dep-three', 'install'], ['dep-two', 'install'], ['dep-one', 'install']])
+      const deep = requires[0]
+      expect(deep?.status === 'unavailable' && deep.reason).toBe('Requirements nest too deep')
+    })
+  })
+})

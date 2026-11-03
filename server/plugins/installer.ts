@@ -12,6 +12,7 @@ import { checkFlows, contributionTargets, cliCommand, removeContributions, syncC
 import { catalog } from './marketplaces'
 import { contributionsAdded, parseManifest, permissionsAdded, type PluginManifest, type PluginPermissions, type PluginRuntime } from './manifest'
 import { isAllowedRepoUrl } from './repo-url'
+import { resolveRequirements, type CheckoutPreview, type RequirementListing, type RequirementStep, type ResolverPorts } from './requirements'
 import { invalidateRuntime } from './runtimes'
 import { getInstalled, pluginFolder, pluginsRoot, removeInstalled, saveInstalled, type InstalledPlugin } from './store'
 
@@ -23,11 +24,10 @@ export type StepFailure = { ok: false; status: number; error: string; step: Inst
 export type MessageFailure = { ok: false; status: number; error: string; step?: undefined }
 export type ConsentFailure = { ok: false; status: 409; needsConsent: true; added: string[]; error?: undefined; step?: undefined }
 export type TrustFailure = { ok: false; status: 409; needsTrust: true; error?: undefined; step?: undefined }
-export type PreviewInput = { repo: string; ref: string }
-export type PreviewResult =
-  | { ok: true; manifest: PluginManifest; commit: string; permissions: PluginPermissions; runtime: PluginRuntime }
-  | StepFailure
-  | MessageFailure
+export type PreviewInput = { repo: string; ref: string; marketplace?: string }
+type CheckoutPreviewResult = Extract<CheckoutPreview, { ok: true }>
+type RawPreviewResult = CheckoutPreviewResult | StepFailure | MessageFailure
+export type PreviewResult = (CheckoutPreviewResult & { requires: RequirementStep[] }) | StepFailure | MessageFailure
 
 export type InstallInput = { repo: string; ref: string; commit: string; trust?: boolean; marketplace?: string }
 export type InstallResult = { ok: true; plugin: InstalledPlugin } | StepFailure | MessageFailure
@@ -47,6 +47,7 @@ export type InstallerDeps = {
   rename: (from: string, to: string) => Promise<void>
   saveInstalled: (plugin: InstalledPlugin) => Promise<void>
   marketplaceListing: (marketplace: string, pluginId: string) => Promise<MarketplaceListing | null>
+  findListing: (pluginId: string, marketplace?: string) => Promise<RequirementListing | null>
   contributionTargets: () => string[]
   cliCommand: () => string
   syncEngineAssets: () => Promise<unknown>
@@ -56,14 +57,19 @@ const CONTRIBUTIONS_NEED_TRUST = 'Plugins that add agents, skills or flows need 
 
 const defaultGit = (cwd: string, args: string[]): Promise<string> => gitTimed(cwd, GIT_TIMEOUT, args)
 
-async function defaultMarketplaceListing(marketplace: string, pluginId: string): Promise<MarketplaceListing | null> {
+async function defaultFindListing(pluginId: string, marketplace?: string): Promise<RequirementListing | null> {
   for (const entry of await catalog()) {
     if ('error' in entry) continue
-    if (entry.marketplace !== marketplace) continue
+    if (marketplace !== undefined && entry.marketplace !== marketplace) continue
     const found = entry.plugins.find(plugin => plugin.id === pluginId)
-    if (found !== undefined) return { repo: found.repo, ref: found.ref }
+    if (found !== undefined) return { repo: found.repo, ref: found.ref, marketplace: entry.marketplace }
   }
   return null
+}
+
+async function defaultMarketplaceListing(marketplace: string, pluginId: string): Promise<MarketplaceListing | null> {
+  const found = await defaultFindListing(pluginId, marketplace)
+  return found === null ? null : { repo: found.repo, ref: found.ref }
 }
 
 function linkFailure(link: string, step: InstallStep): StepFailure {
@@ -105,6 +111,7 @@ export function createInstaller(overrides: Partial<InstallerDeps> = {}) {
     rename: (from, to) => fsRename(from, to),
     saveInstalled,
     marketplaceListing: defaultMarketplaceListing,
+    findListing: defaultFindListing,
     contributionTargets,
     cliCommand,
     syncEngineAssets,
@@ -247,7 +254,7 @@ export function createInstaller(overrides: Partial<InstallerDeps> = {}) {
     }
   }
 
-  async function preview(body: PreviewInput): Promise<PreviewResult> {
+  async function previewCheckout(body: { repo: string; ref: string }): Promise<RawPreviewResult> {
     const invalid = checkedRepoRef(body)
     if (invalid !== null) return invalid
     await ensureConfigDir()
@@ -269,6 +276,18 @@ export function createInstaller(overrides: Partial<InstallerDeps> = {}) {
     } finally {
       await rm(tmp, { recursive: true, force: true })
     }
+  }
+
+  const resolverPorts: ResolverPorts = {
+    getInstalled,
+    findListing: (id, marketplace) => deps.findListing(id, marketplace),
+    previewCheckout: (repo, ref) => previewCheckout({ repo, ref }),
+  }
+
+  async function preview(body: PreviewInput): Promise<PreviewResult> {
+    const checkout = await previewCheckout(body)
+    if (!checkout.ok) return checkout
+    return { ...checkout, requires: await resolveRequirements(checkout.manifest, body.marketplace, resolverPorts) }
   }
 
   async function installLocked(manifest: PluginManifest, body: InstallInput, tmp: string, sha: string): Promise<InstallResult> {
