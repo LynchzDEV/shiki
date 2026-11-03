@@ -266,7 +266,10 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
 
   async function resumed(item: QueueItem): Promise<string | null> {
     if (item.resumeRunId === undefined || deps.runner.retry === undefined || item.worktree === null) return null
-    await restore({ ...item, worktree: item.worktree })
+    const worktree = await restore({ ...item, worktree: item.worktree })
+    await refuseLinkedQueueFolders(worktree, item.source)
+    await contextIn(item, worktree)
+    await answersOf(item)
     try {
       const run = await deps.runner.retry(item.resumeRunId)
       await store.update(item.id, { state: 'building', currentRunId: run.id, resumeRunId: undefined, error: null })

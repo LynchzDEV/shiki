@@ -45,6 +45,21 @@ test('requeue after the worktree was deleted by hand brings the answers back byt
   expect(h.started[2]!.request).toContain(answers)
 })
 
+test('resuming a run after the worktree was deleted brings the answers and context back first', async () => {
+  const retried: string[] = []
+  const h = queueHarness(dir, { writeContext: (pluginId, context, cwd) => writeQueueContext(pluginId, context, cwd) })
+  const item = await answeredThenFailed(h, 'The login page, 日本語')
+  expect(item.resumeRunId).toBe('run-2')
+  const answers = item.answerPaths[0]!
+  const before = await readFile(answers)
+  await rm(item.worktree!, { recursive: true, force: true })
+  const { engine } = h.restart({ retry: async id => { retried.push(id); return { id } } })
+  await engine.requeue(item.id)
+  expect(retried).toEqual(['run-2'])
+  expect(await readFile(answers)).toEqual(before)
+  expect(existsSync(item.contextPath!)).toBe(true)
+})
+
 test('a second reply after the worktree was deleted brings the earlier answers back too', async () => {
   let written = 0
   const h = queueHarness(dir, { writeContext: (pluginId, context, cwd) => writeQueueContext(pluginId, { ...context, name: `${context.name}-${++written}` }, cwd) })
