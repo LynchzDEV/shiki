@@ -135,6 +135,16 @@ test('the live queue screen shows and clears the paused line as snapshots arrive
   expect(pausedLine(section())).toBeUndefined()
 })
 
+test('the live queue screen follows At once as stream snapshots change it', async () => {
+  const atOnce = () => section().querySelector<HTMLSelectElement>('.q-at-once select')
+  dispatchEvent(new CustomEvent('quiet:queue-parallel', { detail: 3 }))
+  await flush()
+  expect(atOnce()?.value).toBe('3')
+  dispatchEvent(new CustomEvent('quiet:queue-parallel', { detail: 2 }))
+  await flush()
+  expect(atOnce()?.value).toBe('2')
+})
+
 test('summary only counts states that have items', () => {
   const view = queue.renderQueue([queuedA], context())
   expect([...view.querySelectorAll('.q-bar > .pill-state')].map(pill => pill.textContent)).toEqual(['1 queued'])

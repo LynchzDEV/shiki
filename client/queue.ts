@@ -270,6 +270,7 @@ function start(section: HTMLElement): void {
   addEventListener('quiet:queue-items', (event) => showItems(readQueueItems((event as CustomEvent<unknown>).detail)))
   addEventListener('quiet:queue-checked', (event) => showChecked((event as CustomEvent<unknown>).detail))
   addEventListener('quiet:queue-paused', (event) => { paused = readPaused((event as CustomEvent<unknown>).detail); paint() })
+  addEventListener('quiet:queue-parallel', (event) => { const next = readParallel((event as CustomEvent<unknown>).detail); if (next !== undefined && next !== parallel) { parallel = next; paint() } })
   void loadItems()
   void loadContext()
 }

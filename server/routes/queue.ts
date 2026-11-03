@@ -83,11 +83,12 @@ const isConflict = (error: unknown): boolean => error instanceof QueueRefusal &&
 const removeExplanation = (error: unknown): string => (isConflict(error) ? 'Stop its run in Studio first' : NO_ITEM)
 const moveExplanation = (error: unknown): string => (isConflict(error) ? message(error) : NO_ITEM)
 
-function itemsChecksAndRuns(store: QueueStore, engine: QueueEngineRoutes, runs: QueueRunLookup): RunEvents {
+function itemsChecksAndRuns(store: QueueStore, engine: QueueEngineRoutes, runs: QueueRunLookup, settings: Set<() => void>): RunEvents {
   return {
     changed: store.changed,
     subscribe(listener) {
-      const stops = [store.subscribe(listener), engine.subscribeChecks(listener), runs.subscribe(listener)]
+      settings.add(listener)
+      const stops = [store.subscribe(listener), engine.subscribeChecks(listener), runs.subscribe(listener), () => { settings.delete(listener) }]
       return () => { for (const stop of stops) stop() }
     },
   }
@@ -114,20 +115,26 @@ async function requireLocalExceptMockupAssets(context: GuardContext): Promise<vo
 }
 
 export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: () => Promise<QueueTree> = () => queueTree(store.list()), runs: QueueRunLookup = NO_RUNS) {
-  const snapshot = () => ({ items: store.list().map(item => withStep(cleaned(item), runs, engine.preparing?.() ?? null)), checkedAt: engine.checkedAt(), paused: engine.paused?.() ?? null })
+  let parallel = 1
+  const settingsListeners = new Set<() => void>()
+  const readParallel = async (): Promise<number> => { parallel = (await readConfig()).queueParallel; return parallel }
+  void readParallel().catch(() => {})
+  const snapshot = () => ({ items: store.list().map(item => withStep(cleaned(item), runs, engine.preparing?.() ?? null)), checkedAt: engine.checkedAt(), paused: engine.paused?.() ?? null, parallel })
   return new Elysia()
     .onBeforeHandle(requireLocalExceptMockupAssets)
-    .get('/api/queue', async () => ({ ...snapshot(), parallel: (await readConfig()).queueParallel }))
+    .get('/api/queue', async () => { await readParallel(); return snapshot() })
     .put('/api/queue/settings', async ({ body, set }) => {
       const parsed = settingsSchema.safeParse(body)
       if (!parsed.success) { set.status = 400; return { error: `parallel must be a whole number from 1 to ${MAX_QUEUE_PARALLEL}` } }
       const { queueParallel } = await writeConfig({ queueParallel: parsed.data.parallel })
+      parallel = queueParallel
+      for (const listener of settingsListeners) listener()
       await engine.kick?.()
       return { parallel: queueParallel }
     })
     .get('/api/queue/tree', () => tree())
     .get('/api/queue/folder', ({ query, set }) => folderRepos(query.path, set))
-    .get('/api/queue/stream', ({ request }) => eventStreamResponse(itemsChecksAndRuns(store, engine, runs), snapshot, request.signal))
+    .get('/api/queue/stream', ({ request }) => eventStreamResponse(itemsChecksAndRuns(store, engine, runs, settingsListeners), snapshot, request.signal))
     .post('/api/queue', ({ body, set }) => addItem(engine, body, set))
     .post('/api/queue/check', () => engine.checkReplies())
     .post('/api/queue/:id/move', async ({ params, body, set }) => {

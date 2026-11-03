@@ -242,13 +242,29 @@ test('the stream sends checkedAt and sends again when a check finishes with no i
   const response = await app.handle(new Request('http://127.0.0.1:7777/api/queue/stream', { headers: { host: '127.0.0.1:7777' }, signal: aborting.signal }))
   const reader = response.body!.getReader()
   const nextData = async (): Promise<unknown> => JSON.parse(new TextDecoder().decode((await reader.read()).value).replace(/^data: /, '').trim())
-  expect(await nextData()).toEqual({ items: [], checkedAt: null, paused: null })
+  expect(await nextData()).toEqual({ items: [], checkedAt: null, paused: null, parallel: 1 })
   checkedAt = 42
   for (const listener of listeners) listener()
-  expect(await nextData()).toEqual({ items: [], checkedAt: 42, paused: null })
+  expect(await nextData()).toEqual({ items: [], checkedAt: 42, paused: null, parallel: 1 })
   aborting.abort()
   await reader.cancel()
   expect(listeners.size).toBe(0)
+})
+
+test('the stream carries how many cards build at once and sends again when it changes', async () => {
+  const items = store()
+  const app = new Elysia().use(queueRoutes(items, { ...engine(items), kick: async () => {} }))
+  await call(app, '/api/queue')
+  const aborting = new AbortController()
+  const response = await app.handle(new Request('http://127.0.0.1:7777/api/queue/stream', { headers: { host: '127.0.0.1:7777' }, signal: aborting.signal }))
+  const reader = response.body!.getReader()
+  const nextData = async (): Promise<Record<string, unknown>> => JSON.parse(new TextDecoder().decode((await reader.read()).value).replace(/^data: /, '').trim())
+  expect((await nextData()).parallel).toBe(1)
+  await call(app, '/api/queue/settings', { method: 'PUT', body: JSON.stringify({ parallel: 3 }) })
+  expect((await nextData()).parallel).toBe(3)
+  aborting.abort()
+  await reader.cancel()
+  await call(app, '/api/queue/settings', { method: 'PUT', body: JSON.stringify({ parallel: 1 }) })
 })
 
 test('POST maps an unexpected local failure to 500, not a source error', async () => {
