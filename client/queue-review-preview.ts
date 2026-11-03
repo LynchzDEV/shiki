@@ -9,7 +9,7 @@ export type PreviewConfig = {
   selected: () => string
   choose: (id: string) => void
 }
-export type Preview = { pane: HTMLElement; viewer: HTMLElement; show(screen: string): void; dispose(): void }
+export type Preview = { pane: HTMLElement; viewer: HTMLElement; show(screen: string): void; closeViewer(): void; dispose(): void }
 
 const NO_MOCKUP = "Mockup files not found in this item's workspace"
 const ROOT = 'visualizer/'
@@ -81,16 +81,16 @@ export function createPreview(config: PreviewConfig): Preview {
   const hint = el('span', { 'data-hint': true, hidden: true }, 'Previewing ', hintPreviewing, ' · selected: ', hintSelected, ' — ', selectButton)
   const toolbar = el('div', { class: 'toolbar' },
     el('nav', { 'aria-label': 'Preview' }, el('div', { class: 'mk-seg', role: 'group', 'aria-label': 'Preview' }, ...tabButtons)),
-    el('nav', {}, compare, fullScreen))
-  const pane = el('div', { class: 'pk-d-right', 'aria-label': 'Mockup preview' }, toolbar, el('p', { class: 'pk-d-cap' }, caption, hint), stage)
+    el('nav', { 'aria-label': 'Preview actions' }, compare, fullScreen))
+  const pane = el('div', { class: 'pk-d-right', role: 'region', 'aria-label': 'Mockup preview' }, toolbar, el('p', { class: 'pk-d-cap' }, caption, hint), stage)
 
   const viewerFrame = mockFrame('Preview', 'pk-viewer-body', false)
-  const viewerTitle = el('strong', { class: 'pk-viewer-title' })
+  const viewerTitle = el('strong', { class: 'pk-viewer-title', id: 'pk-viewer-title' })
   const viewerTabs = tabs.map(tab => el('button', { type: 'button', 'data-vtab': tab.screen, 'aria-pressed': 'false' }, tab.label))
   const viewerClose = el('button', { type: 'button', class: 'round', 'aria-label': 'Close preview' }, icon('close-icon'))
-  const viewer = el('div', { class: 'pk-viewer', hidden: true, role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Preview' },
+  const viewer = el('dialog', { class: 'pk-viewer', 'aria-labelledby': 'pk-viewer-title' },
     el('div', { class: 'pk-viewer-bar' }, viewerTitle, el('div', { class: 'mk-seg', role: 'group', 'aria-label': 'Preview' }, ...viewerTabs), el('span', { class: 'pk-viewer-sp' }), el('small', { class: 'muted' }, 'Esc to close'), viewerClose),
-    viewerFrame.box)
+    viewerFrame.box) as HTMLDialogElement
 
   const fitAll = (): void => { stageFrame.fit(); nowFrame.fit() }
 
@@ -123,21 +123,21 @@ export function createPreview(config: PreviewConfig): Preview {
   }
 
   let opener: HTMLElement | null = null
-  const onKey = (event: KeyboardEvent): void => { if (event.key === 'Escape') { event.preventDefault(); closeViewer() } }
   function openViewer(from: HTMLElement): void {
     opener = from
-    viewer.hidden = false
     showViewer(previewing)
-    document.addEventListener('keydown', onKey)
+    viewer.showModal()
     viewerClose.focus()
   }
   function closeViewer(): void {
-    if (viewer.hidden) return
-    viewer.hidden = true
-    viewerFrame.clear()
-    document.removeEventListener('keydown', onKey)
-    opener?.focus()
+    if (!viewer.open) return
+    viewer.close()
   }
+  viewer.addEventListener('close', () => {
+    viewerFrame.clear()
+    opener?.focus()
+  })
+  viewer.addEventListener('cancel', (event) => { event.preventDefault(); closeViewer() })
 
   pane.addEventListener('click', (event) => {
     const target = event.target instanceof Element ? event.target : null
@@ -163,6 +163,7 @@ export function createPreview(config: PreviewConfig): Preview {
     pane,
     viewer,
     show(screen): void { previewing = screen; paint() },
+    closeViewer,
     dispose(): void { observer?.disconnect(); opener = null; closeViewer() },
   }
 }

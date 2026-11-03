@@ -47,13 +47,18 @@ function spy(scroller: HTMLElement, links: HTMLElement[]): void {
       if (section.getBoundingClientRect().top - scroller.getBoundingClientRect().top < SPY_OFFSET) current = section.id
     }
     if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4) current = 'decide'
-    for (const link of links) link.classList.toggle('on', link.dataset.goto === (current ?? links[0]?.dataset.goto))
+    for (const link of links) {
+      const active = link.dataset.goto === (current ?? links[0]?.dataset.goto)
+      link.classList.toggle('on', active)
+      if (active) link.setAttribute('aria-current', 'true'); else link.removeAttribute('aria-current')
+    }
   })
 }
 
 export function createPickReview(toast: (text: string) => void): PickReview {
   const screen = document.getElementById('queue-review')
   let preview: Preview | null = null
+  let opened = 0
 
   function leave(): void {
     preview?.dispose()
@@ -62,9 +67,7 @@ export function createPickReview(toast: (text: string) => void): PickReview {
   }
 
   addEventListener('quiet:screen', (event) => {
-    if ((event as CustomEvent<string>).detail === 'queue-review') return
-    preview?.dispose()
-    preview = null
+    if ((event as CustomEvent<string>).detail !== 'queue-review') preview?.closeViewer()
   })
 
   return {
@@ -72,6 +75,7 @@ export function createPickReview(toast: (text: string) => void): PickReview {
       const pick = item.pick
       if (pick === undefined || screen === null) return
       preview?.dispose()
+      const token = ++opened
       const parsed = parsePickSummary(pick.summary, pick.options)
       const points = parsed.structured && parsed.points !== null ? renderPoints(parsed.points) : null
       const options = optionsOf(item, parsed)
@@ -96,10 +100,12 @@ export function createPickReview(toast: (text: string) => void): PickReview {
         for (const button of buttons) button.disabled = true
         decide.setError('')
         const body = decide.payload()
+        back.setAttribute('aria-disabled', 'true')
         const result = await postJson(`/api/queue/${encodeURIComponent(item.id)}/pick`, body)
         for (const button of buttons) button.disabled = false
-        if (!result.ok) { decide.setError(errorText(result)); return }
-        leave()
+        back.removeAttribute('aria-disabled')
+        if (!result.ok) { if (token === opened) decide.setError(errorText(result)); return }
+        if (token === opened && !screen!.hidden) leave()
         toast(`Picked ${body.option} for ${item.title}`)
       }
 
@@ -108,7 +114,7 @@ export function createPickReview(toast: (text: string) => void): PickReview {
         ...(points === null ? [] : [{ id: 'points', label: 'Points', node: pointsSection(points) }]),
         { id: 'decide', label: 'Decide', node: decide.section },
       ]
-      const links = sections.map((entry, index) => el('a', { href: `#${entry.id}`, 'data-goto': entry.id, ...(index === 0 ? { class: 'on' } : {}) }, el('span', {}, String(index + 1)), entry.label))
+      const links = sections.map((entry, index) => el('a', { href: `#${entry.id}`, 'data-goto': entry.id, ...(index === 0 ? { class: 'on', 'aria-current': 'true' } : {}) }, el('span', {}, String(index + 1)), entry.label))
       const nav = el('nav', { class: 'pk-nav', 'aria-label': 'Sections' }, ...links)
       nav.addEventListener('click', (event) => {
         const link = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-goto]') : null
@@ -119,14 +125,16 @@ export function createPickReview(toast: (text: string) => void): PickReview {
       const left = el('div', { class: 'pk-d-left', 'data-spy': true }, nav, el('div', { class: 'pk-main' }, ...sections.map(entry => entry.node)))
       spy(left, links)
 
+      const title = el('h1', { id: 'queue-pick-title', tabindex: '-1' }, item.title)
       const back = el('a', { class: 'flow-back', href: '#' }, '← Queue')
-      back.addEventListener('click', (event) => { event.preventDefault(); leave() })
+      back.addEventListener('click', (event) => { event.preventDefault(); if (!back.hasAttribute('aria-disabled')) leave() })
       const header = el('header', { class: 'studio-heading pk-d-head' },
-        el('div', {}, back, el('h1', { id: 'queue-pick-title' }, item.title), el('p', { class: 'muted' }, 'Choose the design to build. Nothing is posted to the source.')),
+        el('div', {}, back, title, el('p', { class: 'muted' }, 'Choose the design to build. Nothing is posted to the source.')),
         el('div', { class: 'pk-head-acts' }, headerBuild))
 
       screen.replaceChildren(el('div', { class: 'pk-d' }, header, el('div', { class: 'pk-d-body' }, left, current.pane)), current.viewer)
       show('queue-review')
+      title.focus()
     },
   }
 }

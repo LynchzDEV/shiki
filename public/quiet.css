@@ -1521,8 +1521,8 @@ dialog, .access-dialog, .confirm-dialog { max-width: calc(100vw - 32px); max-hei
 .q-land .q-add-foot .sp { flex: 1; }
 /* queue pick review */
 .q-review .pk-head-acts{display:flex;align-items:center;gap:8px}
-.q-review .pk-viewer{position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;background:var(--paper)}
-.q-review .pk-viewer[hidden]{display:none}
+.q-review .pk-viewer{position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;width:100%;height:100%;max-width:none;max-height:none;margin:0;padding:0;border:0;background:var(--paper);color:inherit}
+.q-review .pk-viewer:not([open]){display:none}
 .q-review .pk-viewer-bar{display:flex;align-items:center;gap:14px;padding:10px 18px;border-bottom:1px solid var(--line)}
 .q-review .pk-viewer-title{font-size:15px;color:var(--text-strong)}
 .q-review .pk-viewer-frame{flex:1;width:100%;border:0;background:#fff}

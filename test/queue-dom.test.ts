@@ -629,29 +629,78 @@ test('each iframe is scaled to fit the pane width from a 1256px mockup', async (
   }
 })
 
-test('Full screen opens an unscaled viewer; Esc closes it and returns focus to the button', async () => {
+test('Full screen opens an unscaled modal dialog; Esc and the close button close it and return focus', async () => {
   await openPick()
   click(tab('C'))
   const opener = buttonNamed('Full screen', review())
   opener.focus()
   click(opener)
-  const viewer = sel('.pk-viewer')
-  expect(viewer.hidden).toBe(false)
-  expect(viewer.getAttribute('role')).toBe('dialog')
-  expect(viewer.getAttribute('aria-modal')).toBe('true')
+  const viewer = sel<HTMLDialogElement>('.pk-viewer')
+  expect(viewer.tagName).toBe('DIALOG')
+  expect(viewer.open).toBe(true)
+  expect(viewer.getAttribute('aria-labelledby')).toBe(viewer.querySelector('.pk-viewer-title')?.id as string)
   expect(viewer.querySelector('.pk-viewer-title')?.textContent).toBe('Option C · Popup')
   expect(viewer.querySelector('iframe')?.getAttribute('src')).toBe('/queue/p1/files/login/c.html')
   expect(viewer.querySelector('iframe')?.getAttribute('style')).toBeNull()
   click(viewer.querySelector('[data-vtab="now"]') as HTMLElement)
   expect(viewer.querySelector('iframe')?.getAttribute('src')).toBe('/queue/p1/files/login/now.html')
   expect(doc.activeElement).toBe(viewer.querySelector('.round'))
-  doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-  expect(viewer.hidden).toBe(true)
+  viewer.dispatchEvent(new window.Event('cancel', { cancelable: true }))
+  expect(viewer.open).toBe(false)
   expect(doc.activeElement).toBe(opener)
   click(opener)
   click(viewer.querySelector('.round') as HTMLElement)
-  expect(viewer.hidden).toBe(true)
+  expect(viewer.open).toBe(false)
   expect(doc.activeElement).toBe(opener)
+})
+
+test('leaving for another screen closes the viewer but keeps the preview observing, and Back stops it', async () => {
+  const observers: Array<{ on: boolean }> = []
+  class FakeObserver { on = false; observe(): void { this.on = true; observers.push(this) } disconnect(): void { this.on = false } }
+  Object.assign(globalThis, { ResizeObserver: FakeObserver })
+  try {
+    await openPick()
+    click(buttonNamed('Full screen', review()))
+    expect(sel<HTMLDialogElement>('.pk-viewer').open).toBe(true)
+    dispatchEvent(new CustomEvent('quiet:screen', { detail: 'history' }))
+    expect(sel<HTMLDialogElement>('.pk-viewer').open).toBe(false)
+    expect(observers.at(-1)?.on).toBe(true)
+    click(sel('.flow-back'))
+    expect(observers.at(-1)?.on).toBe(false)
+  } finally {
+    Reflect.deleteProperty(globalThis, 'ResizeObserver')
+  }
+})
+
+test('opening focuses the heading and marks the active nav link and the preview region', async () => {
+  await openPick()
+  expect(doc.activeElement).toBe(sel('h1'))
+  expect(sel('h1').getAttribute('tabindex')).toBe('-1')
+  expect(all$('.pk-nav a[aria-current]').map(link => link.dataset.goto)).toEqual(['summary'])
+  expect(sel('.pk-d-right').getAttribute('role')).toBe('region')
+  expect(all$('.pk-d-right .toolbar nav').every(nav => nav.hasAttribute('aria-label'))).toBe(true)
+})
+
+test('a build still in flight does not tear down another item review that was opened meanwhile', async () => {
+  const second = { ...pickItem(STRUCTURED), id: 'p2', title: 'Second item' } as QueueItem
+  send([picking, second])
+  await flush()
+  click(buttonNamed('Pick', rowOf('p1')))
+  await flush()
+  let finish: (response: Response) => void = () => {}
+  replies.set('POST /api/queue/p1/pick', () => new Promise<Response>(resolve => { finish = resolve }) as unknown as Response)
+  click(all$('.pk-build')[0] as HTMLElement)
+  await flush()
+  click(sel('.flow-back'))
+  expect(shown.at(-1)).toBe('queue-review')
+  dispatchEvent(new CustomEvent('quiet:show', { detail: 'queue' }))
+  click(buttonNamed('Pick', rowOf('p2')))
+  await flush()
+  finish(Response.json({ item: { id: 'p1' } }))
+  await flush()
+  expect(sel('h1').textContent).toBe('Second item')
+  expect(shown.at(-1)).toBe('queue-review')
+  expect(toasts).toEqual(['Picked B for Login button wording'])
 })
 
 test('an Other text input is only enabled while Other is chosen', async () => {
@@ -710,7 +759,7 @@ test('Build posts the option, tester, note and every Still open answer, then ret
   click(all$('.pk-build')[1] as HTMLElement)
   expect(all$('.pk-build').every(button => (button as HTMLButtonElement).disabled)).toBe(true)
   await flush()
-  expect(calls.find(entry => entry.method === 'POST')).toMatchObject({ url: '/api/queue/p1/pick', body: { option: 'B', tester: 'Mint', note: 'wide one', answers: [{ id: '#7', label: 'Promo replies', answer: 'drop promo pairs' }, { id: '#5', label: 'No page', answer: 'default' }] } })
+  expect(calls.find(entry => entry.method === 'POST')).toMatchObject({ url: '/api/queue/p1/pick', body: { option: 'B', tester: 'Mint', note: 'wide one', answers: [{ id: '#7', label: 'Promo replies', answer: 'drop promo pairs', useDefault: false }, { id: '#5', label: 'No page', answer: '', useDefault: true }] } })
   expect(toasts).toEqual(['Picked B for Login button wording'])
   expect(shown.at(-1)).toBe('queue')
 })

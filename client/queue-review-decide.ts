@@ -3,14 +3,13 @@ import type { OpenChoice, ParsedSummary, ReviewOption } from './queue-review-par
 import { mockupUrl } from './queue-review-preview'
 import { el, type QueueItemView } from './queue-view'
 
-export type PickPayload = { option: string; tester: string; note: string; answers: Array<{ id: string; label: string; answer: string }> }
+export type PickPayload = { option: string; tester: string; note: string; answers: Array<{ id: string; label: string; answer: string; useDefault: boolean }> }
 export type Decide = {
   section: HTMLElement
   buildButton: HTMLButtonElement
   selected(): string
   setSelected(id: string): void
   payload(): PickPayload
-  setBusy(busy: boolean): void
   setError(text: string): void
 }
 type DecideConfig = { item: QueueItemView; parsed: ParsedSummary; onSelect(id: string): void; onBuild(): void }
@@ -119,11 +118,10 @@ export function createDecide({ item, parsed, onSelect, onBuild }: DecideConfig):
       const answers = open.map((choice, index) => {
         const other = fieldsets[index]!.querySelector<HTMLInputElement>('input[type=text]')!
         const custom = fieldsets[index]!.querySelector<HTMLInputElement>('input[value=other]')!.checked ? other.value.trim() : ''
-        return { id: choice.id.slice(0, MAX_ID), label: choice.label.slice(0, MAX_LABEL), answer: custom === '' ? 'default' : custom.slice(0, MAX_ANSWER) }
+        return { id: choice.id.slice(0, MAX_ID), label: choice.label.slice(0, MAX_LABEL), answer: custom.slice(0, MAX_ANSWER), useDefault: custom === '' }
       })
       return { option: this.selected(), tester: tester.value.trim(), note: note.value.trim(), answers }
     },
-    setBusy(busy): void { buildButton.disabled = busy },
     setError(text): void { error.textContent = text; error.hidden = text === '' },
   }
 }
