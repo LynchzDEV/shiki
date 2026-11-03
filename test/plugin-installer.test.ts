@@ -1102,4 +1102,64 @@ describe('plugin requirements', () => {
     })
   })
 
+
+  describe('removing or turning off a plugin that others need', () => {
+    async function installPair() {
+      const dependency = await pluginAt(REQUIRED)
+      await installOk(fileUrl(dependency), await fixtureSha(dependency))
+      const main = await mainNeeding([{ id: REQUIRED }])
+      await installOk(main.url, main.sha)
+    }
+
+    test('uninstall is refused with the plugins that need it, and force removes it', async () => {
+      await installPair()
+      const refused = await installer().uninstall(REQUIRED)
+      expect(refused).toEqual({ ok: false, status: 409, error: 'Plugin main-plugin need this plugin', dependents: [{ id: 'main-plugin', name: 'Plugin main-plugin' }] })
+      expect(await getInstalled(REQUIRED)).not.toBeNull()
+
+      const forced = await installer().uninstall(REQUIRED, { force: true })
+      expect(forced.ok).toBe(true)
+      expect(await getInstalled(REQUIRED)).toBeNull()
+      expect(await getInstalled('main-plugin')).not.toBeNull()
+    })
+
+    test('turning it off is refused the same way, and force turns it off', async () => {
+      await installPair()
+      const refused = await installer().setEnabled(REQUIRED, false)
+      expect(refused).toMatchObject({ ok: false, status: 409, dependents: [{ id: 'main-plugin', name: 'Plugin main-plugin' }] })
+      expect((await getInstalled(REQUIRED))!.enabled).toBe(true)
+
+      const forced = await installer().setEnabled(REQUIRED, false, { force: true })
+      expect(forced.ok).toBe(true)
+      expect((await getInstalled(REQUIRED))!.enabled).toBe(false)
+    })
+
+    test('turning it on, or removing a plugin nobody needs, is never asked about', async () => {
+      await installPair()
+      expect((await installer().setEnabled(REQUIRED, true)).ok).toBe(true)
+      expect((await installer().uninstall('main-plugin')).ok).toBe(true)
+      expect((await installer().uninstall(REQUIRED)).ok).toBe(true)
+    })
+
+    test('several dependents are all named', async () => {
+      await installPair()
+      const other = await createPluginRepo(join(fixtureRoot, 'second-plugin'), needing('second-plugin', [{ id: REQUIRED }]), { files: { 'src/screen.ts': TRIVIAL_SCREEN }, tag: 'v1.0.0' })
+      await installOk(fileUrl(other), await fixtureSha(other))
+      const refused = await installer().uninstall(REQUIRED)
+      expect(refused.ok === false && 'dependents' in refused && refused.dependents.map(entry => entry.id).sort()).toEqual(['main-plugin', 'second-plugin'])
+      expect(refused.ok === false && refused.error).toBe('Plugin main-plugin, Plugin second-plugin need this plugin')
+    })
+
+    test('a failed install can still take back a requirement that something else needed', async () => {
+      const bottom = await pluginAt('dep-bottom')
+      const middle = await pluginAt('dep-middle', { requires: [{ id: 'dep-bottom' }] })
+      await marketplaceOf('main', [{ id: 'dep-middle', source: middle }, { id: 'dep-bottom', source: bottom }])
+      const source = await createPluginRepo(join(fixtureRoot, 'main-plugin'), needing('main-plugin', [{ id: 'dep-middle' }]), { files: { 'src/screen.ts': 'const x = = = broken\n' }, tag: 'v1.0.0' })
+      const steps = await previewRequires({ url: fileUrl(source) })
+      const failed = await installer().install({ repo: fileUrl(source), ref: 'v1.0.0', commit: await fixtureSha(source), requirements: steps.flatMap(step => step.status === 'install' ? [{ id: step.id, action: 'install' as const, commit: step.preview.commit }] : []) })
+      expect(failed.ok).toBe(false)
+      expect(await listInstalled()).toEqual([])
+    })
+  })
+
 })

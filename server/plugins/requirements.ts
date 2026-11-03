@@ -1,6 +1,6 @@
 import type { PluginContributions, PluginManifest, PluginPermissions, PluginRequirement, PluginRuntime } from './manifest'
 import type { InstallStep } from './installer'
-import type { InstalledPlugin } from './store'
+import { listInstalled, type InstalledPlugin } from './store'
 
 function versionParts(version: string): number[] {
   const numeric = version.match(/^[\d.]*/)?.[0] ?? ''
@@ -220,4 +220,11 @@ export async function withRequirements<R extends Succeeded | Failed>(context: Re
   if (result.ok) return withApplied(result, done.map(step => step.id))
   const failed = result as Failed
   return failAfterRollback(context, done, { status: failed.status, error: failed.error ?? 'The change needs your approval', step: failed.step })
+}
+
+export type Dependent = { id: string; name: string }
+
+export async function dependentsOf(id: string): Promise<Dependent[]> {
+  const installed = await listInstalled()
+  return installed.filter(plugin => plugin.id !== id && (plugin.requires ?? []).some(requirement => requirement.id === id)).map(plugin => ({ id: plugin.id, name: plugin.name }))
 }

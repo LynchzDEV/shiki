@@ -12,7 +12,7 @@ import { checkFlows, contributionTargets, cliCommand, removeContributions, syncC
 import { catalog } from './marketplaces'
 import { contributionsAdded, parseManifest, permissionsAdded, type PluginManifest } from './manifest'
 import { isAllowedRepoUrl } from './repo-url'
-import { outcomeOf, resolveRequirements, withRequirements, type CheckoutPreview, type NeedsRequirementsFailure, type RequirementActions, type RequirementConsent, type RequirementListing, type RequirementStep, type ResolverPorts } from './requirements'
+import { dependentsOf, outcomeOf, resolveRequirements, withRequirements, type CheckoutPreview, type Dependent, type NeedsRequirementsFailure, type RequirementActions, type RequirementConsent, type RequirementListing, type RequirementStep, type ResolverPorts } from './requirements'
 import { invalidateRuntime } from './runtimes'
 import { getInstalled, pluginFolder, pluginsRoot, removeInstalled, saveInstalled, type InstalledPlugin } from './store'
 
@@ -38,8 +38,9 @@ export type UpdateInput = { ref?: string; commit: string; accept?: boolean; trus
 type UpdateFailure = InstallFailure | ConsentFailure | TrustFailure
 export type UpdateResult = (PluginOk & { installedRequirements: string[] }) | UpdateFailure | NeedsRequirementsFailure
 
-export type UninstallResult = { ok: true; keptData: boolean } | MessageFailure
-export type SetEnabledResult = { ok: true; plugin: InstalledPlugin } | MessageFailure
+export type DependentsFailure = MessageFailure & { dependents: Dependent[] }
+export type UninstallResult = { ok: true; keptData: boolean } | MessageFailure | DependentsFailure
+export type SetEnabledResult = { ok: true; plugin: InstalledPlugin } | MessageFailure | DependentsFailure
 
 export type MarketplaceListing = { repo: string; ref: string }
 
@@ -297,8 +298,8 @@ export function createInstaller(overrides: Partial<InstallerDeps> = {}) {
   const requirementActions: RequirementActions = {
     install: async input => outcomeOf(await installCore(input)),
     update: async (id, input) => outcomeOf(await updateCore(id, input)),
-    setEnabled: async (id, enabled) => outcomeOf(await setEnabled(id, enabled)),
-    uninstall: async id => outcomeOf(await uninstall(id, { keepData: false })),
+    setEnabled: async (id, enabled) => outcomeOf(await setEnabled(id, enabled, { force: true })),
+    uninstall: async id => outcomeOf(await uninstall(id, { keepData: false, force: true })),
   }
 
   async function installLocked(manifest: PluginManifest, body: InstallInput, tmp: string, sha: string): Promise<InstallResult> {
@@ -500,11 +501,20 @@ export function createInstaller(overrides: Partial<InstallerDeps> = {}) {
     })
   }
 
-  async function uninstall(id: string, options: { keepData?: boolean } = {}): Promise<UninstallResult> {
+  async function dependentsFailure(id: string, force: boolean | undefined): Promise<DependentsFailure | null> {
+    if (force === true) return null
+    const dependents = await dependentsOf(id)
+    if (dependents.length === 0) return null
+    return { ok: false, status: 409, error: `${dependents.map(dependent => dependent.name).join(', ')} need this plugin`, dependents }
+  }
+
+  async function uninstall(id: string, options: { keepData?: boolean; force?: boolean } = {}): Promise<UninstallResult> {
     try {
       return await withPluginLock(id, async () => {
         const installed = await getInstalled(id)
         if (installed === null) return { ok: false, status: 404, error: 'That plugin is not installed' }
+        const needed = await dependentsFailure(id, options.force)
+        if (needed !== null) return needed
         await removeContributions(id, installed.contributedPaths ?? [])
         await removeStaleOldFolders(id)
         await rm(pluginFolder(id), { recursive: true, force: true })
@@ -524,11 +534,13 @@ export function createInstaller(overrides: Partial<InstallerDeps> = {}) {
     }
   }
 
-  async function setEnabled(id: string, enabled: boolean): Promise<SetEnabledResult> {
+  async function setEnabled(id: string, enabled: boolean, options: { force?: boolean } = {}): Promise<SetEnabledResult> {
     try {
       return await withPluginLock(id, async () => {
         const installed = await getInstalled(id)
         if (installed === null) return { ok: false, status: 404, error: 'That plugin is not installed' }
+        const needed = enabled ? null : await dependentsFailure(id, options.force)
+        if (needed !== null) return needed
         const toggled: InstalledPlugin = { ...installed, enabled, updatedAt: new Date().toISOString() }
         const applied = installed.contributes === undefined ? null : await syncContributions(toggled, contributionOptions())
         if (applied !== null && !applied.ok) return { ok: false, status: 409, error: applied.error }
