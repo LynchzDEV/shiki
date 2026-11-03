@@ -62,7 +62,7 @@ function openChoice(line: string): OpenChoice | null {
     const given = /^default:\s*/i.exec(part)
     if (hint !== null) current = 'hint'
     else if (given !== null) current = 'default'
-    const text = part.replace(hint ?? given ?? /^/, '')
+    const text = part.slice((hint ?? given)?.[0].length ?? 0)
     found[current] = found[current] === '' ? text : `${found[current]} | ${text}`
   }
   return { id, label: label.join(' '), ...found }

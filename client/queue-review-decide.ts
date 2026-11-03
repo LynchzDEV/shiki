@@ -21,7 +21,7 @@ const MAX_ANSWER = 1000
 
 export function inline(markdown: string): Node[] {
   const paragraph = renderMarkdown(markdown).firstElementChild
-  return paragraph === null ? [markdown] : [...paragraph.childNodes]
+  return paragraph === null ? [document.createTextNode(markdown)] : [...paragraph.childNodes]
 }
 
 export function optionsOf(item: QueueItemView, parsed: ParsedSummary): ReviewOption[] {
