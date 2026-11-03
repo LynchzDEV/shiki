@@ -189,6 +189,17 @@ describe('GET /api/jobs', () => {
     await pollUntilDone(app, job.id)
   })
 
+  test('lists only the first line of each prompt, so the list stays small for remote browsers', async () => {
+    const app = buildApp(createJobManager(), echoResolver)
+    const created = await app.handle(post('/api/jobs', { engine: 'claude', cwd: repo, prompt: `Fix the login page\n${'long spec line\n'.repeat(2000)}`, label: 'long-prompt' }))
+    const job = (await created.json()) as { id: string }
+
+    const { jobs } = (await (await app.handle(get('/api/jobs'))).json()) as { jobs: Array<{ label: string; prompt: string }> }
+    expect(jobs.find((entry) => entry.label === 'long-prompt')?.prompt).toBe('Fix the login page')
+
+    await pollUntilDone(app, job.id)
+  })
+
   test('carries the Claude session of the terminal that started a job, even after that terminal ended', async () => {
     const terminals = { list: () => [{ id: 'live', sessionId: 'conv-2' }], ended: () => [{ id: 'gone', sessionId: 'conv-1' }] }
     const app = new Elysia().use(jobsRoutes(createJobManager(), echoResolver, { terminals }))

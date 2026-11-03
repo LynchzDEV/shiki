@@ -482,7 +482,7 @@ export function jobsRoutes(manager: JobManager, resolver: EngineResolver, option
       const jobs = chat === null ? manager.listJobs() : manager.listJobs().filter((job) => job.chatId === chat || job.threadRoot === chat)
       const redact = await activityRedactor()
       const sessions = terminalSessionIds(options.terminals)
-      return { jobs: jobs.map((job) => { const terminalSessionId = job.terminalId ? sessions.get(job.terminalId) : undefined; return { ...job, currentActivity: redact(manager.currentActivity(job.id)), ...(terminalSessionId ? { terminalSessionId } : {}) } }) }
+      return { jobs: jobs.map((job) => { const terminalSessionId = job.terminalId ? sessions.get(job.terminalId) : undefined; return { ...job, prompt: job.prompt.split('\n', 1)[0], currentActivity: redact(manager.currentActivity(job.id)), ...(terminalSessionId ? { terminalSessionId } : {}) } }) }
     })
     .patch('/api/jobs/:id', async ({ params, body, set }) => {
       const root = manager.getJob(params.id)
