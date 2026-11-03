@@ -13,7 +13,7 @@ import { queueTree, type QueueTree } from '../queue-tree'
 import { eventStreamResponse, type RunEvents } from '../run-events'
 
 type Status = { status?: number | string }
-type QueueEngineRoutes = Pick<QueueEngine, 'add' | 'requeue' | 'pick' | 'checkReplies' | 'remove' | 'move' | 'checkedAt' | 'subscribeChecks' | 'startStage' | 'refreshPreflight' | 'retryStage' | 'landLog' | 'report'> & Partial<Pick<QueueEngine, 'preparing'>>
+type QueueEngineRoutes = Pick<QueueEngine, 'add' | 'requeue' | 'pick' | 'checkReplies' | 'remove' | 'move' | 'checkedAt' | 'subscribeChecks' | 'startStage' | 'refreshPreflight' | 'retryStage' | 'landLog' | 'report'> & Partial<Pick<QueueEngine, 'preparing' | 'paused'>>
 export type QueueRunLookup = { get(id: string): QueueStepRun | undefined; subscribe(listener: () => void): () => void }
 const NO_RUNS: QueueRunLookup = { get: () => undefined, subscribe: () => () => {} }
 
@@ -111,7 +111,7 @@ async function requireLocalExceptMockupAssets(context: GuardContext): Promise<vo
 }
 
 export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: () => Promise<QueueTree> = () => queueTree(store.list()), runs: QueueRunLookup = NO_RUNS) {
-  const snapshot = () => ({ items: store.list().map(item => withStep(cleaned(item), runs, engine.preparing?.() ?? null)), checkedAt: engine.checkedAt() })
+  const snapshot = () => ({ items: store.list().map(item => withStep(cleaned(item), runs, engine.preparing?.() ?? null)), checkedAt: engine.checkedAt(), paused: engine.paused?.() ?? null })
   return new Elysia()
     .onBeforeHandle(requireLocalExceptMockupAssets)
     .get('/api/queue', snapshot)

@@ -197,9 +197,16 @@ test('GET says when replies were last checked, or null before the first check', 
   const items = store()
   let checkedAt: number | null = null
   const app = new Elysia().use(queueRoutes(items, engine(items, { checkedAt: () => checkedAt })))
-  expect(await (await call(app, '/api/queue')).json()).toEqual({ items: [], checkedAt: null })
+  expect(await (await call(app, '/api/queue')).json()).toEqual({ items: [], checkedAt: null, paused: null })
   checkedAt = 1_700_000_000_000
-  expect(await (await call(app, '/api/queue')).json()).toEqual({ items: [], checkedAt: 1_700_000_000_000 })
+  expect(await (await call(app, '/api/queue')).json()).toEqual({ items: [], checkedAt: 1_700_000_000_000, paused: null })
+})
+
+test('GET says when the queue is paused on an unavailable AI', async () => {
+  const items = store()
+  const paused = { reason: 'glm unavailable: glm needs a z.ai token (Settings · GLM)', until: 1_700_000_300_000 }
+  const app = new Elysia().use(queueRoutes(items, { ...engine(items), paused: () => paused }))
+  expect((await (await call(app, '/api/queue')).json()).paused).toEqual(paused)
 })
 
 test('the stream sends checkedAt and sends again when a check finishes with no item changes', async () => {
@@ -214,10 +221,10 @@ test('the stream sends checkedAt and sends again when a check finishes with no i
   const response = await app.handle(new Request('http://127.0.0.1:7777/api/queue/stream', { headers: { host: '127.0.0.1:7777' }, signal: aborting.signal }))
   const reader = response.body!.getReader()
   const nextData = async (): Promise<unknown> => JSON.parse(new TextDecoder().decode((await reader.read()).value).replace(/^data: /, '').trim())
-  expect(await nextData()).toEqual({ items: [], checkedAt: null })
+  expect(await nextData()).toEqual({ items: [], checkedAt: null, paused: null })
   checkedAt = 42
   for (const listener of listeners) listener()
-  expect(await nextData()).toEqual({ items: [], checkedAt: 42 })
+  expect(await nextData()).toEqual({ items: [], checkedAt: 42, paused: null })
   aborting.abort()
   await reader.cancel()
   expect(listeners.size).toBe(0)

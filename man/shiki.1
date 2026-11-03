@@ -500,7 +500,11 @@ else the plan role. Also
 .BR \-\-model " and " \-\-message .
 .SH QUEUE
 The build queue builds source items (such as ClickUp tasks) in order. An item
-that needs answers waits and resumes when the source replies.
+that needs answers waits and resumes when the source replies. When a run stops
+because no AI can start (missing token, CLI not installed, usage limit
+reached), its item goes back first in line and the queue pauses until the
+usage limit resets, or for 5, then 15, then 60 minutes, and then resumes by
+itself.
 .TP
 .B shiki queue list
 Items in build order: id, state, source, title, and the error or open

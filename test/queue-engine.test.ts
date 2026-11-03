@@ -464,3 +464,58 @@ test('a card without images keeps its context unchanged and makes no image folde
   expect(context).toBe('# card')
   await expect(readdir(folder)).rejects.toThrow()
 })
+
+const unavailable = { engine: 'glm', reason: 'glm needs a z.ai token (Settings · GLM)', until: null }
+const MINUTE = 60_000
+
+test('an unavailable run puts the card back first in line and pauses the queue instead of failing it', async () => {
+  let now = 1_000_000
+  const h = harness({ now: () => now })
+  const first = await h.engine.add(add)
+  const second = await h.engine.add({ ...add, externalId: '2' })
+  await h.engine.onRunSettled(h.settle('run-1', { status: 'blocked', error: 'glm unavailable: glm needs a z.ai token (Settings · GLM)', unavailable }))
+  expect(h.store.get(first.id)).toMatchObject({ state: 'queued', currentRunId: null, error: null, runIds: ['run-1'] })
+  expect(h.store.list().map(item => item.id)).toEqual([first.id, second.id])
+  expect(h.started).toHaveLength(1)
+  expect(h.engine.paused()).toEqual({ reason: 'glm unavailable: glm needs a z.ai token (Settings · GLM)', until: now + 5 * MINUTE })
+  expect(h.alerts.filter(alert => alert.reason.startsWith('Queue paused'))).toEqual([{ title: 'Task 1', reason: 'Queue paused: glm unavailable: glm needs a z.ai token (Settings · GLM)', state: 'queued' }])
+  await h.engine.kick()
+  expect(h.started).toHaveLength(1)
+  expect(states(h.store.list())).toEqual(['1:queued', '2:queued'])
+})
+
+test('the queue resumes by itself after the pause time', async () => {
+  let now = 1_000_000
+  const h = harness({ now: () => now })
+  const item = await h.engine.add(add)
+  await h.engine.onRunSettled(h.settle('run-1', { status: 'blocked', unavailable: { ...unavailable, until: now + 30 * MINUTE } }))
+  expect(h.engine.paused()?.until).toBe(now + 30 * MINUTE)
+  now += 29 * MINUTE
+  await h.engine.kick()
+  expect(h.started).toHaveLength(1)
+  now += 2 * MINUTE
+  await h.engine.kick()
+  expect(h.engine.paused()).toBeNull()
+  expect(h.started).toHaveLength(2)
+  expect(h.store.get(item.id)).toMatchObject({ state: 'building', currentRunId: 'run-2', runIds: ['run-1', 'run-2'] })
+})
+
+test('pause backoff grows 5, 15, 60 minutes and resets after a normal settle', async () => {
+  let now = 1_000_000
+  const h = harness({ now: () => now })
+  const item = await h.engine.add(add)
+  const waits: number[] = []
+  for (let run = 1; run <= 4; run++) {
+    await h.engine.onRunSettled(h.settle(`run-${run}`, { status: 'blocked', unavailable }))
+    waits.push((h.engine.paused()!.until - now) / MINUTE)
+    now = h.engine.paused()!.until
+    await h.engine.kick()
+  }
+  expect(waits).toEqual([5, 15, 60, 60])
+  expect(h.alerts.filter(alert => alert.reason.startsWith('Queue paused'))).toHaveLength(4)
+  await h.engine.onRunSettled(h.settle('run-5', { status: 'done' }))
+  expect(h.store.get(item.id)!.state).toBe('ready')
+  await h.engine.requeue(item.id)
+  await h.engine.onRunSettled(h.settle('run-6', { status: 'blocked', unavailable }))
+  expect((h.engine.paused()!.until - now) / MINUTE).toBe(5)
+})

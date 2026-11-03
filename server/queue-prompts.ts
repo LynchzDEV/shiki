@@ -6,7 +6,7 @@ import type { CardImageOutcome } from './queue-files'
 import type { SourceReply } from './queue-source'
 import type { WorkflowRun } from './workflow-runner'
 
-export type RunView = Pick<WorkflowRun, 'id' | 'status' | 'error' | 'attempts'> & { workflow?: Partial<Pick<WorkflowRun['workflow'], 'land' | 'nodes'>> & { plugin?: string } }
+export type RunView = Pick<WorkflowRun, 'id' | 'status' | 'error' | 'attempts' | 'unavailable'> & { workflow?: Partial<Pick<WorkflowRun['workflow'], 'land' | 'nodes'>> & { plugin?: string } }
 
 export const SETTLED: ReadonlySet<WorkflowRun['status']> = new Set(['done', 'failed', 'blocked', 'stopped'])
 

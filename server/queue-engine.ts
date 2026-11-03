@@ -57,10 +57,15 @@ export type QueueEngine = {
   report(id: string): Promise<string>
   checkedAt(): number | null
   preparing(): string | null
+  paused(): QueuePause | null
   subscribeChecks(listener: () => void): () => void
 }
 
+export type QueuePause = { reason: string; until: number }
+
 const MAX_RUN_LABEL = 120
+const PAUSE_BACKOFF_MS = [5, 15, 60].map(minutes => minutes * 60_000)
+const MAX_TIMER_MS = 2 ** 31 - 1
 const REQUEUEABLE: ReadonlySet<QueueItem['state']> = new Set(['failed', 'ready', 'waiting-info', 'waiting-pick'])
 const RETRIED_FROM = REQUEUEABLE
 
@@ -93,10 +98,15 @@ type QueueSteps = {
   fail(item: QueueItem, reason: string): Promise<void>
   settle(run: RunView): Promise<void>
   startNext(): Promise<void>
+  paused(): QueuePause | null
 }
 
-function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string | null) => void): QueueSteps {
+function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string | null) => void, wake: () => void): QueueSteps {
   const { store } = deps
+  const now = deps.now ?? Date.now
+  let paused: QueuePause | null = null
+  let backoff = 0
+  let timer: ReturnType<typeof setTimeout> | undefined
 
   async function fail(item: QueueItem, reason: string): Promise<void> {
     const failed = await store.update(item.id, { state: 'failed', error: reason, currentRunId: null, pick: undefined, questions: [] })
@@ -162,7 +172,22 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
     return { item: await store.update(item.id, { realChanged }), moved }
   }
 
+  async function pause(item: QueueItem, unavailable: NonNullable<RunView['unavailable']>): Promise<void> {
+    const queued = await store.update(item.id, { state: 'queued', currentRunId: null, error: null, questions: [], pick: undefined })
+    await store.toFront(item.id)
+    const at = now()
+    const until = unavailable.until ?? at + PAUSE_BACKOFF_MS[Math.min(backoff++, PAUSE_BACKOFF_MS.length - 1)]!
+    const raise = paused === null
+    paused = { reason: `${unavailable.engine} unavailable: ${unavailable.reason}`, until }
+    clearTimeout(timer)
+    timer = setTimeout(wake, Math.min(Math.max(until - at, 0), MAX_TIMER_MS))
+    timer.unref()
+    if (raise) deps.needsYou(queued, `Queue paused: ${paused.reason}`)
+  }
+
   async function settleState(item: QueueItem, run: RunView): Promise<void> {
+    if (run.unavailable) return pause(item, run.unavailable)
+    backoff = 0
     if (run.status !== 'done') return askOrFail(item, run)
     const stages = run.workflow?.land ?? []
     if (stages.length > 0) return land.begin(item, stages, run.workflow?.plugin)
@@ -216,6 +241,8 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
   }
 
   async function startNext(): Promise<void> {
+    if (paused !== null && now() < paused.until) return
+    paused = null
     while (!store.list().some(item => item.state === 'building')) {
       const next = store.list().find(item => item.state === 'queued')
       if (next === undefined) return
@@ -224,7 +251,7 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
     }
   }
 
-  return { fail, settle, startNext }
+  return { fail, settle, startNext, paused: () => paused }
 }
 
 export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
@@ -233,12 +260,16 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
   const tell = (): void => { for (const listener of checkListeners) listener() }
   let preparingId: string | null = null
   const land = createLand(deps)
-  const { fail, settle, startNext } = queueSteps(deps, land, (id) => { preparingId = id; tell() })
+  const { fail, settle, startNext, paused } = queueSteps(deps, land, (id) => { preparingId = id; tell() }, () => { void kick().catch(error => console.error('queue resume failed', error)) })
   let lane: Promise<unknown> = Promise.resolve()
   const serial = <T>(work: () => Promise<T>): Promise<T> => {
     const result = lane.then(work)
     lane = result.catch(error => console.error('queue step failed', error))
     return result
+  }
+
+  function kick(): Promise<void> {
+    return serial(startNext)
   }
 
   const refuseDuplicate = (input: AddInput): void => {
@@ -363,7 +394,7 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
     remove,
     move,
     recover,
-    kick: () => serial(startNext),
+    kick,
     startStage: (id, stage) => serial(() => land.startStage(id, stage)),
     refreshPreflight: (id, stage) => serial(() => land.refreshPreflight(id, stage)),
     retryStage: id => serial(() => land.retryStage(id)),
@@ -374,6 +405,7 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
     checkReplies,
     checkedAt: () => lastCheckedAt,
     preparing: () => preparingId,
+    paused,
     subscribeChecks: (listener) => { checkListeners.add(listener); return () => { checkListeners.delete(listener) } },
   }
 }
