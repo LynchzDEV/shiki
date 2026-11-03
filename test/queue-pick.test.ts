@@ -46,7 +46,7 @@ test('a run blocked with a pick line parks the item in waiting-pick and posts no
   const h = await building()
   await h.block('run-1', [PICK], 'step log')
   expect(h.posted).toEqual([])
-  expect(h.store.get(h.item.id)).toMatchObject({ state: 'waiting-pick', currentRunId: null, questions: [], pick: { options: ['A', 'B', 'C'], path: 'visualizer/login', recommended: 'B', tester: 'Ploy', summary: 'Three variants\n\nstep log' } })
+  expect(h.store.get(h.item.id)).toMatchObject({ state: 'waiting-pick', currentRunId: null, questions: [], pick: { options: ['A', 'B', 'C'], path: 'visualizer/login', recommended: 'B', tester: 'Ploy', summary: 'step log' } })
   expect(h.alerts).toEqual(['Pick a design variant'])
   expect(h.store.get(h.other.id)!.state).toBe('building')
 })

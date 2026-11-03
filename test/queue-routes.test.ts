@@ -341,6 +341,17 @@ test('POST pick hands the choice to the engine and maps refusals', async () => {
   expect((await post(app, `/api/queue/${parked.id}/pick`, { option: 'B', note: 'x'.repeat(4001) })).status).toBe(400)
 })
 
+test('queue items sent to the client carry a cleaned pick summary', async () => {
+  const items = store()
+  const app = new Elysia().use(queueRoutes(items, engine(items)))
+  const parked = await items.add(newItem, 'end')
+  const dirty = 'Intro line.\n\n## Points\n\nbody\n\nSKD_RESULT {"outcome":"blocked","summary":"Intro line.","evidence":[]}'
+  await items.update(parked.id, { state: 'waiting-pick', pick: { options: ['A', 'B'], path: 'visualizer/x', recommended: null, tester: null, summary: dirty } })
+  const listed = (await (await call(app, '/api/queue')).json()).items as Array<{ pick: { summary: string } }>
+  expect(listed[0]!.pick.summary).toBe('## Points\n\nbody')
+  expect(items.get(parked.id)!.pick!.summary).toBe(dirty)
+})
+
 describe('mockup files', () => {
   let tree: string
   let outside: string

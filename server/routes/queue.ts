@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { requireLocal, type GuardContext } from '../auth'
 import { peerAddress, trustedHostRequest } from '../local-access'
 import { QueueRefusal, SourceFailure, type QueueEngine } from '../queue-engine'
+import { cleanPickSummary } from '../queue-prompts'
 import type { QueueItem, QueueStore } from '../queue-store'
 import { mockupResponse } from '../queue-mockups'
 import { queueStep, type QueueStep, type QueueStepRun } from '../queue-step'
@@ -44,7 +45,7 @@ async function requeueItem(store: QueueStore, engine: QueueEngineRoutes, id: str
   const item = store.get(id)
   if (item === undefined) { set.status = 404; return { error: NO_ITEM } }
   if (item.state === 'building') { set.status = 409; return { error: 'It is building now' } }
-  return refusing(set, async () => ({ item: await engine.requeue(id) }))
+  return refusing(set, async () => ({ item: cleaned(await engine.requeue(id)) }))
 }
 
 async function addItem(engine: QueueEngineRoutes, body: unknown, set: Status) {
@@ -55,7 +56,7 @@ async function addItem(engine: QueueEngineRoutes, body: unknown, set: Status) {
   if (!repo.ok) { set.status = 400; return { error: repo.error } }
   const input = { ...fields, repo: repo.path, ...(repo.repos === undefined ? {} : { repos: repo.repos }) }
   try {
-    return await refusing(set, async () => ({ item: await engine.add(input, { background: true }) }))
+    return await refusing(set, async () => ({ item: cleaned(await engine.add(input, { background: true })) }))
   } catch (error) {
     if (!(error instanceof SourceFailure)) throw error
     set.status = 502
@@ -86,6 +87,8 @@ function itemsChecksAndRuns(store: QueueStore, engine: QueueEngineRoutes, runs: 
   }
 }
 
+const cleaned = (item: QueueItem): QueueItem => (item.pick === undefined ? item : { ...item, pick: { ...item.pick, summary: cleanPickSummary(item.pick.summary) } })
+
 function withStep(item: QueueItem, runs: QueueRunLookup, preparing: string | null): QueueItem & { step?: QueueStep; preparing?: true } {
   if (item.state === 'queued' && item.id === preparing) return { ...item, preparing: true }
   const run = item.state === 'building' && item.currentRunId !== null ? runs.get(item.currentRunId) : undefined
@@ -105,7 +108,7 @@ async function requireLocalExceptMockupAssets(context: GuardContext): Promise<vo
 }
 
 export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: () => Promise<QueueTree> = () => queueTree(store.list()), runs: QueueRunLookup = NO_RUNS) {
-  const snapshot = () => ({ items: store.list().map(item => withStep(item, runs, engine.preparing?.() ?? null)), checkedAt: engine.checkedAt() })
+  const snapshot = () => ({ items: store.list().map(item => withStep(cleaned(item), runs, engine.preparing?.() ?? null)), checkedAt: engine.checkedAt() })
   return new Elysia()
     .onBeforeHandle(requireLocalExceptMockupAssets)
     .get('/api/queue', snapshot)
@@ -117,20 +120,20 @@ export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: 
     .post('/api/queue/:id/move', async ({ params, body, set }) => {
       const parsed = moveSchema.safeParse(body)
       if (!parsed.success) { set.status = 400; return { error: 'to must be a position from 0' } }
-      return refusing(set, async () => { await engine.move(params.id, parsed.data.to); return { items: store.list() } }, moveExplanation)
+      return refusing(set, async () => { await engine.move(params.id, parsed.data.to); return { items: store.list().map(cleaned) } }, moveExplanation)
     })
     .post('/api/queue/:id/pick', ({ params, body, set }) => {
       const parsed = pickSchema.safeParse(body)
       if (!parsed.success) { set.status = 400; return { error: 'option is required; tester is at most 200 characters and note at most 4000' } }
-      return refusing(set, async () => ({ item: await engine.pick(params.id, parsed.data) }))
+      return refusing(set, async () => ({ item: cleaned(await engine.pick(params.id, parsed.data)) }))
     })
     .get('/queue/:id/files/*', ({ params }) => mockupResponse(store.get(params.id)?.worktree ?? null, params['*']))
-    .post('/api/queue/:id/land/retry', ({ params, set }) => refusing(set, async () => ({ item: await engine.retryStage(params.id) }), explainMissing))
+    .post('/api/queue/:id/land/retry', ({ params, set }) => refusing(set, async () => ({ item: cleaned(await engine.retryStage(params.id)) }), explainMissing))
     .post('/api/queue/:id/land/:stage/start', ({ params, body, set }) => {
       if (!confirmSchema.safeParse(body).success) { set.status = 400; return { error: 'Send { "confirm": true } to start this stage' } }
-      return refusing(set, async () => ({ item: await engine.startStage(params.id, params.stage) }), explainMissing)
+      return refusing(set, async () => ({ item: cleaned(await engine.startStage(params.id, params.stage)) }), explainMissing)
     })
-    .post('/api/queue/:id/land/:stage/preflight', ({ params, set }) => refusing(set, async () => ({ item: await engine.refreshPreflight(params.id, params.stage) }), explainMissing))
+    .post('/api/queue/:id/land/:stage/preflight', ({ params, set }) => refusing(set, async () => ({ item: cleaned(await engine.refreshPreflight(params.id, params.stage)) }), explainMissing))
     .get('/api/queue/:id/land/:stage/log', ({ params, set }) => refusing(set, async () => text(await engine.landLog(params.id, params.stage), 'text/plain'), explainMissing))
     .get('/api/queue/:id/report', ({ params, set }) => refusing(set, async () => text(await engine.report(params.id), 'text/markdown'), explainMissing))
     .post('/api/queue/:id/requeue', ({ params, set }) => requeueItem(store, engine, params.id, set))

@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 
-import { answersMarkdown, branchLabel, cardImagesMarkdown, pickOf, questionsOf, runRequest, SETTLED, type RunView } from '../server/queue-prompts'
+import { answersMarkdown, blockedSummary, branchLabel, cardImagesMarkdown, cleanPickSummary, pickOf, questionsOf, stillOpenMarkdown, runRequest, SETTLED, type RunView } from '../server/queue-prompts'
 import type { WorkflowAttempt } from '../server/workflow-runner'
 
 const attempt = (over: Partial<WorkflowAttempt>): WorkflowAttempt => ({ nodeId: 'plan', number: 1, jobId: 'j', status: 'settled', prompt: '', startedAt: 1, endedAt: 2, result: null, checks: [], output: '', workspace: null, tokenId: 't', pathId: 'main', from: [], ...over })
@@ -134,4 +134,52 @@ test('questionsOf leaves pick lines out, like repo lines', () => {
 test('a card image name with a line break cannot start a new line in the context file', () => {
   const markdown = cardImagesMarkdown([{ name: 'a.png\n## Fake heading', copied: '/w/0-a.png' }, { name: 'b.png', failed: 'gone\nnext' }])
   expect(markdown).toBe('\n\n## Downloaded images\n\n- a.png ## Fake heading: /w/0-a.png\n- b.png: not copied (gone next)\n')
+})
+
+const FIRST = 'Three variants for the new tab; B shows the full table.'
+const BODY = '## Points\n\n| # | Point |\n| - | - |\n| 1 | Wide table |'
+const SKD = `SKD_RESULT ${JSON.stringify({ outcome: 'blocked', summary: FIRST, evidence: ['pick: A,B,C | visualizer/x/ | B |'] })}`
+const duplicated = `${FIRST}\n\n${BODY}\n\n${SKD}`
+
+test('cleanPickSummary drops the paragraph that repeats the SKD_RESULT summary and the SKD_RESULT line', () => {
+  expect(cleanPickSummary(duplicated)).toBe(BODY)
+})
+
+test('cleanPickSummary keeps a lone summary paragraph when nothing follows it', () => {
+  expect(cleanPickSummary(`${FIRST}\n\n${SKD}`)).toBe(FIRST)
+})
+
+test('cleanPickSummary keeps the first paragraph when it differs from the SKD_RESULT summary', () => {
+  expect(cleanPickSummary(`Other intro\n\n${BODY}\n${SKD}`)).toBe(`Other intro\n\n${BODY}`)
+})
+
+test('cleanPickSummary survives an SKD_RESULT line that is not JSON', () => {
+  expect(cleanPickSummary(`${BODY}\nSKD_RESULT nope`)).toBe(BODY)
+})
+
+test('cleanPickSummary returns text without an SKD_RESULT line trimmed and otherwise unchanged', () => {
+  expect(cleanPickSummary(`  ${FIRST}\n\n${BODY}\n`)).toBe(`${FIRST}\n\n${BODY}`)
+})
+
+const blockedWith = (summary: string, output: string): RunView => run('blocked', [attempt({ result: { outcome: 'blocked', summary, evidence: ['pick: A,B | visualizer/x'] }, output })])
+
+test('blockedSummary uses the step output, cleaned, when there is output', () => {
+  expect(blockedSummary(blockedWith(FIRST, duplicated))).toBe(BODY)
+})
+
+test('blockedSummary falls back to the result summary when the output is empty', () => {
+  expect(blockedSummary(blockedWith(FIRST, '  \n'))).toBe(FIRST)
+})
+
+test('blockedSummary cuts the cleaned text at the limit', () => {
+  expect(blockedSummary(blockedWith('s', 'x'.repeat(70000))).length).toBe(64000)
+})
+
+test('stillOpenMarkdown lists defaults and custom answers, collapsing newlines', () => {
+  expect(stillOpenMarkdown([
+    { id: '#7', label: 'Promo replies', answer: 'default' },
+    { id: '#5', label: 'No page', answer: 'let the seller\n pick a page' },
+    { id: '#9', label: '', answer: 'default' },
+  ])).toBe('\n## Still open\n- #7 Promo replies: default\n- #5 No page: Other: let the seller pick a page\n- #9: default\n')
+  expect(stillOpenMarkdown([])).toBe('')
 })

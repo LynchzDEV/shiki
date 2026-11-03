@@ -68,10 +68,44 @@ const blockedEvidence = (run: RunView): string[] => lastBlocked(run)?.result?.ev
 
 const MAX_SUMMARY = 64000
 
+const SKD_LINE = /^SKD_RESULT\b/
+
+function resultSummary(lines: string[]): string {
+  for (const line of lines) {
+    if (!SKD_LINE.test(line)) continue
+    try {
+      const parsed: unknown = JSON.parse(line.replace(SKD_LINE, '').trim())
+      const summary = typeof parsed === 'object' && parsed !== null && 'summary' in parsed ? (parsed as { summary: unknown }).summary : null
+      if (typeof summary === 'string' && summary.trim() !== '') return summary.trim()
+    } catch { /* an SKD_RESULT line that is not JSON has no summary to compare */ }
+  }
+  return ''
+}
+
+export function cleanPickSummary(text: string): string {
+  const lines = text.split('\n')
+  const body = lines.filter(line => !SKD_LINE.test(line)).join('\n').trim()
+  const summary = resultSummary(lines)
+  const rest = summary !== '' && body.startsWith(summary) ? body.slice(summary.length) : ''
+  return rest.trim() !== '' && /^\s/.test(rest) ? rest.trim() : body
+}
+
 export function blockedSummary(run: RunView): string {
   const last = lastBlocked(run)
-  const text = [last?.result?.summary ?? '', last?.output ?? ''].filter(part => part.trim() !== '').join('\n\n')
-  return text.slice(0, MAX_SUMMARY)
+  const output = last?.output ?? ''
+  const text = output.trim() !== '' ? output : last?.result?.summary ?? ''
+  return cleanPickSummary(text).slice(0, MAX_SUMMARY)
+}
+
+export type PickAnswer = { id: string; label: string; answer: string }
+
+export function stillOpenMarkdown(answers: readonly PickAnswer[]): string {
+  if (answers.length === 0) return ''
+  const lines = answers.map(({ id, label, answer }) => {
+    const heading = label === '' ? id : `${id} ${label}`
+    return `- ${heading}: ${answer === 'default' ? 'default' : `Other: ${answer.replace(/\s*[\r\n]+\s*/g, ' ').trim()}`}`
+  })
+  return `\n## Still open\n${lines.join('\n')}\n`
 }
 
 const pickBody = (line: string): string | null => {
