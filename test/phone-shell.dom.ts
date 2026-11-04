@@ -124,3 +124,22 @@ test('on desktop an outside tap leaves the sidebar open', () => {
   key(doc.body, 'Escape')
   expect(shell().classList.contains('collapsed')).toBe(false)
 })
+
+test('on a phone Enter in the message box adds a line; the Send button sends', () => {
+  const form = byId('composer') as HTMLFormElement
+  let submits = 0
+  form.requestSubmit = () => { submits += 1 }
+  const enter = key(byId('message'), 'Enter')
+  expect(enter.defaultPrevented).toBe(false)
+  expect(submits).toBe(0)
+})
+
+test('on desktop Enter in the message box still sends', () => {
+  phone = false
+  const form = byId('composer') as HTMLFormElement
+  let submits = 0
+  form.requestSubmit = () => { submits += 1 }
+  const enter = key(byId('message'), 'Enter')
+  expect(enter.defaultPrevented).toBe(true)
+  expect(submits).toBe(1)
+})

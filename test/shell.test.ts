@@ -191,6 +191,15 @@ describe('phone sessions drawer', () => {
   })
 })
 
+describe('composer on touch layouts', () => {
+  test('a touch-only paperclip sits before Send with a hidden multi-file picker', async () => {
+    const markup = await (await app.handle(new Request('http://localhost/'))).text()
+    expect(markup).toContain('<button type="button" id="attach-files" class="round touch-only" aria-label="Attach files" title="Attach files">')
+    expect(markup).toContain('<input type="file" multiple id="attach-input" hidden>')
+    expect(markup.indexOf('id="attach-files"')).toBeLessThan(markup.indexOf('class="round send"'))
+  })
+})
+
 describe('phone held sideways', () => {
   const termBar = (markup: string): string => markup.slice(markup.indexOf('<template id="term-bar">'), markup.indexOf('</template>', markup.indexOf('<template id="term-bar">')))
 

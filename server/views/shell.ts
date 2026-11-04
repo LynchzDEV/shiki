@@ -171,6 +171,7 @@ const BODY = `
         </span>
         <textarea id="message" rows="1" placeholder="Write a message here…" aria-label="Message" required></textarea>
         <span class="ctx-meter" id="ctx-meter" hidden title="Excludes stopped replies"><svg viewBox="0 0 20 20" aria-hidden="true"><circle class="track" cx="10" cy="10" r="7.5"></circle><circle class="fill" cx="10" cy="10" r="7.5"></circle></svg><span id="ctx-text"></span></span>
+        <button type="button" id="attach-files" class="round touch-only" aria-label="Attach files" title="Attach files"><svg><use href="#clip-icon"/></svg></button><input type="file" multiple id="attach-input" hidden>
         <button type="submit" class="round send" aria-label="Send message" title="Send message"><svg><use href="#arrow-icon"/></svg></button>
       </form>
     </div>

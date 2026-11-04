@@ -38,7 +38,7 @@ describe('shipped layout at phone width', () => {
 
   test('on a phone the toolbar keeps only Sessions; Studio, Flow, Agents and the bell move into the drawer', () => {
     const drawer = mediaBlock(quiet, PHONE_TERMINAL_QUERY)
-    expect(quiet).toContain('#phone-sessions, .sb-destinations { display: none; }')
+    expect(quiet.indexOf('#phone-sessions, .sb-destinations, .touch-only { display: none; }')).toBeLessThan(quiet.indexOf(`@media ${PHONE_TERMINAL_QUERY}, `))
     expect(drawer).toContain('#phone-sessions { display: inline-flex;')
     expect(drawer).toContain('.sb-destinations { display: flex;')
     expect(drawer).toContain('.toolbar :is(#open-studio, #toggle-flow, #open-agents, #open-attention, .usage-card) { display: none; }')
@@ -442,8 +442,10 @@ describe('terminal on touch layouts', () => {
     expect(touch).toContain('min-height: 44px; padding: 0 16px;')
   })
 
-  test('split drop zones are hidden on touch layouts', () => {
+  test('split drop zones hide and the composer paperclip shows at 44px on touch layouts', () => {
     expect(touch).toContain('.drop-zone { display: none; }')
+    expect(touch).toContain('.touch-only { display: inline-flex; }')
+    expect(touch).toContain('.composer #attach-files { width: 44px; flex-basis: 44px; min-height: 44px; }')
   })
 
   test('on a phone the status is a dot whose label stays readable to screen readers', () => {

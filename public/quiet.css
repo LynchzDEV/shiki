@@ -1501,6 +1501,7 @@ dialog, .access-dialog, .confirm-dialog { max-width: calc(100vw - 32px); max-hei
 }
 
 .term-bar .term-bar-mobile, .key-row, .live-jump { display: none; }
+#phone-sessions, .sb-destinations, .touch-only { display: none; }
 @media (max-width: 600px), (orientation: landscape) and (max-height: 500px) and (pointer: coarse), (min-width: 901px) and (max-width: 1100px) and (pointer: coarse) and (orientation: landscape) {
   #live.live-workspace { padding: 0 10px; }
   #live .term-host { padding: 0; gap: 0; border-radius: 0; box-shadow: none; }
@@ -1522,6 +1523,8 @@ dialog, .access-dialog, .confirm-dialog { max-width: calc(100vw - 32px); max-hei
   #live .term-screen .xterm { padding: 8px; }
   #live .oc-line { display: none; }
   .drop-zone { display: none; }
+  .touch-only { display: inline-flex; }
+  .composer #attach-files { width: 44px; flex-basis: 44px; min-height: 44px; }
   .key-row { display: flex; flex: none; flex-wrap: nowrap; overflow-x: auto; gap: 6px; padding: 6px 0; }
   .key-row button { flex: 1 0 44px; min-width: 44px; height: 44px; min-height: 44px; display: grid; place-content: center; gap: 1px; padding: 0 4px; border: 0; border-radius: var(--r-sm); corner-shape: var(--corner); background: var(--paper); box-shadow: var(--raised); color: var(--text-strong); font-size: 12.5px; font-weight: 600; line-height: 1; touch-action: manipulation; }
   .key-row button:active, .key-row button[aria-pressed="true"] { box-shadow: var(--inset); color: var(--accent); }
@@ -1533,7 +1536,6 @@ dialog, .access-dialog, .confirm-dialog { max-width: calc(100vw - 32px); max-hei
   .live-jump:not([hidden]) { display: inline-flex; align-items: center; position: absolute; left: 50%; bottom: 10px; translate: -50% 0; z-index: 5; min-height: 44px; padding: 0 16px; border: 0; border-radius: var(--r-md); corner-shape: var(--corner); background: var(--accent); color: var(--paper); font-size: 12px; font-weight: 600; white-space: nowrap; box-shadow: var(--raised); }
 }
 
-#phone-sessions, .sb-destinations { display: none; }
 @media (max-width: 600px), (orientation: landscape) and (max-height: 500px) and (pointer: coarse) {
   .sb-shell, .sb-shell.collapsed { grid-template-columns: minmax(0, 1fr); transition: none; }
   .sb-shell .canvas { grid-column: 1 / -1; }

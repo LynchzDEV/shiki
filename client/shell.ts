@@ -1,5 +1,5 @@
 import { fold, morph, reveal } from './morph'
-import { PHONE_QUERY, PHONE_TERMINAL_QUERY } from './shared'
+import { PHONE_QUERY, PHONE_TERMINAL_QUERY, enterIntent } from './shared'
 
 const $ = (id: string): HTMLElement => document.getElementById(id) as HTMLElement
 const screens = ['welcome', 'history', 'conversation', 'studio', 'plugin', 'marketplace', 'queue', 'queue-review'] as const
@@ -168,7 +168,7 @@ document.querySelectorAll<HTMLElement>('[data-dialog]').forEach(button => {
 })
 
 message.onkeydown = (event) => {
-  if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return
+  if (enterIntent(event, false) !== 'send') return
   event.preventDefault()
   composer.requestSubmit()
 }

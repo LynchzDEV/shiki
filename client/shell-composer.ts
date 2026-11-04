@@ -229,6 +229,13 @@ message.addEventListener('paste', (event) => {
   event.preventDefault()
   void attach(files, [])
 })
+const attachInput = $('attach-input') as HTMLInputElement
+$('attach-files').addEventListener('click', () => attachInput.click())
+attachInput.addEventListener('change', () => {
+  const files = Array.from(attachInput.files ?? [])
+  attachInput.value = ''
+  void attach(files, [])
+})
 composer.addEventListener('dragover', (event) => {
   if (!hasFiles(event.dataTransfer)) return
   event.preventDefault()

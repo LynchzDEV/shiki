@@ -1,6 +1,6 @@
 import { renderMarkdown } from './markdown'
 import { MORPH_EASE, MORPH_MS, blendColor, morph, reveal, rollText } from './morph'
-import { copyButton, errorText, getJson, postJson, readArray } from './shared'
+import { copyButton, enterIntent, errorText, getJson, postJson, readArray } from './shared'
 import { launchChoice, type LaunchProvider } from './shell-launch'
 import { createOutcomeStrip } from './outcome-strip'
 import { chatModeChoice, chatModeKey, chatSignal, costText, filterSlashCommands, historyAction, historyDay, historyLabel, historyOpen, mentionMarks, mentionToken, parseAgentReport, runningLabel, slashQuery, teamRows, titleFrom, turnsFrom, workedLine, type AgentJob, type ChatCommand, type HistoryItem, type PermissionView, type TeamRow, type ThreadMessage, type Turn, type TurnJob } from './chat-view'
@@ -1266,6 +1266,11 @@ document.addEventListener('click', (event) => {
   closeSlashMenu()
 })
 
+function leavesEnterAlone(event: KeyboardEvent, highlighted: boolean): boolean {
+  const intent = enterIntent(event, highlighted)
+  return intent === 'newline' || intent === 'none'
+}
+
 composer.addEventListener('keydown', (event) => {
   if (slashMenu.hidden && mentionMenu.hidden) return
   if (!slashMenu.hidden) {
@@ -1279,6 +1284,7 @@ composer.addEventListener('keydown', (event) => {
       }
       return
     }
+    if (event.key === 'Enter' && leavesEnterAlone(event, matches[slashIndex] !== undefined)) return
     if (event.key === 'Enter' || event.key === 'Tab') {
       if (matches.length === 0 && event.key === 'Tab') {
         event.preventDefault()
@@ -1308,6 +1314,7 @@ composer.addEventListener('keydown', (event) => {
     }
     return
   }
+  if (event.key === 'Enter' && leavesEnterAlone(event, mentionMatches[mentionIndex] !== undefined)) return
   if (event.key === 'Enter' || event.key === 'Tab') {
     event.preventDefault()
     event.stopImmediatePropagation()

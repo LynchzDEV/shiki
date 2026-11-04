@@ -1,8 +1,9 @@
-import { afterAll, beforeAll, expect, test } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { JSDOM, VirtualConsole } from 'jsdom'
 
 import { ShellPage } from '../server/views/shell'
 import type { InstalledPlugin } from '../client/plugins/types'
+import { PHONE_TERMINAL_QUERY } from '../client/shared'
 
 const markup = `<div class="sb-shell" id="sb-shell">
   <aside id="sidebar" class="sb" aria-label="Chats and terminals">
@@ -85,6 +86,9 @@ const realBus = {
 }
 const clipboardWrites: string[] = []
 let clipboardResolves = true
+let touchLayout = false
+let mentionFilesReply: Array<{ path: string }> = []
+const slashCommandsReply = [{ name: 'review', description: 'Review the diff' }]
 let installedPlugins: InstalledPlugin[] = []
 let marketplaceSyncOk = true
 let previewBody: Record<string, unknown> = {}
@@ -111,6 +115,9 @@ const reply = (request: Sent): Response => {
   if (method === 'DELETE' && url === '/api/plugins/marketplaces') { brokenMarketplace = null; return Response.json({ marketplaces: [] }) }
   if (method === 'GET' && url === '/api/providers') return Response.json(providers)
   if (method === 'GET' && url === '/api/terminals') return Response.json({ sessions: [] })
+  if (method === 'GET' && url.startsWith('/api/chat/files?')) return Response.json({ files: mentionFilesReply })
+  if (method === 'GET' && url === '/api/jobs/slash-chat/commands') return Response.json({ commands: slashCommandsReply })
+  if (method === 'GET' && url.startsWith('/api/jobs/slash-chat/thread')) return Response.json({ messages: [], running: false })
   if (method === 'POST' && url === '/api/jobs') return Response.json({ id: 'job-9' })
   if (method === 'GET' && url.startsWith('/api/jobs/') && url.endsWith('/thread')) return Response.json({ error: 'no such chat' }, { status: 404 })
   if (method === 'POST' && url === '/api/terminals') return terminalCreate === null ? Response.json({ id: 't-1', engine: 'claude', cwd: '/w', title: 'T' }) : terminalCreate()
@@ -169,7 +176,7 @@ beforeAll(async () => {
   Object.assign(globalThis, {
     window, document: doc, Node: window.Node, HTMLElement: window.HTMLElement, HTMLCanvasElement: window.HTMLCanvasElement,
     Option: window.Option, localStorage: window.localStorage, location: window.location, history: window.history,
-    matchMedia: () => ({ matches: true, addEventListener() {}, removeEventListener() {} }),
+    matchMedia: (query: string) => ({ get matches() { return query.includes('reduce') || (touchLayout && query === PHONE_TERMINAL_QUERY) }, addEventListener() {}, removeEventListener() {} }),
     getComputedStyle: window.getComputedStyle,
     requestAnimationFrame: globalThis.requestAnimationFrame ?? window.requestAnimationFrame,
     cancelAnimationFrame: globalThis.cancelAnimationFrame ?? window.cancelAnimationFrame,
@@ -822,4 +829,84 @@ test('a toggle setting is a switch that saves true or false at once and goes bac
   expect(toggle.checked).toBe(true)
   expect(byId('marketplace').querySelector('.mk-fail')!.textContent).toBe('Auto-pick the recommended design takes true or false')
   settingsPutReply = { status: 200, body: {} }
+})
+
+type EnterPress = { touch?: boolean; shiftKey?: boolean; isComposing?: boolean }
+
+async function pressEnterInMenu(text: string, press: EnterPress = {}): Promise<{ prevented: boolean; submits: number; value: string }> {
+  touchLayout = press.touch === true
+  const message = input('message') as unknown as HTMLTextAreaElement
+  const form = byId('composer') as HTMLFormElement
+  const realSubmit = form.requestSubmit
+  let submits = 0
+  form.requestSubmit = () => { submits += 1 }
+  message.value = text
+  message.setSelectionRange(text.length, text.length)
+  message.dispatchEvent(new window.Event('input', { bubbles: true }))
+  await new Promise(resolve => setTimeout(resolve, 200))
+  if (text.startsWith('/')) message.dispatchEvent(new window.Event('input', { bubbles: true }))
+  const enter = new window.KeyboardEvent('keydown', { key: 'Enter', shiftKey: press.shiftKey === true, isComposing: press.isComposing === true, bubbles: true, cancelable: true })
+  message.dispatchEvent(enter)
+  const value = message.value
+  form.requestSubmit = realSubmit
+  message.value = ''
+  message.dispatchEvent(new window.Event('input', { bubbles: true }))
+  touchLayout = false
+  mentionFilesReply = []
+  return { prevented: enter.defaultPrevented, submits, value }
+}
+const pressEnterInMention = (text: string, touch: boolean) => pressEnterInMenu(text, { touch })
+
+test('with the @ menu open and nothing matching, a phone Enter adds a line instead of sending', async () => {
+  expect(await pressEnterInMention('@zzz', true)).toEqual({ prevented: false, submits: 0, value: '@zzz' })
+})
+
+test('with the @ menu open and nothing matching, a desktop Enter still sends', async () => {
+  const result = await pressEnterInMention('@zzz', false)
+  expect(result.prevented).toBe(true)
+  expect(result.submits).toBe(1)
+})
+
+test('with a highlighted @ match, a phone Enter picks the file instead of adding a line', async () => {
+  mentionFilesReply = [{ path: 'src/app.ts' }]
+  const result = await pressEnterInMention('@app', true)
+  expect(result.prevented).toBe(true)
+  expect(result.submits).toBe(0)
+  expect(result.value).toContain('src/app.ts')
+})
+
+test('with a highlighted @ match, Shift+Enter or an IME Enter leaves the file unpicked and sends nothing', async () => {
+  for (const press of [{ shiftKey: true }, { isComposing: true }, { touch: true, shiftKey: true }]) {
+    mentionFilesReply = [{ path: 'src/app.ts' }]
+    expect(await pressEnterInMenu('@app', press)).toEqual({ prevented: false, submits: 0, value: '@app' })
+  }
+})
+
+describe('Enter with the slash menu open', () => {
+  beforeAll(async () => {
+    dispatchEvent(new CustomEvent('quiet:open-chat', { detail: 'slash-chat' }))
+    await new Promise(resolve => setTimeout(resolve, 50))
+  })
+  afterAll(() => { dispatchEvent(new Event('quiet:new-chat')) })
+
+  test('with nothing matching, a phone Enter adds a line instead of sending', async () => {
+    expect(await pressEnterInMenu('/zzz', { touch: true })).toEqual({ prevented: false, submits: 0, value: '/zzz' })
+  })
+
+  test('with nothing matching, a desktop Enter still sends', async () => {
+    const result = await pressEnterInMenu('/zzz')
+    expect(result.prevented).toBe(true)
+    expect(result.submits).toBe(1)
+  })
+
+  test('with a highlighted command, a phone Enter picks it', async () => {
+    expect(await pressEnterInMenu('/re', { touch: true })).toEqual({ prevented: true, submits: 0, value: '/review ' })
+  })
+
+  test('Shift+Enter or an IME Enter neither picks nor sends', async () => {
+    for (const press of [{ shiftKey: true }, { isComposing: true }, { touch: true, shiftKey: true }]) {
+      expect(await pressEnterInMenu('/re', press)).toEqual({ prevented: false, submits: 0, value: '/re' })
+      expect(await pressEnterInMenu('/zzz', press)).toEqual({ prevented: false, submits: 0, value: '/zzz' })
+    }
+  })
 })
