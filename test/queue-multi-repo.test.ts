@@ -163,6 +163,18 @@ test('requeue of a multi-repo item with one child worktree deleted recreates onl
   expect(existsSync(join(workspace, 'b', 'README.md'))).toBe(true)
 })
 
+test('a card re-added with no repos ticked adopts the repo copies its reused workspace already holds', async () => {
+  await twoRepos()
+  const h = queueHarness(scratch, { prepareWorkspace: (folder, repos, label) => prepareRepoWorkspace(folder, repos, label) })
+  const first = await h.engine.add({ ...multi, repo: parent, repos: ['a', 'b'] })
+  await h.engine.onRunSettled(h.settle('run-1', { status: 'done' }))
+  const workspace = h.store.get(first.id)!.worktree!
+  await h.engine.remove(first.id)
+  const again = await h.engine.add({ ...multi, repo: parent, repos: [] })
+  expect(h.store.get(again.id)).toMatchObject({ state: 'building', worktree: workspace, repos: ['a', 'b'] })
+  expect(h.started[1]!.request).toContain(`Copies ready now: ${join(workspace, 'a')}, ${join(workspace, 'b')}.`)
+})
+
 test('a multi-repo item without a workspace preparer fails with a clear reason', async () => {
   await twoRepos()
   const h = queueHarness(scratch)

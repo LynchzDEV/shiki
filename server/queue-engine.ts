@@ -291,9 +291,11 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
   async function build(queued: QueueItem): Promise<void> {
     const resumedRunId = await resumed(queued)
     if (resumedRunId !== null) return settleIfDone(resumedRunId)
-    const item = store.get(queued.id) ?? queued
-    const available = item.repos === undefined ? [] : await reposToOffer(item.repo)
-    const worktree = item.worktree === null ? (await prepare(item)).worktree : await restore({ ...item, worktree: item.worktree })
+    const current = store.get(queued.id) ?? queued
+    const available = current.repos === undefined ? [] : await reposToOffer(current.repo)
+    const worktree = current.worktree === null ? (await prepare(current)).worktree : await restore({ ...current, worktree: current.worktree })
+    const item = await withRecordedRepos({ ...current, worktree })
+    if ('fail' in item) throw new Error(item.fail)
     await refuseLinkedQueueFolders(worktree, item.source)
     const contextPath = await contextIn(item, worktree)
     const answerPaths = await answersOf(item)

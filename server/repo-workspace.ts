@@ -1,11 +1,11 @@
-import { lstat, mkdir, readFile, realpath, rm } from 'node:fs/promises'
+import { lstat, mkdir, readdir, readFile, realpath, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, join, sep } from 'node:path'
 
 import { addPathWorktree, git, isWorktreeOf, prepareWorktree, removePathWorktree, worktreeBranch } from './job-worktrees'
 import { LEGACY_SESSION_CONTEXT_DIR, SESSION_CONTEXT_DIR } from './plugins/context-files'
 import { writePrivate } from './queue-files'
-import { isRepoList } from './repo-names'
+import { isPlainRepoName, isRepoList } from './repo-names'
 import { probeRepo } from './repo-probe'
 
 const REPOS_RECORD = 'repos.json'
@@ -98,7 +98,17 @@ async function missingWorktrees(folder: string, workspace: string, repos: readon
   return missing
 }
 
-export async function prepareRepoWorkspace(given: string, repos: readonly string[], label: string): Promise<{ worktree: string }> {
+async function heldRepos(folder: string, workspace: string, given: readonly string[]): Promise<string[]> {
+  const held: string[] = []
+  for (const name of (await readdir(workspace)).sort()) {
+    if (isPlainRepoName(name) && !given.includes(name) && await isTrustedChild(folder, workspace, name)) held.push(name)
+  }
+  const all = [...given, ...held]
+  if (!isRepoList(all)) throw new Error(`${workspace} holds more repo copies than one item may use`)
+  return all
+}
+
+export async function prepareRepoWorkspace(given: string, repos: readonly string[], label: string): Promise<{ worktree: string; repos: string[] }> {
   if (!isRepoList(repos)) throw new Error('Not a valid list of repos')
   const folder = await realpath(given)
   if (!(await underHome(folder))) throw new Error('The folder must be inside your home folder')
@@ -110,8 +120,9 @@ export async function prepareRepoWorkspace(given: string, repos: readonly string
   const missing = await missingWorktrees(folder, workspace, repos)
   for (const name of missing) await checkOnBranch(folder, name)
   for (const name of missing) await prepareWorktree(join(folder, name), label, join(workspace, name))
-  await writeReposRecord(workspace, repos)
-  return { worktree: workspace }
+  const all = await heldRepos(folder, workspace, repos)
+  await writeReposRecord(workspace, all)
+  return { worktree: workspace, repos: all }
 }
 
 async function checkedFolder(given: string, repos: readonly string[]): Promise<string> {

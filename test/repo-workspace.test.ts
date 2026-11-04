@@ -54,6 +54,29 @@ test('preparing again recreates only the child worktree deleted by hand', async 
   expect(git(join(worktree, 'b'), 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('queue-x-7-a8c0')
 })
 
+test('preparing a workspace again with no repos keeps the repo copies already in it', async () => {
+  await twoRepos()
+  const { worktree } = await prepareRepoWorkspace(parent, ['a', 'b'], 'queue-x-7-a8c0')
+  expect(await prepareRepoWorkspace(parent, [], 'queue-x-7-a8c0')).toEqual({ worktree, repos: ['a', 'b'] })
+  expect(await workspaceRepos(worktree)).toEqual(['a', 'b'])
+})
+
+test('preparing a workspace with fewer repos than it holds records all of them, given ones first', async () => {
+  await twoRepos()
+  const { worktree } = await prepareRepoWorkspace(parent, ['a', 'b'], 'queue-x-7-a8c0')
+  expect((await prepareRepoWorkspace(parent, ['b'], 'queue-x-7-a8c0')).repos).toEqual(['b', 'a'])
+  expect(await workspaceRepos(worktree)).toEqual(['b', 'a'])
+})
+
+test('a plain folder named like a repo in the workspace is not adopted as a repo copy', async () => {
+  await twoRepos()
+  const { worktree } = await prepareRepoWorkspace(parent, ['a'], 'queue-x-7-a8c0')
+  await mkdir(join(worktree, 'b'))
+  await mkdir(join(worktree, 'visualizer'))
+  expect((await prepareRepoWorkspace(parent, [], 'queue-x-7-a8c0')).repos).toEqual(['a'])
+  expect(await workspaceRepos(worktree)).toEqual(['a'])
+})
+
 test('the changes are the union across child repos, prefixed by repo name, unchanged repos left out', async () => {
   await twoRepos()
   await repoAt(join(parent, 'c'))
