@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Queue card actions</title>
+<link rel="stylesheet" href="assets/quiet.css">
+<style>
+  html, body { height: 100%; }
+  body { margin: 0; display: grid; grid-template-rows: auto 1fr; background: var(--paper); }
+  .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 32px; border-bottom: 1px solid var(--line); }
+  .bar h1 { margin: 0 12px 0 0; font-size: 15px; font-weight: 600; }
+  .bar label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); margin-left: auto; }
+  iframe { width: 100%; height: 100%; border: 0; }
+</style>
+</head>
+<body>
+<header class="bar">
+  <h1>Queue card actions</h1>
+  <nav class="mk-seg" aria-label="Variant">
+    <button type="button" data-page="now" aria-pressed="true">NOW</button>
+    <button type="button" data-page="a" aria-pressed="false">A · ⋯ menu</button>
+    <button type="button" data-page="b" aria-pressed="false">B · hover icons</button>
+    <button type="button" data-page="c" aria-pressed="false">C · expand</button>
+  </nav>
+  <label><input type="checkbox" id="hl"> Highlight new</label>
+</header>
+<iframe id="frame" src="now.html" title="Mockup"></iframe>
+<script>
+  const frame = document.getElementById('frame')
+  const hl = document.getElementById('hl')
+  const buttons = [...document.querySelectorAll('[data-page]')]
+  const show = page => {
+    for (const button of buttons) button.setAttribute('aria-pressed', String(button.dataset.page === page))
+    frame.src = `${page}.html${hl.checked ? '#hl' : ''}`
+    try { localStorage.setItem('qa.page', page) } catch {}
+  }
+  for (const button of buttons) button.onclick = () => show(button.dataset.page)
+  hl.onchange = () => show(buttons.find(button => button.getAttribute('aria-pressed') === 'true').dataset.page)
+  try { const saved = localStorage.getItem('qa.page'); if (saved) show(saved) } catch {}
+</script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+.va-page { margin: 0; padding: 20px 32px 40px; min-height: 100vh; background: var(--paper); }
+.va-caption { display: grid; gap: 4px; max-width: 1240px; margin: 0 auto 6px; font-size: 13px; color: var(--muted); line-height: 1.5; }
+.va-caption strong { font-size: 14px; font-weight: 600; color: var(--text); }
+.va-foot { max-width: 1240px; margin: 0 auto; font-size: 11.5px; color: var(--muted); }
+.va-page.hl .is-new { outline: 1.5px dashed var(--accent); outline-offset: 3px; }
+
+.va-acts { position: relative; justify-content: flex-end; }
+.va-more, .va-toggle { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: var(--r-xs); corner-shape: var(--corner); background: none; color: var(--muted); cursor: pointer; }
+.va-more:hover, .va-more[aria-expanded="true"], .va-toggle:hover, .va-toggle[aria-expanded="true"] { background: color-mix(in srgb, var(--hi) 55%, var(--paper)); color: var(--text); }
+.q-acts .va-more svg, .q-acts .va-toggle svg { width: 16px; height: 16px; }
+.q-row:has(.va-menu) { position: relative; z-index: 4; }
+.q-acts .va-menu { top: calc(100% + 4px); right: 0; left: auto; width: 240px; min-width: 240px; }
+.va-menu .row > span { white-space: nowrap; }
+.va-menu-group { display: grid; }
+.va-note { margin: 0 10px 6px 36px; font-size: 11.5px; line-height: 1.4; color: var(--muted); }
+
+.va-tray { display: flex; align-items: center; gap: 2px; opacity: 0; transition: opacity .15s ease; }
+.q-row:hover .va-tray, .q-row.va-hover .va-tray, .va-tray:focus-within { opacity: 1; }
+.va-ico { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 28px; min-width: 28px; padding: 0; border: 0; border-radius: var(--r-xs); corner-shape: var(--corner); background: none; color: var(--muted); font: inherit; font-size: 12.5px; cursor: pointer; transition: background-color .2s ease, color .2s ease, padding .2s ease; }
+.va-ico span { display: none; }
+.va-ico:hover { background: color-mix(in srgb, var(--hi) 55%, var(--paper)); color: var(--text); }
+.va-ico.danger:hover { background: var(--red-bg); color: var(--danger); }
+.va-ico[data-armed="true"] { padding: 0 11px; background: var(--danger); color: #fff; }
+.va-ico[data-armed="true"] svg { display: none; }
+.va-ico[data-armed="true"] span { display: inline; }
+
+.va-toggle svg { transition: rotate .15s ease; }
+.va-toggle[aria-expanded="true"] svg { rotate: 180deg; }
+.va-drawer { grid-column: 2 / -1; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0 2px; border-top: 1px solid var(--line); }
+.va-drawer-calm, .va-drawer-danger { display: flex; align-items: center; gap: 16px; }
+.va-drawer .text-button { display: inline-flex; align-items: center; gap: 6px; padding: 6px 4px; }
+.va-drawer svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.va-drawer .va-note { margin: 0; }

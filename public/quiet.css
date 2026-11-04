@@ -1366,12 +1366,17 @@ a.q-src:hover { color: var(--accent); }
 .q-src .mk-logo { box-shadow: 0 0 0 1px var(--line); }
 .q-src .mk-logo svg, .q-src .mk-logo img { width: 70%; height: 70%; stroke: none; }
 .q-src > svg { width: 12px; height: 12px; }
-.q-acts { display: flex; align-items: center; gap: 10px; }
+.q-acts { position: relative; display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
 .q-acts .connection-button { display: inline-flex; align-items: center; gap: 7px; }
 .q-acts svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .q-acts .text-button { padding: 6px 4px; }
-.q-remove { color: var(--danger); }
-.q-time { font-size: 12px; white-space: nowrap; }
+.q-more { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: var(--r-xs); corner-shape: var(--corner); background: none; color: var(--muted); cursor: pointer; }
+.q-more:hover, .q-more:focus-visible, .q-more[aria-expanded="true"] { background: color-mix(in srgb, var(--hi) 55%, var(--paper)); color: var(--text); }
+.q-acts .q-more svg { width: 16px; height: 16px; }
+.q-row:has(.q-menu) { position: relative; z-index: 4; }
+.q-acts .q-menu { top: calc(100% + 4px); right: 0; left: auto; width: 240px; max-width: calc(100vw - 16px); }
+.q-menu .row > span { white-space: nowrap; }
+.q-menu-note { margin: 0 10px 6px 36px; font-size: 11.5px; line-height: 1.4; color: var(--muted); }
 .q-hint { width: 100%; justify-content: center; margin-top: 14px; }
 .q-hint code, .q-code { font: 12px Menlo, monospace; padding: 1px 6px; border-radius: var(--r-xs); background: var(--field); color: var(--text); }
 .q-thread { grid-column: 2 / -1; display: grid; gap: 14px; padding: 14px 0 4px; border-top: 1px solid var(--line); }
@@ -1417,17 +1422,17 @@ a.q-src:hover { color: var(--accent); }
 .q-sb .sb-t small { font-size: 11px; }
 .q-sb-children .sb-row.sel .sb-ic { color: var(--accent); }
 .q-sb-n { font-style: normal; font-size: 12px; color: var(--muted); }
-.sb-mini .q-mini-n { position: absolute; right: -2px; bottom: 0; min-width: 15px; padding: 0 4px; border-radius: var(--r-xs); corner-shape: var(--corner); background: var(--field); font-size: 9.5px; font-style: normal; font-weight: 600; line-height: 14px; color: var(--muted); text-align: center; font-variant-numeric: tabular-nums; }
-.q-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; margin: 0 5px; }
-.q-dot[data-s="running"] { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
-.q-dot[data-s="queued"] { box-shadow: inset 0 0 0 1.5px var(--q-line); }
-.q-dot[data-s="waiting"] { box-shadow: inset 0 0 0 2px var(--text-soft); }
 .q-sb-head > .sb-row { padding-right: 36px; }
 .q-sb-fold { position: absolute; top: 50%; right: 8px; translate: 0 -50%; display: grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: var(--r-xs); corner-shape: var(--corner); background: none; color: var(--muted); cursor: pointer; }
 .q-sb-fold:hover, .q-sb-fold:focus-visible { background: color-mix(in srgb, var(--hi) 55%, var(--paper)); color: var(--text); }
 .q-sb-fold svg { width: 14px; height: 14px; stroke-width: 1.8; transition: rotate .15s ease; }
 .q-sb[data-folded] .q-sb-fold svg { rotate: -90deg; }
 .q-sb[data-folded] > .sb-item:not(.q-sb-head) { display: none; }
+.sb-mini .q-mini-n { position: absolute; right: -2px; bottom: 0; min-width: 15px; padding: 0 4px; border-radius: var(--r-xs); corner-shape: var(--corner); background: var(--field); font-size: 9.5px; font-style: normal; font-weight: 600; line-height: 14px; color: var(--muted); text-align: center; font-variant-numeric: tabular-nums; }
+.q-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; margin: 0 5px; }
+.q-dot[data-s="running"] { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+.q-dot[data-s="queued"] { box-shadow: inset 0 0 0 1.5px var(--q-line); }
+.q-dot[data-s="waiting"] { box-shadow: inset 0 0 0 2px var(--text-soft); }
 .q-dot[data-s="done"] { background: var(--green-ink); }
 .q-dot[data-s="failed"] { background: var(--red-ink); }
 .q-tree-panel { margin-bottom: 16px; padding: 14px 18px 16px; border-radius: var(--r-md); corner-shape: var(--corner); background: var(--paper); box-shadow: var(--raised); }

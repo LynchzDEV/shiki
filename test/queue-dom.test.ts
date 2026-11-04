@@ -49,6 +49,16 @@ const rows = (root: ParentNode = section()) => [...root.querySelectorAll<HTMLEle
 const rowOf = (id: string) => rows().find(row => row.dataset.id === id) as HTMLElement
 const buttonNamed = (text: string, root: ParentNode = doc) => [...root.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === text) as HTMLButtonElement
 const click = (element: Element) => element.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+const menuItem = (id: string, label: string): HTMLButtonElement => {
+  if (rowOf(id).querySelector('.q-menu') === null) click(rowOf(id).querySelector('.q-more')!)
+  return buttonNamed(label, rowOf(id).querySelector('.q-menu')!)
+}
+const offered = (items: QueueItem[], id: string) => {
+  const row = rows(queue.renderQueue(items, context({ menuId: id }))).find(entry => entry.dataset.id === id)!
+  const texts = (selector: string) => [...row.querySelectorAll(selector)].map(button => button.textContent)
+  return { main: texts('.q-acts > button:not(.q-more)'), menu: texts('.q-menu [role="menuitem"]'), row }
+}
+const escape = () => doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
 const drag = (type: string, element: Element) => element.dispatchEvent(new window.Event(type, { bubbles: true, cancelable: true }))
 
 beforeAll(async () => {
@@ -78,6 +88,7 @@ beforeAll(async () => {
 })
 
 beforeEach(async () => {
+  escape()
   send(all)
   await flush()
   calls.length = 0
@@ -196,14 +207,16 @@ test('only queued rows are draggable', () => {
   expect(rows(view).filter(row => row.hasAttribute('data-movable')).map(row => row.dataset.id)).toEqual(['q1', 'q2'])
 })
 
-test('each state offers its own actions', () => {
+test('each state offers one main button and the rest in its menu, safe actions first', () => {
   const view = queue.renderQueue(all, context())
-  const actions = (id: string) => [...(rows(view).find(row => row.dataset.id === id)?.querySelectorAll('.q-acts button') ?? [])].map(button => button.textContent)
-  expect(actions('b1')).toEqual(['Watch', 'Report'])
-  expect(actions('q1')).toEqual(['Remove', 'Report'])
-  expect(actions('w1')).toEqual(['Requeue', 'Report'])
-  expect(actions('r1')).toEqual(['Requeue', 'Open run', 'Report'])
-  expect(actions('f1')).toEqual(['Requeue', 'Open run', 'Report'])
+  expect(view.querySelector('.q-menu')).toBeNull()
+  expect(rows(view).map(row => row.querySelectorAll('.q-more[aria-expanded="false"]').length)).toEqual([1, 1, 1, 1, 1, 1])
+  expect(offered(all, 'b1')).toMatchObject({ main: ['Watch'], menu: ['Report', 'Stop', 'Remove'] })
+  expect(offered(all, 'q1')).toMatchObject({ main: [], menu: ['Report', 'Remove'] })
+  expect(offered(all, 'w1')).toMatchObject({ main: [], menu: ['Requeue', 'Report', 'Remove'] })
+  expect(offered(all, 'r1')).toMatchObject({ main: ['Open run'], menu: ['Requeue', 'Report', 'Remove'] })
+  expect(offered(all, 'f1')).toMatchObject({ main: ['Requeue'], menu: ['Open run', 'Report', 'Remove'] })
+  expect(offered(all, 'b1').row.querySelectorAll('.q-menu .row.danger')).toHaveLength(2)
   expect(buttonNamed('Git tree', view).disabled).toBe(false)
   expect(buttonNamed('Git tree', view).getAttribute('aria-pressed')).toBe('false')
   expect(buttonNamed('List', view).getAttribute('aria-pressed')).toBe('true')
@@ -284,9 +297,9 @@ test('changing At once saves it, and a refused change says why and shows the sav
 test('requeue, remove and check call their routes', async () => {
   replies.set('POST /api/queue/check', () => Response.json({ checked: 3, resumed: 1 }))
   click(buttonNamed('Requeue', rowOf('f1')))
-  click(buttonNamed('Requeue', rowOf('r1')))
-  click(buttonNamed('Requeue', rowOf('w1')))
-  click(buttonNamed('Remove', rowOf('q1')))
+  click(menuItem('r1', 'Requeue'))
+  click(menuItem('w1', 'Requeue'))
+  click(menuItem('q1', 'Remove'))
   click(buttonNamed('Check replies', section()))
   await flush()
   expect(calls.map(call => `${call.method} ${call.url}`)).toEqual(['POST /api/queue/f1/requeue', 'POST /api/queue/r1/requeue', 'POST /api/queue/w1/requeue', 'DELETE /api/queue/q1', 'POST /api/queue/check'])
@@ -294,13 +307,62 @@ test('requeue, remove and check call their routes', async () => {
   expect(section().querySelector('.q-checked')?.textContent).toBe('Checked just now')
 })
 
+test('Stop and Remove on a building card need a second click, and the armed menu survives a repaint', async () => {
+  click(menuItem('b1', 'Stop'))
+  await flush()
+  expect(calls).toEqual([])
+  expect(menuItem('b1', 'Confirm stop').dataset.armed).toBe('true')
+  send(all)
+  await flush()
+  click(menuItem('b1', 'Confirm stop'))
+  await flush()
+  expect(calls.map(call => `${call.method} ${call.url}`)).toEqual(['POST /api/queue/b1/stop'])
+  expect(toasts).toContain('Stopping Moni export: filter by call result')
+  expect(rowOf('b1').querySelector('.q-menu')).toBeNull()
+  click(menuItem('b1', 'Remove'))
+  await flush()
+  expect(menuItem('b1', 'Confirm remove')).toBeDefined()
+  expect(menuItem('b1', 'Stop')).toBeDefined()
+  click(menuItem('b1', 'Confirm remove'))
+  await flush()
+  expect(calls.map(call => `${call.method} ${call.url}`)).toEqual(['POST /api/queue/b1/stop', 'DELETE /api/queue/b1'])
+})
+
+test('arming Stop then clicking Remove arms Remove instead of removing', async () => {
+  click(menuItem('b1', 'Stop'))
+  click(menuItem('b1', 'Remove'))
+  await flush()
+  expect(calls).toEqual([])
+  expect(menuItem('b1', 'Stop')).toBeDefined()
+  expect(menuItem('b1', 'Confirm remove')).toBeDefined()
+})
+
+test('the ⋯ button opens one menu at a time; a click outside or Escape closes it', async () => {
+  const more = (id: string) => rowOf(id).querySelector<HTMLButtonElement>('.q-more')!
+  click(more('r1'))
+  expect(more('r1').getAttribute('aria-expanded')).toBe('true')
+  expect(doc.activeElement?.textContent).toBe('Requeue')
+  click(more('f1'))
+  expect(section().querySelectorAll('.q-menu')).toHaveLength(1)
+  expect(rowOf('f1').querySelector('.q-menu')).not.toBeNull()
+  click(more('f1'))
+  expect(section().querySelector('.q-menu')).toBeNull()
+  click(more('f1'))
+  click(rowOf('f1').querySelector('.q-main')!)
+  expect(section().querySelector('.q-menu')).toBeNull()
+  click(more('f1'))
+  escape()
+  expect(section().querySelector('.q-menu')).toBeNull()
+  expect(doc.activeElement).toBe(more('f1'))
+  expect(calls).toEqual([])
+})
+
 test('a failed card with a run to resume offers Resume and Start over', async () => {
   send([{ ...failed, resumeRunId: 'r-failed' }, ready])
   await flush()
   expect(buttonNamed('Requeue', rowOf('f1'))).toBeUndefined()
-  expect(buttonNamed('Requeue', rowOf('r1'))).toBeDefined()
   click(buttonNamed('Resume', rowOf('f1')))
-  click(buttonNamed('Start over', rowOf('f1')))
+  click(menuItem('f1', 'Start over'))
   await flush()
   expect(calls.map(call => [`${call.method} ${call.url}`, call.body])).toEqual([['POST /api/queue/f1/requeue', {}], ['POST /api/queue/f1/requeue', { fresh: true }]])
 })
@@ -309,7 +371,7 @@ test('a refused action says why', async () => {
   replies.set('POST /api/queue/f1/requeue', () => Response.json({ error: 'It is building now' }, { status: 409 }))
   replies.set('DELETE /api/queue/q1', () => Response.json({ error: 'Stop its run in Studio first' }, { status: 409 }))
   click(buttonNamed('Requeue', rowOf('f1')))
-  click(buttonNamed('Remove', rowOf('q1')))
+  click(menuItem('q1', 'Remove'))
   await flush()
   expect(toasts).toEqual(['It is building now', 'Stop its run in Studio first'])
 })
@@ -356,16 +418,18 @@ test('rows with a run but no Watch button are one named tab stop; a building row
 })
 
 test('a key pressed on a button inside a row does not also open the run', () => {
-  buttonNamed('Requeue', rowOf('r1')).dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+  buttonNamed('Open run', rowOf('r1')).dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
   expect(watched).toEqual([])
 })
 
-test('a queued item being prepared says so and cannot be removed or dragged', () => {
+test('a queued item being prepared says so, asks twice before removal, and cannot be dragged', () => {
   const preparing = { ...queuedA, preparing: true } as unknown as QueueItem
-  const view = queue.renderQueue(queue.readQueueItems([preparing, queuedB]), context())
-  const [first, second] = rows(view)
+  const both = [preparing, queuedB]
+  const [first, second] = rows(queue.renderQueue(queue.readQueueItems(both), context()))
+  const removeIn = (id: string) => offered(both, id).row.querySelector('[data-act="remove"]')
   expect(first!.querySelector('.q-meta > span:last-child')?.textContent).toBe('Getting the workspace ready…')
-  expect(first!.querySelector('.q-remove')).toBeNull()
+  expect(removeIn('q1')?.hasAttribute('data-confirm')).toBe(true)
+  expect(removeIn('q2')?.hasAttribute('data-confirm')).toBe(false)
   expect(first!.hasAttribute('data-movable')).toBe(false)
   expect(first!.getAttribute('draggable')).toBeNull()
   expect(second!.querySelector('.q-meta > span:last-child')?.textContent).toBe('Next up')
@@ -869,15 +933,18 @@ const landed = item({ id: 'd1', state: 'landed', title: 'Done one', runIds: ['r-
 const stuck = item({ id: 'x1', state: 'failed', title: 'Stuck one', runIds: ['r-x1'], error: 'uat failed (exit 3)\nline 49\nline 50', land: { stage: 'uat', stages: { uat: { status: 'failed' } }, plan: stagePlan, runId: 'r-x1' } } as Partial<QueueItem>)
 const shipping = [landing, awaiting, blocked, landed, stuck]
 
-test('land states show their pill, their one main button and a Report button', () => {
+test('land states show their pill, their one main button and the rest in the menu', () => {
   const view = queue.renderQueue(shipping, context())
   const row = (id: string) => rows(view).find(entry => entry.dataset.id === id)!
-  const actions = (id: string) => [...row(id).querySelectorAll('.q-acts button')].map(button => button.textContent)
   expect(rows(view).map(entry => entry.querySelector('.pill-state')?.textContent)).toEqual(['Shipping: uat', 'Waiting for you', 'Waiting for you', 'Landed', 'Failed'])
-  expect(actions('l1')).toEqual(['Log', 'Open run', 'Report'])
-  expect(actions('a1')).toEqual(['Deploy prod', 'Open run', 'Report'])
-  expect(actions('d1')).toEqual(['Open run', 'Report'])
-  expect(actions('x1')).toEqual(['Retry stage', 'Requeue', 'Open run', 'Report'])
+  const shippingCard = offered(shipping, 'l1')
+  expect(shippingCard).toMatchObject({ main: ['Log'], menu: ['Open run', 'Report', 'Stop', 'Remove'] })
+  const note = shippingCard.row.querySelector('.q-menu-note')!
+  expect(note.textContent).toBe('A push or deploy cut short can leave the remote half-updated.')
+  expect(buttonNamed('Stop', shippingCard.row).getAttribute('aria-describedby')).toBe(note.id)
+  expect(offered(shipping, 'a1')).toMatchObject({ main: ['Deploy prod'], menu: ['Open run', 'Report', 'Remove'] })
+  expect(offered(shipping, 'd1')).toMatchObject({ main: [], menu: ['Open run', 'Report', 'Remove'] })
+  expect(offered(shipping, 'x1')).toMatchObject({ main: ['Retry stage'], menu: ['Requeue', 'Open run', 'Report', 'Remove'] })
   expect(row('x1').querySelector('.q-meta')?.textContent).toContain('uat failed (exit 3)')
   expect(row('x1').querySelector('.q-land-error')?.textContent).toBe('line 49\nline 50')
 })
@@ -952,14 +1019,14 @@ test('Report opens the rendered report; a failure is shown in the dialog', async
   replies.set('GET /api/queue/d1/report', () => new Response('# Done one\n\n## prod: ok\n', { headers: { 'content-type': 'text/markdown' } }))
   send([landed])
   await flush()
-  click(buttonNamed('Report', rowOf('d1')))
+  click(menuItem('d1', 'Report'))
   await flush()
   const dialog = doc.querySelector('dialog.q-land') as HTMLDialogElement
   expect(dialog.querySelector('h1')?.textContent).toBe('Done one')
   expect(dialog.querySelector('.q-land-md h2')?.textContent).toBe('prod: ok')
   dialog.close()
   replies.set('GET /api/queue/d1/report', () => Response.json({ error: 'No queue item d1' }, { status: 404 }))
-  click(buttonNamed('Report', rowOf('d1')))
+  click(menuItem('d1', 'Report'))
   await flush()
   const failed = doc.querySelector('dialog.q-land') as HTMLDialogElement
   expect(failed.querySelector('.q-add-error')?.textContent).toBe('No queue item d1')

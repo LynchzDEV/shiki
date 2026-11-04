@@ -18,7 +18,7 @@ export type QueueLayout = 'list' | 'tree'
 export type QueuePaused = { reason: string; until: number }
 export type QueueContext = {
   plugins: QueuePlugin[]; flows: QueueFlow[]; now: number; checkedAt: number | null; openIds: ReadonlySet<string>
-  layout?: QueueLayout; treeView?: HTMLElement; paused?: QueuePaused | null; parallel?: number
+  layout?: QueueLayout; treeView?: HTMLElement; paused?: QueuePaused | null; parallel?: number; armed?: string | null; menuId?: string | null
 }
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
@@ -185,35 +185,69 @@ function progressText(item: QueueItemView, items: readonly QueueItemView[], now:
   return failedAtStage(item) ? firstLine(item.error ?? 'Failed') : item.error ?? 'Failed'
 }
 
-function actions(item: QueueItemView, now: number): HTMLElement {
-  const id = { 'data-id': item.id }
-  const openRun = item.runIds.length > 0
-  const parts: HTMLElement[] = []
-  if (item.state === 'building') {
-    parts.push(el('span', { class: 'muted q-time' }, `started ${ageText(item.updatedAt, now)}`))
-    if (watchRunId(item) !== undefined) parts.push(button('Watch', 'connection-button primary', { ...id, 'data-act': 'watch', 'aria-label': `Watch ${item.title}` }, 'eye-icon'))
-  }
-  if (waitingInLine(item)) parts.push(button('Remove', 'text-button q-remove', { ...id, 'data-act': 'remove' }))
-  if (item.state === 'waiting-pick') {
-    parts.push(button('Requeue', 'text-button', { ...id, 'data-act': 'requeue' }))
-    parts.push(button('Pick', 'connection-button primary', { ...id, 'data-act': 'pick', 'aria-label': `Pick a variant for ${item.title}` }))
-  }
-  if (item.state === 'waiting-info') parts.push(button('Requeue', 'text-button', { ...id, 'data-act': 'requeue' }))
-  if (item.state === 'ready') {
-    parts.push(button('Requeue', 'text-button', { ...id, 'data-act': 'requeue' }))
-    if (openRun) parts.push(button('Open run', 'connection-button primary', { ...id, 'data-act': 'open-run' }, 'flow-icon'))
-  }
-  if (item.state === 'failed') {
-    if (failedAtStage(item)) parts.push(button('Retry stage', 'connection-button primary', { ...id, 'data-act': 'land-retry' }, 'mk-refresh'))
-    parts.push(button(item.resumeRunId === undefined ? 'Requeue' : 'Resume', failedAtStage(item) ? 'text-button' : 'connection-button', { ...id, 'data-act': 'requeue' }, failedAtStage(item) ? undefined : 'mk-refresh'))
-    if (item.resumeRunId !== undefined) parts.push(button('Start over', 'text-button', { ...id, 'data-act': 'start-over' }))
-    if (openRun) parts.push(button('Open run', 'connection-button', { ...id, 'data-act': 'open-run' }, 'flow-icon'))
-  }
-  if (item.state === 'landing') parts.push(button('Log', 'connection-button', { ...id, 'data-act': 'land-log' }))
-  if (item.state === 'awaiting-stage' && item.land !== undefined) parts.push(button(stageLabel(item.land, item.land.stage), 'connection-button primary', { ...id, 'data-act': 'land-confirm' }))
-  if ((item.state === 'landing' || item.state === 'awaiting-stage' || item.state === 'landed') && openRun) parts.push(button('Open run', 'text-button', { ...id, 'data-act': 'open-run' }))
-  parts.push(button('Report', 'text-button', { ...id, 'data-act': 'report' }))
-  return el('div', { class: 'q-acts' }, ...parts)
+export const armKey = (act: string, id: string): string => `${act}:${id}`
+
+const isRunning = (item: QueueItemView): boolean => item.state === 'building' || item.state === 'landing' || item.preparing === true
+
+type Action = { label: string; act: string; icon?: string; danger?: true; confirm?: true; note?: string; ariaLabel?: string }
+
+const LANDING_STOP_NOTE = 'A push or deploy cut short can leave the remote half-updated.'
+const REPORT: Action = { label: 'Report', act: 'report', icon: 'file-icon' }
+const OPEN_RUN: Action = { label: 'Open run', act: 'open-run', icon: 'flow-icon' }
+const REQUEUE: Action = { label: 'Requeue', act: 'requeue', icon: 'mk-refresh' }
+const requeueOrResume = (item: QueueItemView): Action => (item.resumeRunId === undefined ? REQUEUE : { ...REQUEUE, label: 'Resume' })
+
+function mainAction(item: QueueItemView): Action | null {
+  if (item.state === 'building') return watchRunId(item) === undefined ? null : { label: 'Watch', act: 'watch', icon: 'eye-icon', ariaLabel: `Watch ${item.title}` }
+  if (item.state === 'landing') return { label: 'Log', act: 'land-log', icon: 'file-icon' }
+  if (item.state === 'waiting-pick') return { label: 'Pick', act: 'pick', ariaLabel: `Pick a variant for ${item.title}` }
+  if (item.state === 'ready') return item.runIds.length > 0 ? OPEN_RUN : null
+  if (item.state === 'failed') return failedAtStage(item) ? { label: 'Retry stage', act: 'land-retry', icon: 'mk-refresh' } : requeueOrResume(item)
+  if (item.state === 'awaiting-stage' && item.land !== undefined) return { label: stageLabel(item.land, item.land.stage), act: 'land-confirm' }
+  return null
+}
+
+function calmActions(item: QueueItemView): Action[] {
+  const calm: Action[] = []
+  if (item.state === 'waiting-pick' || item.state === 'waiting-info' || item.state === 'ready') calm.push(REQUEUE)
+  if (failedAtStage(item)) calm.push(requeueOrResume(item))
+  if (item.state === 'failed' && item.resumeRunId !== undefined) calm.push({ label: 'Start over', act: 'start-over', icon: 'back-icon' })
+  if (['failed', 'landing', 'awaiting-stage', 'landed'].includes(item.state) && item.runIds.length > 0) calm.push(OPEN_RUN)
+  return [...calm, REPORT]
+}
+
+function dangerActions(item: QueueItemView): Action[] {
+  const confirm = isRunning(item) ? { confirm: true as const } : {}
+  const stop: Action = { label: 'Stop', act: 'stop', icon: 'stop-icon', danger: true, ...confirm }
+  const remove: Action = { label: 'Remove', act: 'remove', icon: 'trash-icon', danger: true, ...confirm }
+  if (item.state === 'building') return [stop, remove]
+  if (item.state === 'landing') return [{ ...stop, note: LANDING_STOP_NOTE }, remove]
+  return [remove]
+}
+
+function menuRow(item: QueueItemView, action: Action, armed: string | null | undefined): HTMLElement[] {
+  const isArmed = action.confirm === true && armed === armKey(action.act, item.id)
+  const noteId = `q-note-${action.act}-${item.id}`
+  const row = el('button', {
+    type: 'button', class: action.danger ? 'row danger' : 'row', role: 'menuitem', 'data-id': item.id, 'data-act': action.act,
+    'data-confirm': action.confirm === true, 'data-armed': isArmed ? 'true' : false, 'aria-describedby': action.note === undefined ? false : noteId,
+  }, ...(action.icon ? [icon(action.icon)] : []), el('span', {}, isArmed ? `Confirm ${action.label.toLowerCase()}` : action.label))
+  return action.note === undefined ? [row] : [row, el('p', { class: 'q-menu-note', id: noteId }, action.note)]
+}
+
+function actionMenu(item: QueueItemView, armed: string | null | undefined): HTMLElement {
+  return el('div', { class: 'popover row-menu q-menu', role: 'menu', 'aria-label': `Actions for ${item.title}` },
+    ...calmActions(item).flatMap(action => menuRow(item, action, armed)),
+    el('div', { class: 'divider', role: 'separator' }),
+    ...dangerActions(item).flatMap(action => menuRow(item, action, armed)))
+}
+
+function actions(item: QueueItemView, armed: string | null | undefined, menuId: string | null | undefined): HTMLElement {
+  const main = mainAction(item)
+  const open = menuId === item.id
+  const mainButton = main === null ? [] : [button(main.label, 'connection-button primary', { 'data-id': item.id, 'data-act': main.act, 'aria-label': main.ariaLabel ?? false }, main.icon)]
+  const more = el('button', { type: 'button', class: 'q-more', 'data-id': item.id, 'data-act': 'more', 'aria-haspopup': 'menu', 'aria-expanded': String(open), 'aria-label': `More actions for ${item.title}`, title: 'More actions' }, icon('more-icon'))
+  return el('div', { class: 'q-acts' }, ...mainButton, more, ...(open ? [actionMenu(item, armed)] : []))
 }
 
 function questionsThread(item: QueueItemView, now: number): HTMLElement {
@@ -251,7 +285,7 @@ function row(item: QueueItemView, items: readonly QueueItemView[], context: Queu
     el('span', { class: 'q-grip', title: movable ? 'Drag to reorder' : false }, icon('q-grip')),
     pill(item.state, stagePill(item)),
     el('div', { class: 'q-main' }, el('strong', {}, item.title), meta),
-    actions(item, context.now),
+    actions(item, context.armed, context.menuId),
     ...(failedAtStage(item) && item.error?.includes('\n') === true ? [el('pre', { class: 'q-land-error' }, item.error.slice(item.error.indexOf('\n') + 1))] : []),
     ...(open ? [questionsThread(item, context.now)] : []))
 }

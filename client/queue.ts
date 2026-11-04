@@ -1,9 +1,10 @@
 import type { QueueTree } from '../server/queue-tree'
+import { DISARM_MS } from './confirm-button'
 import { createAddDialog } from './queue-dialog'
 import { createPickReview } from './queue-review'
 import { createLandDialogs } from './queue-land'
 import { readQueueTree, renderTree } from './queue-tree'
-import { readPaused, readQueueItems, renderQueue, watchRunId, type QueueFlow, type QueueItemView, type QueueLayout, type QueuePaused, type QueuePlugin } from './queue-view'
+import { armKey, readPaused, readQueueItems, renderQueue, watchRunId, type QueueFlow, type QueueItemView, type QueueLayout, type QueuePaused, type QueuePlugin } from './queue-view'
 import { errorText, getJson, postJson, putJson, readArray, readRecord, type ApiResult } from './shared'
 
 export { parseItemRef } from './queue-dialog'
@@ -28,6 +29,9 @@ let layout: QueueLayout = savedLayout()
 let tree: QueueTree | null = null
 let treeError: string | null = null
 let treeRequest = 0
+let armed: string | null = null
+let menuId: string | null = null
+let disarmTimer: ReturnType<typeof setTimeout> | undefined
 const openIds = new Set<string>()
 
 const toast = (text: string): void => { dispatchEvent(new CustomEvent('quiet:toast', { detail: text })) }
@@ -100,7 +104,7 @@ function start(section: HTMLElement): void {
     if (!loaded) return
     if (dragId !== null) { paintAfterDrag = true; return }
     const shown = layout === 'tree' ? { layout, treeView: treeView() } : { layout }
-    section.replaceChildren(renderQueue(items, { plugins, flows, now: Date.now(), checkedAt, openIds, paused, parallel, ...shown }))
+    section.replaceChildren(renderQueue(items, { plugins, flows, now: Date.now(), checkedAt, openIds, paused, parallel, armed, menuId, ...shown }))
     applyFocus()
   }
 
@@ -145,11 +149,52 @@ function start(section: HTMLElement): void {
     paint()
   }
 
+  function setArmed(key: string | null): void {
+    clearTimeout(disarmTimer)
+    armed = key
+    if (key !== null) disarmTimer = setTimeout(() => setArmed(null), DISARM_MS)
+    paint()
+  }
+
+  function needsSecondClick(button: HTMLElement, key: string): boolean {
+    if (!button.hasAttribute('data-confirm') || armed === key) return false
+    setArmed(key)
+    return true
+  }
+
+  function showMenu(id: string | null): void {
+    menuId = id
+    if (armed !== null) setArmed(null)
+    else paint()
+    if (id !== null) section.querySelector<HTMLElement>('.q-menu [role="menuitem"]')?.focus()
+  }
+
+  document.addEventListener('click', (event) => {
+    if (menuId === null) return
+    if (event.target instanceof Element && event.target.closest('.q-menu, .q-more') !== null) return
+    showMenu(null)
+  })
+
+  document.addEventListener('keydown', (event) => {
+    if (menuId === null || event.key !== 'Escape') return
+    const id = menuId
+    showMenu(null)
+    const opener = [...section.querySelectorAll<HTMLElement>('.q-more')].find(more => more.dataset.id === id)
+    opener?.focus()
+  })
+
   section.addEventListener('click', (event) => {
     const target = event.target instanceof Element ? event.target : null
     const button = target?.closest<HTMLElement>('[data-act]')
     const item = itemFor(button?.dataset.id)
     const action = button?.dataset.act
+    if (button && item && action === 'more') { showMenu(menuId === item.id ? null : item.id); return }
+    if (button && item && (action === 'stop' || action === 'remove')) {
+      if (needsSecondClick(button, armKey(action, item.id))) return
+      if (armed !== null) setArmed(null)
+    }
+    if (button?.closest('.q-menu') && menuId !== null) showMenu(null)
+    if (button && item && action === 'stop') { void act(button, () => postJson(`/api/queue/${encodeURIComponent(item.id)}/stop`, {}), `Stopping ${item.title}`); return }
     const layoutButton = target?.closest<HTMLElement>('[data-layout]')
     if (layoutButton) { showLayout(layoutButton.dataset.layout === 'tree' ? 'tree' : 'list'); return }
     if (button && action === 'check') { void checkReplies(button); return }

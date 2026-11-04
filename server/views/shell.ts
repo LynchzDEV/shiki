@@ -41,6 +41,7 @@ const BODY = `
     <symbol id="down-icon" viewBox="0 0 20 20"><path d="m5 8 5 5 5-5"/></symbol>
     <symbol id="settings-icon" viewBox="0 0 20 20"><circle cx="10" cy="10" r="2.5"/><circle cx="10" cy="10" r="5.5"/><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"/></symbol>
     <symbol id="chevron-icon" viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"/></symbol>
+    <symbol id="more-icon" viewBox="0 0 20 20"><circle cx="5" cy="10" r="1.3" fill="currentColor" stroke="none"/><circle cx="10" cy="10" r="1.3" fill="currentColor" stroke="none"/><circle cx="15" cy="10" r="1.3" fill="currentColor" stroke="none"/></symbol>
     <symbol id="pin-icon" viewBox="0 0 20 20"><path d="M8 3h4l-.5 4.5L14 10v1.5H6V10l2.5-2.5z"/><path d="M10 11.5V17"/></symbol>
     <symbol id="export-icon" viewBox="0 0 20 20"><path d="M10 3v10M6 9l4 4 4-4M4 16h12"/></symbol>
     <symbol id="trash-icon" viewBox="0 0 20 20"><path d="M4 6h12M8 6V4h4v2M6 6l.8 10h6.4L14 6M8.5 9v4.5M11.5 9v4.5"/></symbol>
