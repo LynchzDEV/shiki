@@ -173,7 +173,7 @@ function open(item: HistoryItem): void {
   else dispatchEvent(new CustomEvent('quiet:open-terminal', { detail: target.terminal }))
 }
 
-function startRename(item: HistoryItem, text: HTMLElement, onCommit?: (title: string) => void): void {
+function startRename(item: HistoryItem, text: HTMLElement, onCommit?: (title: string) => void, onSettled?: () => void): void {
   if (renaming) return
   renaming = true
   const input = Object.assign(document.createElement('input'), { className: 'sb-rename', value: item.title, maxLength: 60 })
@@ -194,6 +194,7 @@ function startRename(item: HistoryItem, text: HTMLElement, onCommit?: (title: st
     }
     signature = ''
     paint(historyItems)
+    onSettled?.()
   }
   input.onkeydown = (event) => {
     event.stopPropagation()
@@ -234,6 +235,8 @@ function closeRowMenu(): void {
   paint(historyItems)
 }
 
+export const closeChatMenu = (): void => closeRowMenu()
+
 function menuRow(label: string, iconId: string, action: () => void, extra?: string): HTMLButtonElement {
   const button = document.createElement('button')
   button.type = 'button'
@@ -269,7 +272,41 @@ function exportUrl(item: HistoryItem): string {
   return `/api/jobs/${encodeURIComponent(item.id)}/export.md${leaf ? `?leaf=${encodeURIComponent(leaf)}` : ''}`
 }
 
-function openChatMenu(item: HistoryItem): void {
+function sessionRow(key: string): HTMLElement | null {
+  return document.querySelector<HTMLElement>(`#sidebar-list .sb-row[data-key="${CSS.escape(key)}"]`)
+}
+
+function renameInOpenDrawer(item: HistoryItem): boolean {
+  if (sessionRow(keyOf(item)) === null) return false
+  dispatchEvent(new CustomEvent('quiet:sidebar-open', { detail: true }))
+  const closeDrawer = (): void => { dispatchEvent(new CustomEvent('quiet:sidebar-open', { detail: false })) }
+  const text = sessionRow(keyOf(item))?.querySelector<HTMLElement>('.sb-t')
+  if (!text) { closeDrawer(); return false }
+  text.scrollIntoView?.({ block: 'nearest' })
+  if (item.kind === 'chat') startRename(item, text, title => void patchChat(item.id, { label: title, titleLocked: true }), closeDrawer)
+  else startRename(item, text, undefined, closeDrawer)
+  return true
+}
+
+function currentSession(): HistoryItem | null {
+  const key = selectedKey()
+  if (key === null) return null
+  return withLiveTerminals(historyItems, liveTerminals, Date.now()).find(item => keyOf(item) === key) ?? null
+}
+
+export function renameCurrentSession(): boolean {
+  const item = currentSession()
+  return item !== null && renameInOpenDrawer(item)
+}
+
+export function openCurrentChatMenu(place: (menu: HTMLElement) => void): boolean {
+  const item = currentSession()
+  if (item === null || item.kind !== 'chat' || chatRow(item) === null) return false
+  openChatMenu(item, place)
+  return true
+}
+
+function openChatMenu(item: HistoryItem, place?: (menu: HTMLElement) => void): void {
   if (renaming || item.kind !== 'chat') return
   closeRowMenu()
   const wrap = chatRow(item)?.closest<HTMLElement>('.sb-item') ?? null
@@ -285,13 +322,18 @@ function openChatMenu(item: HistoryItem): void {
   remove.classList.add('danger')
   remove.onclick = null
   menu.append(
-    menuRow('Rename', 'pencil-icon', () => { const text = chatRow(item)?.querySelector<HTMLElement>('.sb-t'); if (text) renameChat(item, text) }, 'F2'),
+    menuRow('Rename', 'pencil-icon', () => {
+      if (place) { renameInOpenDrawer(item); return }
+      const text = chatRow(item)?.querySelector<HTMLElement>('.sb-t')
+      if (text) renameChat(item, text)
+    }, 'F2'),
     menuRow(item.pinned === true ? 'Unpin' : 'Pin to top', 'pin-icon', () => void patchChat(item.id, { pinned: item.pinned !== true })),
     menuRow('Export as Markdown', 'export-icon', () => { window.location.href = exportUrl(item) }),
     divider,
     remove,
   )
-  wrap.append(menu)
+  if (place) place(menu)
+  else wrap.append(menu)
   confirmButton(remove, 'Delete chat', () => {
     closeRowMenu()
     void patchChat(item.id, { deleted: true }, () => {

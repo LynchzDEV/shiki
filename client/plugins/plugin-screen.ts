@@ -22,7 +22,7 @@ export function createFrameEndpoint(frame: HTMLIFrameElement): FrameEndpoint {
   return { endpoint, close }
 }
 
-type MountedScreen = { key: string; view: HTMLElement; teardown: () => void }
+type MountedScreen = { key: string; view: HTMLElement; installed: InstalledPlugin; teardown: () => void }
 
 const mounted = new Map<string, MountedScreen>()
 
@@ -53,7 +53,7 @@ export async function openPluginScreen(installed: InstalledPlugin): Promise<void
   root.className = 'plugin-screen'
   view.append(heading, root)
   section.append(view)
-  const screen: MountedScreen = { key, view, teardown: () => {} }
+  const screen: MountedScreen = { key, view, installed, teardown: () => {} }
   mounted.set(installed.id, screen)
   const mc = createScreenApi(installed, openPluginLaunch)
   if (installed.runtime === 'trusted') {
@@ -71,4 +71,16 @@ export async function openPluginScreen(installed: InstalledPlugin): Promise<void
   const exposed = createFrameEndpoint(frame)
   expose(mc, exposed.endpoint)
   screen.teardown = exposed.close
+}
+
+export async function reloadCurrentPluginScreen(): Promise<boolean> {
+  const section = document.getElementById('plugin')
+  if (section === null || section.hidden) return false
+  const [id, current] = [...mounted].find(([, screen]) => !screen.view.hidden && section.contains(screen.view)) ?? []
+  if (id === undefined || current === undefined) return false
+  current.teardown()
+  current.view.remove()
+  mounted.delete(id)
+  await openPluginScreen(current.installed)
+  return true
 }

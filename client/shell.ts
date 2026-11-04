@@ -1,5 +1,6 @@
 import { fold, morph, reveal } from './morph'
 import { PHONE_QUERY, PHONE_TERMINAL_QUERY, enterIntent } from './shared'
+import { initScreenActions } from './screen-actions'
 
 const $ = (id: string): HTMLElement => document.getElementById(id) as HTMLElement
 const screens = ['welcome', 'history', 'conversation', 'studio', 'plugin', 'marketplace', 'queue', 'queue-review'] as const
@@ -142,6 +143,8 @@ document.querySelector('.sb-destinations')?.addEventListener('click', (event) =>
   else dispatchEvent(new CustomEvent('quiet:show', { detail: row.dataset.show }))
 })
 closeSidebarOnPick()
+addEventListener('quiet:sidebar-open', (event) => setSidebarOpen((event as CustomEvent<boolean>).detail))
+initScreenActions()
 document.querySelectorAll<HTMLElement>('[data-click]').forEach(button => {
   button.onclick = () => $(button.dataset.click ?? '').click()
 })

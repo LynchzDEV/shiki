@@ -178,6 +178,8 @@ describe('phone sessions drawer', () => {
     expect(toolbar.indexOf('id="phone-sessions"')).toBeLessThan(toolbar.indexOf('id="open-studio"'))
     expect(toolbar).toContain('id="phone-sessions" class="round phone-nav" data-sidebar-toggle aria-label="Sessions" aria-controls="sidebar" aria-expanded="false"')
     expect(toolbar).toContain('<span class="count" data-waiting-count hidden></span>')
+    expect(toolbar).toContain('<button type="button" id="screen-actions" class="round phone-nav" aria-label="More" aria-haspopup="menu" aria-expanded="false"')
+    expect(toolbar.indexOf('id="screen-actions"')).toBeGreaterThan(toolbar.indexOf('</nav>'))
   })
 
   test('the drawer opens with Waiting, Queue, Flow, Agents and Studio rows', async () => {
@@ -203,13 +205,14 @@ describe('composer on touch layouts', () => {
 describe('phone held sideways', () => {
   const termBar = (markup: string): string => markup.slice(markup.indexOf('<template id="term-bar">'), markup.indexOf('</template>', markup.indexOf('<template id="term-bar">')))
 
-  test('the terminal bar carries Sessions before the name and Flow, bell, Keyboard and Attach after Find', async () => {
+  test('the terminal bar carries Sessions before the name and Flow, bell, Keyboard, Attach and ⋯ after Find', async () => {
     const markup = await (await app.handle(new Request('http://localhost/'))).text()
     const bar = termBar(markup)
-    const order = ['data-sidebar-sheet', 'class="term-bar-logo"', 'class="term-bar-name"', 'class="term-bar-status"', 'class="term-bar-find"', 'data-click="toggle-flow"', 'data-click="open-attention"', 'data-keyboard', 'data-attach'].map(marker => bar.indexOf(marker))
+    const order = ['data-sidebar-sheet', 'class="term-bar-logo"', 'class="term-bar-name"', 'class="term-bar-status"', 'class="term-bar-find"', 'data-click="toggle-flow"', 'data-click="open-attention"', 'data-keyboard', 'data-attach', 'data-term-menu'].map(marker => bar.indexOf(marker))
     expect(order.every(index => index > 0)).toBe(true)
     expect(order).toEqual([...order].sort((a, b) => a - b))
-    expect(bar.match(/class="sb-icon term-bar-mobile"/g)).toHaveLength(5)
+    expect(bar.match(/class="sb-icon term-bar-mobile"/g)).toHaveLength(6)
+    expect(bar).toContain('data-term-menu aria-label="Terminal actions" aria-haspopup="menu" aria-expanded="false"')
     expect(bar).toContain('data-attach aria-label="Attach files"')
     expect(markup).toContain('<input type="file" multiple id="term-attach-input" hidden>')
     expect(markup).toContain('<symbol id="clip-icon"')

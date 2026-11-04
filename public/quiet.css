@@ -1501,7 +1501,8 @@ dialog, .access-dialog, .confirm-dialog { max-width: calc(100vw - 32px); max-hei
 }
 
 .term-bar .term-bar-mobile, .key-row, .live-jump { display: none; }
-#phone-sessions, .sb-destinations, .touch-only { display: none; }
+#phone-sessions, #screen-actions, .sb-destinations, .touch-only { display: none; }
+.popover.row-menu.anchored { position: fixed; left: auto; width: 220px; z-index: 70; }
 @media (max-width: 600px), (orientation: landscape) and (max-height: 500px) and (pointer: coarse), (min-width: 901px) and (max-width: 1100px) and (pointer: coarse) and (orientation: landscape) {
   #live.live-workspace { padding: 0 10px; }
   #live .term-host { padding: 0; gap: 0; border-radius: 0; box-shadow: none; }
@@ -1545,7 +1546,9 @@ dialog, .access-dialog, .confirm-dialog { max-width: calc(100vw - 32px); max-hei
   .sb-shell:not(.collapsed)::after { content: ''; position: fixed; inset: 0; z-index: 59; background: var(--scrim, #41485218); }
   .sb .sb-icon { width: 44px; height: 44px; }
   .sb-new, .sb-link, .sb-row { min-height: 44px; }
-  #phone-sessions { display: inline-flex; position: relative; width: 44px; flex-basis: 44px; min-height: 44px; }
+  #phone-sessions, #screen-actions { display: inline-flex; position: relative; width: 44px; flex-basis: 44px; min-height: 44px; }
+  #screen-actions[hidden] { display: none; }
+  .row-menu.anchored .row { min-height: 44px; }
   .sb-destinations { display: flex; flex-direction: column; gap: 8px; padding-bottom: 12px; }
   .sb-destinations .sb-link { position: relative; justify-content: flex-start; }
   .sb-destinations .count { position: static; margin-left: auto; }

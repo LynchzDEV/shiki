@@ -114,6 +114,11 @@ function Studio() {
   const [policyRevisions, setPolicyRevisions] = useState<PolicyRevision[]>([])
   const [modal, setModal] = useState<'run' | 'rules' | null>(null)
   const touch = useTouchLayout()
+  useEffect(() => {
+    const showRules = () => setModal('rules')
+    addEventListener('quiet:studio-rules', showRules)
+    return () => removeEventListener('quiet:studio-rules', showRules)
+  }, [])
   const [cwd, setCwd] = useState('')
   const [runTitle, setRunTitle] = useState('')
   const [request, setRequest] = useState('')

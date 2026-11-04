@@ -910,3 +910,22 @@ describe('Enter with the slash menu open', () => {
     }
   })
 })
+
+test('Reload mounts the open plugin screen afresh instead of reusing the cached view', async () => {
+  byId('plugin').hidden = false
+  await pluginScreen.openPluginScreen(clickupPlugin)
+  const first = byId('plugin').querySelector('[data-plugin-view="clickup-board"]') as HTMLElement
+  const firstFrame = first.querySelector('iframe')
+  expect(await pluginScreen.reloadCurrentPluginScreen()).toBe(true)
+  expect(first.isConnected).toBe(false)
+  const views = byId('plugin').querySelectorAll<HTMLElement>('[data-plugin-view="clickup-board"]')
+  expect(views).toHaveLength(1)
+  expect(views[0].hidden).toBe(false)
+  expect(views[0].querySelector('iframe')).not.toBe(firstFrame)
+})
+
+test('Reload with no plugin screen open reports false', async () => {
+  byId('plugin').hidden = true
+  expect(await pluginScreen.reloadCurrentPluginScreen()).toBe(false)
+  byId('plugin').hidden = false
+})

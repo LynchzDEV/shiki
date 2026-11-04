@@ -38,8 +38,11 @@ describe('shipped layout at phone width', () => {
 
   test('on a phone the toolbar keeps only Sessions; Studio, Flow, Agents and the bell move into the drawer', () => {
     const drawer = mediaBlock(quiet, PHONE_TERMINAL_QUERY)
-    expect(quiet.indexOf('#phone-sessions, .sb-destinations, .touch-only { display: none; }')).toBeLessThan(quiet.indexOf(`@media ${PHONE_TERMINAL_QUERY}, `))
-    expect(drawer).toContain('#phone-sessions { display: inline-flex;')
+    expect(quiet.indexOf('#phone-sessions, #screen-actions, .sb-destinations, .touch-only { display: none; }')).toBeLessThan(quiet.indexOf(`@media ${PHONE_TERMINAL_QUERY}, `))
+    expect(drawer).toContain('#phone-sessions, #screen-actions { display: inline-flex;')
+    expect(drawer).toContain('#screen-actions[hidden] { display: none; }')
+    expect(drawer).toContain('.row-menu.anchored .row { min-height: 44px; }')
+    expect(quiet).toContain('.popover.row-menu.anchored { position: fixed; left: auto; width: 220px; z-index: 70; }')
     expect(drawer).toContain('.sb-destinations { display: flex;')
     expect(drawer).toContain('.toolbar :is(#open-studio, #toggle-flow, #open-agents, #open-attention, .usage-card) { display: none; }')
   })
