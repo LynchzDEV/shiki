@@ -142,6 +142,29 @@ test('items sit in a group right under the plugin they came from', async () => {
   expect(group.classList.contains('q-sb-children')).toBe(true)
 })
 
+test('the fold button folds the item rows under the Queue row, without opening the screen, and the fold survives a repaint', async () => {
+  const group = () => groups()[0]!
+  const fold = () => group().querySelector<HTMLButtonElement>('.q-sb-head > .q-sb-fold')!
+  const shownBefore = shown.length
+  expect(fold().getAttribute('aria-expanded')).toBe('true')
+  expect(fold().getAttribute('aria-label')).toBe('Hide queue items')
+  fold().dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }))
+  expect(group().hasAttribute('data-folded')).toBe(true)
+  expect(fold().getAttribute('aria-expanded')).toBe('false')
+  expect(fold().getAttribute('aria-label')).toBe('Show queue items')
+  expect(shown).toHaveLength(shownBefore)
+  expect(localStorage.getItem('skd.sidebar.queue-folded')).toBe('["clickup-board"]')
+  stream().send([building, queued, waiting])
+  await flush()
+  expect(group().hasAttribute('data-folded')).toBe(true)
+  expect(group().querySelector('.q-sb-n')?.textContent).toBe('3')
+  fold().dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }))
+  expect(group().hasAttribute('data-folded')).toBe(false)
+  expect(localStorage.getItem('skd.sidebar.queue-folded')).toBe('[]')
+  stream().send([building, queued, waiting, ready, failed])
+  await flush()
+})
+
 test('the Queue row shows the count of every item from that source', () => {
   const head = groups()[0]!.querySelector<HTMLElement>('.sb-row[data-kind="queue"]')!
   expect(head.querySelector('.sb-t')?.textContent).toBe('Queue')
@@ -286,6 +309,7 @@ test('an empty queue still shows a Queue 0 row under a plugin that declares queu
   expect((group.previousElementSibling?.querySelector('[data-kind="plugin"]') as HTMLElement).dataset.key).toBe('plugin:clickup-board')
   expect(group.querySelector('.sb-row[data-kind="queue"] .q-sb-n')?.textContent).toBe('0')
   expect(group.querySelectorAll('[data-kind="queue-item"]')).toHaveLength(0)
+  expect(group.querySelector('.q-sb-fold')).toBeNull()
 })
 
 test('the empty Queue 0 row opens the Queue screen', () => {

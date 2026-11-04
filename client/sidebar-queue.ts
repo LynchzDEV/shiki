@@ -2,6 +2,7 @@ import { readRecord } from './shared'
 import { readQueueItems, type QueueItemView, type QueueState } from './queue-view'
 
 export const QUEUE_KEY = 'queue'
+const FOLDED_KEY = 'skd.sidebar.queue-folded'
 
 const QUEUE_DOT: Record<QueueState, { s: string; label: string }> = {
   building: { s: 'running', label: 'Building' },
@@ -75,7 +76,40 @@ function queueItemRow(item: QueueItemView): HTMLElement {
   return inItem(element)
 }
 
-export function queueGroup(items: readonly QueueItemView[], isQueueSource: boolean): HTMLElement[] {
+function foldedSources(): Set<string> {
+  try {
+    const saved: unknown = JSON.parse(localStorage.getItem(FOLDED_KEY) ?? '[]')
+    return new Set(Array.isArray(saved) ? saved.filter((entry): entry is string => typeof entry === 'string') : [])
+  } catch { return new Set() }
+}
+
+function saveFolded(sources: ReadonlySet<string>): void {
+  try { localStorage.setItem(FOLDED_KEY, JSON.stringify([...sources])) } catch {}
+}
+
+function foldButton(group: HTMLElement, source: string): HTMLButtonElement {
+  const button = Object.assign(document.createElement('button'), { type: 'button', className: 'q-sb-fold' })
+  button.innerHTML = '<svg aria-hidden="true"><use href="#chevron-icon"/></svg>'
+  const show = (folded: boolean): void => {
+    group.toggleAttribute('data-folded', folded)
+    button.setAttribute('aria-expanded', String(!folded))
+    button.setAttribute('aria-label', folded ? 'Show queue items' : 'Hide queue items')
+  }
+  button.onclick = (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const sources = foldedSources()
+    const folded = !sources.has(source)
+    if (folded) sources.add(source)
+    else sources.delete(source)
+    saveFolded(sources)
+    show(folded)
+  }
+  show(foldedSources().has(source))
+  return button
+}
+
+export function queueGroup(items: readonly QueueItemView[], isQueueSource: boolean, source: string): HTMLElement[] {
   if (items.length === 0 && !isQueueSource) return []
   const head = queueLink('queue', QUEUE_KEY, showQueue)
   const icon = document.createElement('span')
@@ -86,7 +120,10 @@ export function queueGroup(items: readonly QueueItemView[], isQueueSource: boole
   head.append(icon, text, count)
   const group = document.createElement('div')
   group.className = 'q-sb q-sb-children'
-  group.append(inItem(head), ...items.map(queueItemRow))
+  const headItem = inItem(head)
+  headItem.classList.add('q-sb-head')
+  if (items.length > 0) headItem.append(foldButton(group, source))
+  group.append(headItem, ...items.map(queueItemRow))
   return [group]
 }
 

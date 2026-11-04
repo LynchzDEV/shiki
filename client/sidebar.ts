@@ -394,7 +394,7 @@ function paint(items: HistoryItem[]): void {
   const dots = dotColors()
   list.replaceChildren(
     ...(pluginRows.length > 0 ? [Object.assign(document.createElement('p'), { className: 'sb-day', textContent: 'Plugins' })] : []),
-    ...pluginRows.flatMap(plugin => [pluginRow(plugin, 'sb-row'), ...queueGroup(currentQueueItems().filter(item => item.source === plugin.id), plugin.queueSource === true)]),
+    ...pluginRows.flatMap(plugin => [pluginRow(plugin, 'sb-row'), ...queueGroup(currentQueueItems().filter(item => item.source === plugin.id), plugin.queueSource === true, plugin.id)]),
     ...groups.flatMap(group => [
       dayHeader(group),
       ...group.items.map(item => rowElement(rowOf(item), 'sb-row')),
