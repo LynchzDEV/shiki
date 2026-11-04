@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 
-import { errorText, getJson, pathsFromUriList, shellQuote, streamJobLog } from '../client/shared'
+import { DUO_OPEN_QUERY, PHONE_TERMINAL_QUERY, enterIntent, errorText, getJson, pathsFromUriList, shellQuote, streamJobLog } from '../client/shared'
 
 const originalFetch = globalThis.fetch
 
@@ -108,5 +108,41 @@ describe('shellQuote / pathsFromUriList', () => {
   test('ignores blank lines, comments, and non-file schemes', () => {
     expect(pathsFromUriList('')).toEqual([])
     expect(pathsFromUriList('\r\n\r\n#comment\r\nhttp://x/y')).toEqual([])
+  })
+})
+
+describe('enterIntent', () => {
+  const originalMatchMedia = globalThis.matchMedia
+  const stubMatching = (matching: string[]): void => {
+    globalThis.matchMedia = ((query: string) => ({ matches: matching.includes(query) })) as unknown as typeof matchMedia
+  }
+  const enter = { key: 'Enter', shiftKey: false, isComposing: false }
+
+  afterEach(() => {
+    globalThis.matchMedia = originalMatchMedia
+  })
+
+  test('a desktop Enter sends, or picks the highlighted menu row', () => {
+    stubMatching([])
+    expect(enterIntent(enter, false)).toBe('send')
+    expect(enterIntent(enter, true)).toBe('pick')
+  })
+
+  test('a phone Enter adds a line, even with a menu open and nothing matching, but still picks a highlighted row', () => {
+    stubMatching([PHONE_TERMINAL_QUERY])
+    expect(enterIntent(enter, false)).toBe('newline')
+    expect(enterIntent(enter, true)).toBe('pick')
+  })
+
+  test('an iPhone Duo open Enter adds a line', () => {
+    stubMatching([DUO_OPEN_QUERY])
+    expect(enterIntent(enter, false)).toBe('newline')
+  })
+
+  test('Shift+Enter, IME composing and other keys are left alone', () => {
+    stubMatching([])
+    expect(enterIntent({ ...enter, shiftKey: true }, false)).toBe('none')
+    expect(enterIntent({ ...enter, isComposing: true }, false)).toBe('none')
+    expect(enterIntent({ ...enter, key: 'a' }, false)).toBe('none')
   })
 })

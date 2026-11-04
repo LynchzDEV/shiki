@@ -164,3 +164,19 @@ export async function uploadDrop(file: File): Promise<string> {
   if (!response.ok || typeof payload.path !== 'string') throw new Error(payload.error ?? `Upload failed (${response.status})`)
   return payload.path
 }
+
+export const PHONE_QUERY = '(max-width: 600px)'
+export const PHONE_TERMINAL_QUERY = '(max-width: 600px), (orientation: landscape) and (max-height: 500px) and (pointer: coarse)'
+export const DUO_OPEN_QUERY = '(min-width: 901px) and (max-width: 1100px) and (pointer: coarse) and (orientation: landscape)'
+
+const matches = (query: string): boolean => typeof matchMedia === 'function' && matchMedia(query).matches
+export const isPhone = (): boolean => matches(PHONE_QUERY)
+export const isTouchLayout = (): boolean => matches(PHONE_TERMINAL_QUERY) || matches(DUO_OPEN_QUERY)
+
+export type EnterIntent = 'pick' | 'send' | 'newline' | 'none'
+
+export function enterIntent(event: Pick<KeyboardEvent, 'key' | 'shiftKey' | 'isComposing'>, highlighted: boolean): EnterIntent {
+  if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return 'none'
+  if (highlighted) return 'pick'
+  return isTouchLayout() ? 'newline' : 'send'
+}
