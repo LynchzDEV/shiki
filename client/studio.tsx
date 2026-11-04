@@ -7,6 +7,7 @@ import type { Workflow, WorkflowNode, WorkflowRevision, PolicyRevision, Outcome 
 import type { RunStatus, WorkflowRun } from '../server/workflow-runner'
 import type { DraftJob, WorkflowDraft } from '../server/workflow-builder'
 import { api, openRun } from './studio-api'
+import { DUO_OPEN_QUERY, PHONE_TERMINAL_QUERY, isTouchLayout } from './shared'
 import { Connections, StepAttachments, type ConnectionList } from './studio-settings'
 import { agentChoice, agentFromChoice, agentHelp, agentIcon, agentLabel, IN_SESSION, roleChoice, insertWorkflowStep, kindIcon, nodeRunStates, roleOptions, roleWord, removeWorkflowStep, runNote, showsModelFields, stepPresets, swapNote, taskPreset, workflowTemplates, type NodeRunState, type Provider, type RoleOption } from './studio-graph'
 
@@ -64,6 +65,16 @@ syncMotion()
 document.getElementById('motion')?.addEventListener('change', () => setTimeout(syncMotion))
 
 const navHost = document.getElementById('studio-nav')
+function useTouchLayout(): boolean {
+  const [touch, setTouch] = useState(isTouchLayout)
+  useEffect(() => {
+    const queries = [matchMedia(PHONE_TERMINAL_QUERY), matchMedia(DUO_OPEN_QUERY)]
+    const sync = () => setTouch(isTouchLayout())
+    for (const query of queries) query.addEventListener('change', sync)
+    return () => { for (const query of queries) query.removeEventListener('change', sync) }
+  }, [])
+  return touch
+}
 function graphEdges(graph: Workflow): Edge[] { return graph.edges.map(edge => ({ id: `${edge.source}-${edge.outcome}-${edge.target}`, source: edge.source, target: edge.target, sourceHandle: edge.outcome, label: edge.outcome === 'pass' ? undefined : outcomeLabels[edge.outcome], type: 'flow', markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: '#8a93a8' }, className: `outcome-${edge.outcome}` })) }
 function fresh(graph: Workflow): WorkflowRevision { return { ...graph, id: `workflow-${crypto.randomUUID().slice(0, 8)}`, revision: '', createdAt: 0 } }
 function dateLabel(time: number): string { return time ? new Date(time).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : 'Built-in version' }
@@ -102,6 +113,7 @@ function Studio() {
   const [policyText, setPolicyText] = useState('')
   const [policyRevisions, setPolicyRevisions] = useState<PolicyRevision[]>([])
   const [modal, setModal] = useState<'run' | 'rules' | null>(null)
+  const touch = useTouchLayout()
   const [cwd, setCwd] = useState('')
   const [runTitle, setRunTitle] = useState('')
   const [request, setRequest] = useState('')
@@ -225,24 +237,28 @@ function Studio() {
     {heading}
     {error && <div className="studio-error" role="alert"><span>{error}</span><button type="button" className="round" aria-label="Dismiss error" onClick={() => setError('')}><Icon id="close-icon" /></button></div>}
     {screen === 'home' && <section className="studio-view describe-home">
-      <h2>How should your team work?</h2><p className="muted">Describe the steps you have in mind. Shape them on the canvas.</p>
-      {promptBox()}
-      {defaultFlow && <p className="muted default-mode">New flows: <strong>{design ? 'the AI designs each one for its task' : defaultFlow.name}</strong> <button type="button" className="text-button" disabled={building} onClick={() => void action(async () => { await api('/default', design ? { id: defaultFlow.id, revision: defaultFlow.revision } : { design: true }); await refreshWorkflows(); toast(design ? `New flows use ${defaultFlow.name}.` : 'New flows are designed by the AI.') })}>{design ? `Use ${defaultFlow.name} instead` : 'Let the AI design'}</button></p>}
-      <div className="prompt-examples"><span className="muted">Try an example</span>{EXAMPLES.map(([title, text]) => <button key={title} type="button" className="example" disabled={disabled} onClick={() => setDescription(text)}>{title}</button>)}</div>
+      <h2>How should your team work?</h2>{!touch && <p className="muted">Describe the steps you have in mind. Shape them on the canvas.</p>}
+      {!touch && promptBox()}
+      {!touch && defaultFlow && <p className="muted default-mode">New flows: <strong>{design ? 'the AI designs each one for its task' : defaultFlow.name}</strong> <button type="button" className="text-button" disabled={building} onClick={() => void action(async () => { await api('/default', design ? { id: defaultFlow.id, revision: defaultFlow.revision } : { design: true }); await refreshWorkflows(); toast(design ? `New flows use ${defaultFlow.name}.` : 'New flows are designed by the AI.') })}>{design ? `Use ${defaultFlow.name} instead` : 'Let the AI design'}</button></p>}
+      {!touch && <div className="prompt-examples"><span className="muted">Try an example</span>{EXAMPLES.map(([title, text]) => <button key={title} type="button" className="example" disabled={disabled} onClick={() => setDescription(text)}>{title}</button>)}</div>}
       <div className="starting-options">
         <button type="button" className="studio-option" disabled={!defaultFlow || building} onClick={() => defaultFlow && open(defaultFlow)}><Icon id="flow-icon" /><strong>Use the default</strong><small>{defaultFlow?.name ?? 'Loading your default…'}</small></button>
-        <button type="button" className="studio-option" disabled={building} onClick={() => go('templates')}><Icon id="history-icon" /><strong>Browse templates</strong><small>A starting point to make yours</small></button>
-        <button type="button" className="studio-option" disabled={building} onClick={blank}><Icon id="plus-icon" /><strong>Start from scratch</strong><small>One step at a time</small></button>
+        {!touch && <button type="button" className="studio-option" disabled={building} onClick={() => go('templates')}><Icon id="history-icon" /><strong>Browse templates</strong><small>A starting point to make yours</small></button>}
+        {!touch && <button type="button" className="studio-option" disabled={building} onClick={blank}><Icon id="plus-icon" /><strong>Start from scratch</strong><small>One step at a time</small></button>}
       </div>
-      <div className="compact-templates">{templates.slice(1).map(item => <button key={item.id} type="button" disabled={building} onClick={() => openTemplate(item)}>{strip(item)}<span>{item.name}</span><small className="muted">{item.nodes.length} steps</small></button>)}</div>
-      {graph && <button type="button" className="text-button continue-draft" onClick={() => go('editor')}>Continue editing {graph.name}{dirty ? ' · Unsaved changes' : ''}<Icon id="open-icon" /></button>}
+      {!touch && <div className="compact-templates">{templates.slice(1).map(item => <button key={item.id} type="button" disabled={building} onClick={() => openTemplate(item)}>{strip(item)}<span>{item.name}</span><small className="muted">{item.nodes.length} steps</small></button>)}</div>}
+      {!touch && graph && <button type="button" className="text-button continue-draft" onClick={() => go('editor')}>Continue editing {graph.name}{dirty ? ' · Unsaved changes' : ''}<Icon id="open-icon" /></button>}
       {workflows.some(item => item.id !== 'default') && <section className="saved-workflows"><h3>Your workflows</h3>{workflows.filter(item => item.id !== 'default').map(item => <button key={item.id} type="button" disabled={building} onClick={() => open(item)}><span><strong>{item.name}</strong><small>{item.nodes.length} steps · {dateLabel(item.createdAt)}</small></span><Icon id="open-icon" /></button>)}</section>}
     </section>}
-    {screen === 'templates' && <section className="studio-view describe-home"><h2>Choose a starting point.</h2><div className="starting-options">
+    {touch && (screen === 'editor' || screen === 'templates') && <section className="studio-view desktop-only">
+      <h2>This needs a bigger screen</h2><p className="muted">Workflows are edited on a drag-and-drop canvas.</p>
+      <div className="dialog-actions">{screen === 'editor' && graph && graph.nodes.length > 0 && <button type="button" className="pill" onClick={() => { setRunTitle(graph.name); setModal('run') }}>Run this workflow</button>}<button type="button" className="text-button" onClick={() => go('home')}>Back</button></div>
+    </section>}
+    {screen === 'templates' && !touch && <section className="studio-view describe-home"><h2>Choose a starting point.</h2><div className="starting-options">
       {templates.map((item, index) => <button key={item.id} type="button" className="studio-option" disabled={building} onClick={() => index === 0 ? open({ ...item, revision: builtin!.revision, createdAt: 0 }) : openTemplate(item)}><strong>{index === 0 ? 'Plan, build & review' : item.name}</strong><small>{item.nodes.length} steps · {index === 0 ? 'Default workflow' : index === 1 ? 'Explore, then check the findings' : 'Check existing work and take a closer look'}</small></button>)}
       <button type="button" className="studio-option" disabled={building} onClick={blank}><strong>Blank workflow</strong><small>Start with your own task</small></button>
     </div></section>}
-    {screen === 'editor' && graph && <section className="studio-view">
+    {screen === 'editor' && graph && !touch && <section className="studio-view">
       <header className="editor-heading">
         <div><label className="visually-hidden" htmlFor="workflow-name">Workflow name</label><input id="workflow-name" value={graph.name} disabled={disabled} onChange={event => { markDirty(); setGraph(current => current ? { ...current, name: event.target.value } : current) }} /><p className="muted" role="status">{dirty ? 'Unsaved changes' : graph.id === 'default' ? 'Default workflow' : 'Saved'} · {nodes.length} step{nodes.length === 1 ? '' : 's'}</p></div>
         <div className="editor-actions"><button type="button" className="text-button" aria-pressed={panel === 'history'} onClick={() => setPanel(panel === 'history' ? null : 'history')}>History</button><button type="button" className="pill" disabled={!dirty || disabled} onClick={() => void action(async () => { await save() })}>Save</button><button type="button" className="pill" disabled={disabled || !nodes.length} onClick={() => void action(async () => { if (dirty) await save(); setRunTitle(graph.name); setModal('run') })}>Run workflow</button></div>

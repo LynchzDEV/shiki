@@ -1522,7 +1522,7 @@ dialog, .access-dialog, .confirm-dialog { max-width: calc(100vw - 32px); max-hei
   #live .term-screen { border-radius: var(--r-lg); corner-shape: var(--corner); box-shadow: var(--inset); overflow: hidden; }
   #live .term-screen .xterm { padding: 8px; }
   #live .oc-line { display: none; }
-  .drop-zone, #backdrop { display: none; }
+  .drop-zone, #backdrop, #flow-save, .q-layout [data-layout="tree"] { display: none; }
   .touch-only { display: inline-flex; }
   .composer #attach-files { width: 44px; flex-basis: 44px; min-height: 44px; }
   .key-row { display: flex; flex: none; flex-wrap: nowrap; overflow-x: auto; gap: 6px; padding: 6px 0; }

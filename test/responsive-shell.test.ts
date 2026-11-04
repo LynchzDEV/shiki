@@ -442,8 +442,8 @@ describe('terminal on touch layouts', () => {
     expect(touch).toContain('min-height: 44px; padding: 0 16px;')
   })
 
-  test('split drop zones and the dot background hide, and the composer paperclip shows at 44px on touch layouts', () => {
-    expect(touch).toContain('.drop-zone, #backdrop { display: none; }')
+  test('drop zones, the dot background, Save as workflow and the Git tree hide, and the composer paperclip shows at 44px on touch layouts', () => {
+    expect(touch).toContain('.drop-zone, #backdrop, #flow-save, .q-layout [data-layout="tree"] { display: none; }')
     expect(touch).toContain('.touch-only { display: inline-flex; }')
     expect(touch).toContain('.composer #attach-files { width: 44px; flex-basis: 44px; min-height: 44px; }')
   })

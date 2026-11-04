@@ -5,7 +5,7 @@ import { createPickReview } from './queue-review'
 import { createLandDialogs } from './queue-land'
 import { readQueueTree, renderTree } from './queue-tree'
 import { armKey, readPaused, readQueueItems, renderQueue, watchRunId, type QueueFlow, type QueueItemView, type QueueLayout, type QueuePaused, type QueuePlugin } from './queue-view'
-import { errorText, getJson, postJson, putJson, readArray, readRecord, type ApiResult } from './shared'
+import { errorText, getJson, isTouchLayout, postJson, putJson, readArray, readRecord, type ApiResult } from './shared'
 
 export { parseItemRef } from './queue-dialog'
 export { readQueueItems, renderQueue } from './queue-view'
@@ -48,6 +48,7 @@ const watch = (item: QueueItemView | undefined): void => {
 }
 
 function savedLayout(): QueueLayout {
+  if (isTouchLayout()) return 'list'
   try { return localStorage.getItem(LAYOUT_KEY) === 'tree' ? 'tree' : 'list' } catch { return 'list' }
 }
 
