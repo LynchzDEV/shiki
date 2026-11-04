@@ -35,7 +35,7 @@ afterAll(async () => {
   await rm(plain, { recursive: true, force: true })
 })
 
-type Engine = Pick<QueueEngine, 'add' | 'requeue' | 'pick' | 'checkReplies' | 'remove' | 'move' | 'checkedAt' | 'subscribeChecks'>
+type Engine = Pick<QueueEngine, 'add' | 'requeue' | 'pick' | 'checkReplies' | 'remove' | 'stop' | 'move' | 'checkedAt' | 'subscribeChecks'>
 type RunLookup = NonNullable<Parameters<typeof queueRoutes>[3]>
 
 function engine(items: ReturnType<typeof store>, over: Partial<QueueEngine> = {}): Engine {
@@ -45,7 +45,12 @@ function engine(items: ReturnType<typeof store>, over: Partial<QueueEngine> = {}
     requeue: async id => items.update(id, { state: 'queued' }),
     pick: async (id, choice) => { if (found(id).state !== 'waiting-pick') throw new QueueRefusal('It is queued now', 409); return items.update(id, { state: 'queued', questions: [choice.option, choice.tester ?? '', choice.note ?? ''] }) },
     checkReplies: async () => ({ checked: 2, resumed: 1 }),
-    remove: async id => { if (found(id).state === 'building') throw new QueueRefusal('It is building now', 409); await items.remove(id) },
+    remove: async id => { found(id); await items.remove(id) },
+    stop: async id => {
+      const { state } = found(id)
+      if (state !== 'building' && state !== 'landing') throw new QueueRefusal(`It is ${state} now`, 409)
+      return items.update(id, { state: 'failed', error: 'Stopped by user' })
+    },
     move: async (id, to) => { found(id); await items.move(id, to) },
     checkedAt: () => null,
     subscribeChecks: () => () => {},
@@ -93,7 +98,7 @@ test('POST maps an item already in the queue to 409', async () => {
   expect((await twice.json()).error).toBe('Already in the queue')
 })
 
-test('delete and move go through the engine so they wait for a build in progress', async () => {
+test('delete and move go through the engine, and a refused delete says why', async () => {
   const items = store()
   const a = await items.add(newItem, 'end')
   const seen: string[] = []
@@ -103,7 +108,7 @@ test('delete and move go through the engine so they wait for a build in progress
   })))
   const removing = await call(app, `/api/queue/${a.id}`, { method: 'DELETE' })
   expect(removing.status).toBe(409)
-  expect((await removing.json()).error).toBe('Stop its run in Studio first')
+  expect((await removing.json()).error).toBe('It is building now')
   expect((await post(app, `/api/queue/${a.id}/move`, { to: 3 })).status).toBe(200)
   expect(seen).toEqual([`remove ${a.id}`, `move ${a.id} 3`])
   expect(items.get(a.id)!.state).toBe('queued')
@@ -134,17 +139,33 @@ test('move reorders and 404s an unknown id', async () => {
   expect((await post(app, `/api/queue/${b.id}/move`, { to: -1 })).status).toBe(400)
 })
 
-test('delete and requeue refuse a building item and 404 unknown ids', async () => {
+test('requeue refuses a building item, delete removes it, and both 404 unknown ids', async () => {
   const items = store()
   const app = new Elysia().use(queueRoutes(items, engine(items)))
   const a = await items.add(newItem, 'end')
   await items.update(a.id, { state: 'building' })
-  expect((await call(app, `/api/queue/${a.id}`, { method: 'DELETE' })).status).toBe(409)
   expect((await post(app, `/api/queue/${a.id}/requeue`)).status).toBe(409)
   await items.update(a.id, { state: 'failed' })
   expect((await post(app, `/api/queue/${a.id}/requeue`)).status).toBe(200)
+  await items.update(a.id, { state: 'building' })
   expect((await call(app, `/api/queue/${a.id}`, { method: 'DELETE' })).status).toBe(200)
   expect((await call(app, `/api/queue/${a.id}`, { method: 'DELETE' })).status).toBe(404)
+})
+
+test('stop ends a building item, says why it refuses a queued one, and 404s an unknown id', async () => {
+  const items = store()
+  const app = new Elysia().use(queueRoutes(items, engine(items)))
+  const a = await items.add(newItem, 'end')
+  const refused = await post(app, `/api/queue/${a.id}/stop`)
+  expect(refused.status).toBe(409)
+  expect((await refused.json()).error).toBe('It is queued now')
+  await items.update(a.id, { state: 'building' })
+  const stopped = await post(app, `/api/queue/${a.id}/stop`)
+  expect(stopped.status).toBe(200)
+  expect((await stopped.json()).item).toMatchObject({ id: a.id, state: 'failed', error: 'Stopped by user' })
+  const missing = await post(app, '/api/queue/nope/stop')
+  expect(missing.status).toBe(404)
+  expect((await missing.json()).error).toBe('No such queue item')
 })
 
 test('requeue passes { fresh: true } to the engine and treats any other body as not fresh', async () => {
@@ -306,7 +327,9 @@ test('with the real engine: add builds, a queued item cannot be requeued, and a 
     const requeued = await post(app, `/api/queue/${second.id}/requeue`)
     expect(requeued.status).toBe(409)
     expect((await requeued.json()).error).toBe('It is queued now')
-    expect((await call(app, `/api/queue/${items.list()[0]!.id}`, { method: 'DELETE' })).status).toBe(409)
+    const unstoppable = await call(app, `/api/queue/${items.list()[0]!.id}`, { method: 'DELETE' })
+    expect(unstoppable.status).toBe(409)
+    expect((await unstoppable.json()).error).toBe('Stopping runs is not available')
   } finally { quiet.mockRestore() }
   expect((await call(app, `/api/queue/${second.id}`, { method: 'DELETE' })).status).toBe(200)
   expect(items.list().map(item => item.externalId)).toEqual(['1'])

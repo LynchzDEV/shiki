@@ -14,7 +14,7 @@ import { eventStreamResponse, type RunEvents } from '../run-events'
 import { MAX_QUEUE_PARALLEL, readConfig, writeConfig } from '../secrets'
 
 type Status = { status?: number | string }
-type QueueEngineRoutes = Pick<QueueEngine, 'add' | 'requeue' | 'pick' | 'checkReplies' | 'remove' | 'move' | 'checkedAt' | 'subscribeChecks' | 'startStage' | 'refreshPreflight' | 'retryStage' | 'landLog' | 'report'> & Partial<Pick<QueueEngine, 'preparing' | 'paused' | 'kick'>>
+type QueueEngineRoutes = Pick<QueueEngine, 'add' | 'requeue' | 'pick' | 'checkReplies' | 'remove' | 'stop' | 'move' | 'checkedAt' | 'subscribeChecks' | 'startStage' | 'refreshPreflight' | 'retryStage' | 'landLog' | 'report'> & Partial<Pick<QueueEngine, 'preparing' | 'paused' | 'kick'>>
 export type QueueRunLookup = { get(id: string): QueueStepRun | undefined; subscribe(listener: () => void): () => void }
 const NO_RUNS: QueueRunLookup = { get: () => undefined, subscribe: () => () => {} }
 
@@ -80,8 +80,7 @@ async function folderRepos(path: unknown, set: Status) {
 const explainMissing = (error: unknown): string => message(error)
 const text = (body: string, type: string): Response => new Response(body, { headers: { 'content-type': `${type}; charset=utf-8` } })
 const isConflict = (error: unknown): boolean => error instanceof QueueRefusal && error.status === 409
-const removeExplanation = (error: unknown): string => (isConflict(error) ? 'Stop its run in Studio first' : NO_ITEM)
-const moveExplanation = (error: unknown): string => (isConflict(error) ? message(error) : NO_ITEM)
+const conflictOrMissing = (error: unknown): string => (isConflict(error) ? message(error) : NO_ITEM)
 
 function itemsChecksAndRuns(store: QueueStore, engine: QueueEngineRoutes, runs: QueueRunLookup, settings: Set<() => void>): RunEvents {
   return {
@@ -140,7 +139,7 @@ export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: 
     .post('/api/queue/:id/move', async ({ params, body, set }) => {
       const parsed = moveSchema.safeParse(body)
       if (!parsed.success) { set.status = 400; return { error: 'to must be a position from 0' } }
-      return refusing(set, async () => { await engine.move(params.id, parsed.data.to); return { items: store.list().map(cleaned) } }, moveExplanation)
+      return refusing(set, async () => { await engine.move(params.id, parsed.data.to); return { items: store.list().map(cleaned) } }, conflictOrMissing)
     })
     .post('/api/queue/:id/pick', ({ params, body, set }) => {
       const parsed = pickSchema.safeParse(body)
@@ -160,5 +159,6 @@ export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: 
     .get('/api/queue/:id/land/:stage/log', ({ params, set }) => refusing(set, async () => text(await engine.landLog(params.id, params.stage), 'text/plain'), explainMissing))
     .get('/api/queue/:id/report', ({ params, set }) => refusing(set, async () => text(await engine.report(params.id), 'text/markdown'), explainMissing))
     .post('/api/queue/:id/requeue', ({ params, body, set }) => requeueItem(store, engine, params.id, body, set))
-    .delete('/api/queue/:id', ({ params, set }) => refusing(set, async () => { await engine.remove(params.id); return { ok: true } }, removeExplanation))
+    .post('/api/queue/:id/stop', ({ params, set }) => refusing(set, async () => ({ item: cleaned(await engine.stop(params.id)) }), conflictOrMissing))
+    .delete('/api/queue/:id', ({ params, set }) => refusing(set, async () => { await engine.remove(params.id); return { ok: true } }, conflictOrMissing))
 }

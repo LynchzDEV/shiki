@@ -249,21 +249,62 @@ function heldRunner(h: ReturnType<typeof harness>) {
   return { runner, release, inStart }
 }
 
-test('remove waits for a build in progress and then refuses the building item', async () => {
+function stoppableHarness() {
+  const h = harness()
+  const stopped: string[] = []
+  const runner: QueueRunner = {
+    start: async () => { const id = `run-${stopped.length + h.runs.size + 1}`; h.runs.set(id, { id, status: 'running', error: null, attempts: [] }); return { id } },
+    get: id => h.runs.get(id),
+    stop: async (id) => { stopped.push(id); h.runs.set(id, { ...h.runs.get(id)!, status: 'stopped', error: 'Stopped by user' }) },
+  }
+  return { ...h, stopped, engine: harness({ runner, store: h.store }).engine }
+}
+
+test('remove waits for a build in progress, then stops its run and deletes the item', async () => {
   const h = harness()
   const held = heldRunner(h)
-  const engine = harness({ runner: held.runner, store: h.store }).engine
+  const stopped: string[] = []
+  const runner: QueueRunner = { ...held.runner, stop: async (id) => { stopped.push(id) } }
+  const engine = harness({ runner, store: h.store }).engine
   const adding = engine.add(add)
   await held.inStart
   const id = h.store.list()[0]!.id
+  const removing = engine.remove(id)
+  held.release()
+  await adding
+  await removing
+  expect(stopped).toEqual(['run-held'])
+  expect(h.store.list()).toEqual([])
+})
+
+test('stop ends a building item\'s run and the settled run leaves it failed with a run to resume', async () => {
+  const h = stoppableHarness()
+  const item = await h.engine.add(add)
+  expect(h.store.get(item.id)).toMatchObject({ state: 'building', currentRunId: 'run-1' })
+  await h.engine.stop(item.id)
+  expect(h.stopped).toEqual(['run-1'])
+  await h.engine.onRunSettled(h.runs.get('run-1')!)
+  expect(h.store.get(item.id)).toMatchObject({ state: 'failed', error: 'Stopped by user', currentRunId: null, resumeRunId: 'run-1' })
+})
+
+test('stop does not call the runner again for a run that already settled', async () => {
+  const h = stoppableHarness()
+  const item = await h.engine.add(add)
+  h.settle('run-1', { status: 'failed', error: 'boom' })
+  await h.engine.stop(item.id)
+  expect(h.stopped).toEqual([])
+})
+
+test('stop refuses an item that is not building or shipping, and an unknown id', async () => {
+  const h = stoppableHarness()
+  await h.engine.add(add)
+  const queued = await h.engine.add({ ...add, externalId: '2' })
   const quiet = spyOn(console, 'error').mockImplementation(() => {})
   try {
-    const removing = engine.remove(id)
-    held.release()
-    await adding
-    await expect(removing).rejects.toThrow('It is building now')
+    await expect(h.engine.stop(queued.id)).rejects.toThrow('It is queued now')
+    await expect(h.engine.stop('nope')).rejects.toThrow('No queue item nope')
   } finally { quiet.mockRestore() }
-  expect(h.store.get(id)).toMatchObject({ state: 'building', currentRunId: 'run-held', runIds: ['run-held'] })
+  expect(h.stopped).toEqual([])
 })
 
 test('move waits for a build in progress and never starts a second build', async () => {

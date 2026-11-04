@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from 'bun:test'
+import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test'
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -358,16 +358,18 @@ test('a restart turns a landing item into a failed one to retry; waiting and lan
   expect(h.item(landing.id).state).toBe('landed')
 })
 
-test('an item mid-landing cannot be removed, but a waiting one can', async () => {
+test('remove while a stage command runs kills it and deletes the item without a failed step', async () => {
   const h = harness()
   const gate = join(dir, 'gate')
   const slow = await script('slow.sh', `touch ${dir}/started\nwhile [ ! -f ${gate} ]; do sleep 0.02; done`)
   const id = await h.ship([stage('uat', slow)])
   await until(() => Bun.file(join(dir, 'started')).exists())
-  await expect(h.engine.remove(id)).rejects.toThrow('It is landing now')
-  await writeFile(gate, '')
-  await h.engine.landIdle()
-  await h.engine.remove(id)
+  const errors = spyOn(console, 'error').mockImplementation(() => {})
+  try {
+    await h.engine.remove(id)
+    await h.engine.landIdle()
+    expect(errors).not.toHaveBeenCalled()
+  } finally { errors.mockRestore() }
   expect(h.store.get(id)).toBeUndefined()
 })
 
@@ -560,4 +562,29 @@ test('a post warning is stored on the stage, shown in the report and raised, and
   expect(h.item(id)).toMatchObject({ state: 'landed', land: { stages: { uat: { posted: 'c1', warning: 'Status not set: no such status\nsee settings' } } } })
   expect(h.alerts.map(alert => alert.reason)).toContain('uat posted with a warning: Status not set: no such status')
   expect(await h.engine.report(id)).toContain('Warning: Status not set: no such status\nsee settings')
+})
+
+test('stop kills a running stage command and fails the item at that stage, and Retry stage starts it again', async () => {
+  const h = harness()
+  const marker = join(dir, 'after-sleep')
+  const slow = await script('slow', `touch ${dir}/started\nsleep 5\ntouch ${marker}`)
+  const id = await h.ship([stage('deploy', slow)])
+  await until(() => Bun.file(join(dir, 'started')).exists())
+  await h.engine.stop(id)
+  expect(h.item(id)).toMatchObject({ state: 'failed', error: 'Stopped by you during deploy' })
+  expect(h.item(id).land!.stages.deploy).toMatchObject({ status: 'failed' })
+  await h.engine.landIdle()
+  expect(h.item(id)).toMatchObject({ state: 'failed', error: 'Stopped by you during deploy' })
+  await expect(stat(marker)).rejects.toThrow()
+  expect((await h.engine.retryStage(id)).state).toBe('landing')
+  await h.engine.stop(id)
+  await h.engine.landIdle()
+  expect(h.item(id).state).toBe('failed')
+})
+
+test('stop refuses an item waiting for its stage button', async () => {
+  const h = harness()
+  const id = await h.ship([button('prod', await script('prod', 'exit 0'))])
+  expect(h.item(id).state).toBe('awaiting-stage')
+  await expect(h.engine.stop(id)).rejects.toThrow('It is awaiting-stage now')
 })

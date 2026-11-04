@@ -18,6 +18,7 @@ export type QueueRunner = {
   start(input: { cwd: string; request: string; label: string; workflowId?: string }, context: { startedByUser: boolean }): Promise<{ id: string }>
   get(id: string): RunView | undefined
   retry?(id: string): Promise<{ id: string }>
+  stop?(id: string): Promise<unknown>
 }
 
 export type QueueEngineDeps = {
@@ -52,6 +53,7 @@ export type QueueEngine = {
   requeue(id: string, options?: RequeueOptions): Promise<QueueItem>
   pick(id: string, choice: PickChoice): Promise<QueueItem>
   remove(id: string): Promise<void>
+  stop(id: string): Promise<QueueItem>
   move(id: string, to: number): Promise<void>
   checkReplies(): Promise<{ checked: number; resumed: number }>
   startStage(id: string, stage: string): Promise<QueueItem>
@@ -387,9 +389,25 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
     return found(store, id)
   })
 
+  async function stopRun(item: QueueItem): Promise<void> {
+    const run = item.currentRunId === null ? undefined : deps.runner.get(item.currentRunId)
+    if (run === undefined || SETTLED.has(run.status)) return
+    if (deps.runner.stop === undefined) throw new QueueRefusal('Stopping runs is not available', 409)
+    await deps.runner.stop(run.id)
+  }
+
+  const stop = (id: string): Promise<QueueItem> => serial(async () => {
+    const item = found(store, id)
+    if (item.state === 'building') await stopRun(item)
+    else if (item.state === 'landing') await land.stop(id)
+    else throw stateRefusal(item.state)
+    return found(store, id)
+  })
+
   const remove = (id: string): Promise<void> => serial(async () => {
-    const { state } = found(store, id)
-    if (state === 'building' || state === 'landing') throw stateRefusal(state)
+    const item = found(store, id)
+    if (item.state === 'building') await stopRun(item)
+    if (item.state === 'landing') land.halt(id)
     await store.remove(id)
     await dropAnswerBackups(deps.backupDir(id)).catch(error => console.error('queue answer backups not removed', error))
   })
@@ -445,6 +463,7 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
     requeue,
     pick,
     remove,
+    stop,
     move,
     recover,
     kick,

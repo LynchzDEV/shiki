@@ -62,7 +62,9 @@ function killGroup(pid: number, signal: NodeJS.Signals): void {
   try { process.kill(-pid, signal) } catch { /* the group is already gone */ }
 }
 
-async function spawnCommand(command: Command, options: { cwd: string; env: Record<string, string>; logFile?: string }): Promise<Spawned> {
+const STOPPED: Spawned = { exitCode: null, timedOut: false, stdout: '', stderr: '' }
+
+async function spawnCommand(command: Command, options: { cwd: string; env: Record<string, string>; logFile?: string; signal?: AbortSignal }): Promise<Spawned> {
   const fd = options.logFile === undefined ? undefined : openSync(options.logFile, 'w', 0o600)
   try {
     if (options.logFile !== undefined) await chmod(options.logFile, 0o600)
@@ -72,15 +74,17 @@ async function spawnCommand(command: Command, options: { cwd: string; env: Recor
     })
     let timedOut = false
     let killer: ReturnType<typeof setTimeout> | undefined
-    const timer = setTimeout(() => {
-      timedOut = true
+    const terminate = (): void => {
       killGroup(proc.pid, 'SIGTERM')
       killer = setTimeout(() => killGroup(proc.pid, 'SIGKILL'), KILL_GRACE_MS)
-    }, command.timeoutSeconds * 1000)
+    }
+    const timer = setTimeout(() => { timedOut = true; terminate() }, command.timeoutSeconds * 1000)
+    options.signal?.addEventListener('abort', terminate, { once: true })
     const pipes = fd === undefined
       ? Promise.all([new Response(proc.stdout as ReadableStream).text(), new Response(proc.stderr as ReadableStream).text()])
       : Promise.resolve(['', ''])
     const exitCode = await proc.exited
+    options.signal?.removeEventListener('abort', terminate)
     clearTimeout(timer)
     clearTimeout(killer)
     killGroup(proc.pid, 'SIGKILL')
@@ -136,6 +140,13 @@ export function createLand(deps: LandDeps) {
   const track = (work: Promise<unknown>): void => {
     const watched = work.catch(error => console.error('queue land step failed', error)).finally(() => { inflight.delete(watched) })
     inflight.add(watched)
+  }
+
+  const controllers = new Map<string, AbortController>()
+  const trackStoppable = (id: string, work: (signal: AbortSignal) => Promise<unknown>): void => {
+    const controller = new AbortController()
+    controllers.set(id, controller)
+    track(work(controller.signal).finally(() => { if (controllers.get(id) === controller) controllers.delete(id) }))
   }
 
   function found(id: string): QueueItem {
@@ -221,7 +232,7 @@ export function createLand(deps: LandDeps) {
   async function begin(id: string, name: string): Promise<void> {
     const item = found(id)
     await store.update(id, { state: 'landing', error: null, land: progress(item, name, { status: 'running', startedAt: clock() }, { stage: name }) })
-    track(execute(id, name))
+    trackStoppable(id, signal => execute(id, name, signal))
   }
 
   async function advance(id: string, name: string): Promise<void> {
@@ -241,7 +252,8 @@ export function createLand(deps: LandDeps) {
     return parsed.data.post
   }
 
-  async function finish(id: string, name: string): Promise<void> {
+  async function finish(id: string, name: string, signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return
     const item = found(id)
     let post: Awaited<ReturnType<typeof readPost>>
     try { post = await readPost(item, name) } catch (error) { return fail(id, `Bad ${name}.json: ${message(error)}`, name) }
@@ -254,10 +266,11 @@ export function createLand(deps: LandDeps) {
         return fail(id, `${name} ran but posting failed: ${message(error)}`, name)
       }
     }
+    if (signal.aborted) return
     await advance(id, name)
   }
 
-  async function execute(id: string, name: string): Promise<void> {
+  async function execute(id: string, name: string, signal: AbortSignal): Promise<void> {
     try {
       const item = found(id)
       const stage = stageOf(item, name)
@@ -267,15 +280,17 @@ export function createLand(deps: LandDeps) {
       await mkdir(join(configDir(), 'queue-land', id), { recursive: true, mode: 0o700 })
       const keys = repoKeys(item)
       const setMessage = (text: string | null) => async () => { await store.update(id, { land: text === null ? progress(found(id), name) : progress(found(id), name, undefined, { message: text }) }) }
-      const result = await locks.hold(keys, setMessage(`waiting for another item to finish ${name}`), setMessage(null), () => spawnCommand(stage.command, { cwd: item.worktree!, env, logFile }))
+      const result = await locks.hold(keys, setMessage(`waiting for another item to finish ${name}`), setMessage(null), () => (signal.aborted ? Promise.resolve(STOPPED) : spawnCommand(stage.command, { cwd: item.worktree!, env, logFile, signal })))
+      if (signal.aborted) return
       const log = await redactForStage(found(id), name, (await readLogTail(logFile, LOG_BYTES)).content)
       const ended = { endedAt: clock(), exitCode: result.exitCode }
       if (result.startError !== undefined) return await fail(id, `${name} failed to start: ${result.startError}`, name, { ...ended, status: 'failed' })
       if (result.timedOut) return await fail(id, `${name} failed (timed out after ${stage.command.timeoutSeconds}s)\n${lastLines(log)}`, name, { ...ended, status: 'failed' })
       if (result.exitCode !== 0) return await fail(id, `${name} failed (exit ${result.exitCode})\n${lastLines(log)}`, name, { ...ended, status: 'failed' })
       await store.update(id, { land: progress(found(id), name, { ...ended, status: 'ok' }) })
-      await finish(id, name)
+      await finish(id, name, signal)
     } catch (error) {
+      if (signal.aborted) return
       await fail(id, `${name} failed: ${message(error)}`, name, { status: 'failed' })
     }
   }
@@ -330,8 +345,21 @@ export function createLand(deps: LandDeps) {
         return found(id)
       }
       const posting = await store.update(id, { state: 'landing', error: null, land: progress(item, name) })
-      track(finish(id, name))
+      trackStoppable(id, signal => finish(id, name, signal))
       return posting
+    },
+
+    async stop(id: string): Promise<void> {
+      const item = found(id)
+      const name = item.land?.stage
+      if (item.state !== 'landing' || name === undefined) throw new QueueRefusal(`It is ${item.state} now`, 409)
+      controllers.get(id)?.abort()
+      const running = item.land!.stages[name]?.status === 'running'
+      await fail(id, `Stopped by you during ${name}`, name, running ? { status: 'failed', endedAt: clock() } : undefined)
+    },
+
+    halt(id: string): void {
+      controllers.get(id)?.abort()
     },
 
     async recover(): Promise<void> {
