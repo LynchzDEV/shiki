@@ -1,4 +1,5 @@
 import { fold, morph, reveal } from './morph'
+import { PHONE_QUERY, PHONE_TERMINAL_QUERY } from './shared'
 
 const $ = (id: string): HTMLElement => document.getElementById(id) as HTMLElement
 const screens = ['welcome', 'history', 'conversation', 'studio', 'plugin', 'marketplace', 'queue', 'queue-review'] as const
@@ -31,7 +32,7 @@ function toggleFlow(open: boolean): void {
   dispatchEvent(new CustomEvent('quiet:flow-open', { detail: open }))
 }
 
-const mobileAgents = matchMedia('(max-width: 600px)')
+const mobileAgents = matchMedia(PHONE_QUERY)
 function showAgents(): void {
   if (mobileAgents.matches) agents.showModal()
   else agents.show()
@@ -104,9 +105,43 @@ $('search').onclick = () => { if ($('history').hidden) showHistory(); else leave
 $('all-history').onclick = () => { if ($('history').hidden) showHistory(); else $('chat-search').focus() }
 
 const sidebarShell = $('sb-shell')
+const sidebarOpen = (): boolean => !sidebarShell.classList.contains('collapsed')
+const drawerLayout = matchMedia(PHONE_TERMINAL_QUERY)
+const drawerCovers = (): boolean => drawerLayout.matches && sidebarOpen()
+let focusBeforeDrawer: HTMLElement | null = null
+function holdFocusInDrawer(): void {
+  const covering = drawerCovers()
+  document.querySelector('.canvas')?.toggleAttribute('inert', covering)
+  if (covering) {
+    focusBeforeDrawer = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    $('sidebar').querySelector<HTMLElement>('.sb-destinations button')?.focus()
+    return
+  }
+  const opener = focusBeforeDrawer
+  focusBeforeDrawer = null
+  const active = document.activeElement
+  if (opener?.isConnected && (active === null || active === document.body || $('sidebar').contains(active))) opener.focus()
+}
+function setSidebarOpen(open: boolean): void {
+  const covered = drawerCovers()
+  sidebarShell.classList.toggle('collapsed', !open)
+  document.getElementById('phone-sessions')?.setAttribute('aria-expanded', String(open))
+  if (covered !== drawerCovers()) holdFocusInDrawer()
+  dispatchEvent(new Event('quiet:sidebar-toggle'))
+}
+drawerLayout.addEventListener('change', () => { document.querySelector('.canvas')?.toggleAttribute('inert', drawerCovers()) })
 document.querySelectorAll<HTMLElement>('[data-sidebar-toggle]').forEach(button => {
-  button.onclick = () => { sidebarShell.classList.toggle('collapsed'); dispatchEvent(new Event('quiet:sidebar-toggle')) }
+  button.onclick = () => setSidebarOpen(!sidebarOpen())
 })
+document.querySelector('.sb-destinations')?.addEventListener('click', (event) => {
+  const row = (event.target as Element).closest<HTMLElement>('[data-proxy], [data-show]')
+  if (!row) return
+  event.stopPropagation()
+  setSidebarOpen(false)
+  if (row.dataset.proxy) $(row.dataset.proxy).click()
+  else dispatchEvent(new CustomEvent('quiet:show', { detail: row.dataset.show }))
+})
+closeSidebarOnPick()
 document.querySelectorAll<HTMLElement>('[data-click]').forEach(button => {
   button.onclick = () => $(button.dataset.click ?? '').click()
 })
@@ -145,5 +180,20 @@ message.oninput = () => {
 document.querySelectorAll<HTMLElement>('[data-live]').forEach(button => {
   button.onclick = () => dispatchEvent(new CustomEvent('quiet:open-terminal', { detail: { restore: false } }))
 })
+
+function closeSidebarOnPick(): void {
+  const drawer = matchMedia(PHONE_TERMINAL_QUERY)
+  const holdOpen = (): boolean => document.querySelector('.sb-rename, .popover.row-menu') !== null
+  const closable = (): boolean => drawer.matches && sidebarOpen() && !holdOpen()
+  $('sidebar').addEventListener('click', (event) => {
+    if (closable() && (event.target as Element).closest('.sb-row, .sb-new, .sb-link:not([data-proxy], [data-show])')) setSidebarOpen(false)
+  })
+  document.addEventListener('pointerdown', (event) => {
+    if (closable() && !(event.target as Element).closest('#sidebar, [data-sidebar-toggle], [data-sidebar-sheet]')) setSidebarOpen(false)
+  })
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !event.defaultPrevented && closable()) setSidebarOpen(false)
+  })
+}
 
 export {}

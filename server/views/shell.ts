@@ -65,6 +65,7 @@ const BODY = `
   <aside id="sidebar" class="sb" aria-label="Chats and terminals">
     <div class="sb-open">
       <div class="sb-top"><button type="button" class="sb-icon" data-sidebar-toggle aria-expanded="true" aria-controls="sidebar" aria-label="Hide sidebar" title="Hide sidebar"><svg><use href="#sidebar-icon"/></svg></button><span class="sp"></span><button type="button" id="search" class="sb-icon" aria-pressed="false" aria-label="Search chats" title="Search chats"><svg><use href="#search-icon"/></svg></button></div>
+      <nav class="sb-destinations" aria-label="Go to"><button type="button" class="sb-link" data-proxy="open-attention"><svg><use href="#bell-icon"/></svg>Waiting on you<span class="count" data-waiting-count hidden></span></button><button type="button" class="sb-link" data-show="queue"><svg><use href="#q-queue"/></svg>Queue</button><button type="button" class="sb-link" data-proxy="toggle-flow"><svg><use href="#flow-icon"/></svg>Flow</button><button type="button" class="sb-link" data-proxy="open-agents"><svg><use href="#agents-icon"/></svg>Agents</button><button type="button" class="sb-link" data-proxy="open-studio"><svg><use href="#spark-icon"/></svg>Studio</button></nav>
       <button type="button" id="new-chat" class="sb-new"><svg><use href="#plus-icon"/></svg>New chat</button>
       <button type="button" class="sb-new" data-live><svg><use href="#terminal-icon"/></svg>New terminal</button>
       <nav id="sidebar-list" class="sb-list" aria-label="Recent chats and terminals"></nav>
@@ -84,6 +85,7 @@ const BODY = `
   </aside>
   <main class="canvas">
     <header class="toolbar">
+      <button type="button" id="phone-sessions" class="round phone-nav" data-sidebar-toggle aria-label="Sessions" aria-controls="sidebar" aria-expanded="false" title="Sessions"><svg><use href="#sidebar-icon"/></svg><span class="count" data-waiting-count hidden></span></button>
       <nav aria-label="Session activity">
         <section class="usage-card" aria-label="Provider usage">
           <div class="usage-track" id="usage-track"></div>

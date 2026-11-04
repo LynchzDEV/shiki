@@ -90,6 +90,10 @@ function render(): void {
   const count = $('attention-count')
   count.textContent = String(total)
   count.hidden = total === 0
+  for (const badge of document.querySelectorAll<HTMLElement>('[data-waiting-count]')) {
+    badge.textContent = String(total)
+    badge.hidden = total === 0
+  }
   $('attention-n').textContent = String(total)
   $('attention-n').hidden = total === 0
   document.title = tabTitle(total)

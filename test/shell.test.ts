@@ -171,6 +171,26 @@ describe('attention delivery', () => {
   })
 })
 
+describe('phone sessions drawer', () => {
+  test('the toolbar starts with a Sessions button that toggles the sidebar and carries the waiting count', async () => {
+    const markup = await (await app.handle(new Request('http://localhost/'))).text()
+    const toolbar = markup.slice(markup.indexOf('<header class="toolbar">'), markup.indexOf('</header>', markup.indexOf('<header class="toolbar">')))
+    expect(toolbar.indexOf('id="phone-sessions"')).toBeLessThan(toolbar.indexOf('id="open-studio"'))
+    expect(toolbar).toContain('id="phone-sessions" class="round phone-nav" data-sidebar-toggle aria-label="Sessions" aria-controls="sidebar" aria-expanded="false"')
+    expect(toolbar).toContain('<span class="count" data-waiting-count hidden></span>')
+  })
+
+  test('the drawer opens with Waiting, Queue, Flow, Agents and Studio rows', async () => {
+    const markup = await (await app.handle(new Request('http://localhost/'))).text()
+    const nav = markup.slice(markup.indexOf('<nav class="sb-destinations"'), markup.indexOf('</nav>', markup.indexOf('<nav class="sb-destinations"')))
+    expect(markup.indexOf('<nav class="sb-destinations" aria-label="Go to">')).toBeGreaterThan(markup.indexOf('<div class="sb-open">'))
+    expect([...nav.matchAll(/data-proxy="([^"]+)"/g)].map(match => match[1])).toEqual(['open-attention', 'toggle-flow', 'open-agents', 'open-studio'])
+    expect(nav.match(/data-show="queue"/g)).toHaveLength(1)
+    expect(nav.indexOf('data-show="queue"')).toBeLessThan(nav.indexOf('data-proxy="toggle-flow"'))
+    expect(nav).toContain('data-waiting-count')
+  })
+})
+
 describe('phone held sideways', () => {
   const termBar = (markup: string): string => markup.slice(markup.indexOf('<template id="term-bar">'), markup.indexOf('</template>', markup.indexOf('<template id="term-bar">')))
 

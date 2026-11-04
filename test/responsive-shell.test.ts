@@ -6,6 +6,7 @@ import type { Elysia } from 'elysia'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 
+import { PHONE_TERMINAL_QUERY } from '../client/shared'
 import { createApp } from '../server/index'
 
 const scratch = process.env.SKD_GOAL_SCRATCH ?? join(tmpdir(), 'mc-responsive-shots')
@@ -14,14 +15,40 @@ const plugins = await Bun.file(join(import.meta.dir, '../public/plugins.css')).t
 const pluginUi = await Bun.file(join(import.meta.dir, '../public/plugin-ui.css')).text()
 
 const narrowBlock = (css: string) => [...css.matchAll(/@media \(max-width: 600px\) \{([^@]*)\n\}/g)].map(match => match[1]).join('\n')
+const mediaBlock = (css: string, query: string): string => {
+  const start = css.indexOf(`@media ${query} {`)
+  return start < 0 ? '' : css.slice(start, css.indexOf('\n}', start))
+}
 const quietNarrow = narrowBlock(quiet)
 const pluginsNarrow = narrowBlock(plugins)
 const pluginUiNarrow = narrowBlock(pluginUi)
 
 describe('shipped layout at phone width', () => {
-  test('a 600px rule takes the open sidebar off the 264px track', () => {
-    expect(quietNarrow).toContain('.sb-shell:not(.collapsed) { grid-template-columns: minmax(0, 1fr); transition: none; }')
-    expect(quietNarrow).not.toContain('grid-template-columns: 264px')
+  test('on a phone the sidebar is a full-height drawer over a scrim, with no icon rail and no 264px track', () => {
+    const drawer = mediaBlock(quiet, PHONE_TERMINAL_QUERY)
+    expect(quiet.split(`@media ${PHONE_TERMINAL_QUERY} {`)).toHaveLength(2)
+    expect(drawer).toContain('.sb-shell, .sb-shell.collapsed { grid-template-columns: minmax(0, 1fr); transition: none; }')
+    expect(drawer).toContain('.sb-shell .sb-strip, .sb-shell.collapsed .sb { display: none; }')
+    expect(drawer).toContain('.sb-shell:not(.collapsed) .sb { position: fixed; inset: 0 auto 0 0; width: min(86vw, 340px); height: 100dvh; z-index: 60;')
+    expect(drawer).toContain('.sb-shell:not(.collapsed)::after { content: \'\'; position: fixed; inset: 0; z-index: 59; background: var(--scrim, #41485218); }')
+    expect(drawer).not.toContain('grid-template-columns: 264px')
+    expect(quietNarrow).not.toContain('top: 68px')
+    expect(quietNarrow).not.toContain('z-index: 50')
+  })
+
+  test('on a phone the toolbar keeps only Sessions; Studio, Flow, Agents and the bell move into the drawer', () => {
+    const drawer = mediaBlock(quiet, PHONE_TERMINAL_QUERY)
+    expect(quiet).toContain('#phone-sessions, .sb-destinations { display: none; }')
+    expect(drawer).toContain('#phone-sessions { display: inline-flex;')
+    expect(drawer).toContain('.sb-destinations { display: flex;')
+    expect(drawer).toContain('.toolbar :is(#open-studio, #toggle-flow, #open-agents, #open-attention, .usage-card) { display: none; }')
+  })
+
+  test('drawer rows and the Sessions button are at least 44px tap targets', () => {
+    const drawer = mediaBlock(quiet, PHONE_TERMINAL_QUERY)
+    expect(drawer).toContain('.sb .sb-icon { width: 44px; height: 44px; }')
+    expect(drawer).toContain('.sb-new, .sb-link, .sb-row { min-height: 44px; }')
+    expect(drawer).toContain('width: 44px; flex-basis: 44px; min-height: 44px;')
   })
 
   test('queue rows, studio editors, connections and launchers collapse or scroll inside themselves', () => {
@@ -123,7 +150,7 @@ describe('real shell at phone, tablet and desktop widths', () => {
       }
       let browser: Awaited<ReturnType<typeof chromium.launch>>
       try {
-        browser = await chromium.launch({ headless: true })
+        browser = await chromium.launch({ headless: true, ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}) })
       } catch (error) {
         lines.push(`launcher error: ${error instanceof Error ? error.message : String(error)}`)
         writeFileSync(logPath, `${lines.join('\n')}\n`)
@@ -216,19 +243,18 @@ function auditSurfaces(longText: string): Audit {
   }
 
   const shell = document.getElementById('sb-shell')!
+  const phone = matchMedia('(max-width: 600px)').matches
+  const destinations = ['open-studio', 'toggle-flow', 'open-agents', 'open-attention']
   shell.classList.add('collapsed')
   showStage('welcome')
   const welcome = document.getElementById('welcome')!
   welcome.querySelector('h1')!.textContent = longText
   pageFits('welcome')
-  reachable('#open-studio', 'studio')
-  reachable('#toggle-flow', 'flow')
-  reachable('#open-agents', 'agents')
-  reachable('#open-attention', 'attention')
+  if (!phone) for (const id of destinations) reachable(`#${id}`, id)
   reachable('#message', 'message')
   reachable('button.send', 'send')
   reachable('#project-chip', 'project chip')
-  reachable('.sb-strip [data-sidebar-toggle]', 'sidebar toggle')
+  reachable(phone ? '#phone-sessions' : '.sb-strip [data-sidebar-toggle]', 'sidebar toggle')
 
   showStage('history')
   const history = document.getElementById('history')!
@@ -333,7 +359,8 @@ function auditSurfaces(longText: string): Audit {
   openMenu('.chat-slash-menu', 'slash sidebar open')
   openMenu('#project-menu', 'project sidebar open')
   pageFits('sidebar open')
-  reachable('#open-studio', 'studio with sidebar')
+  if (phone) for (const id of destinations) reachable(`.sb-destinations [data-proxy="${id}"]`, `${id} in drawer`)
+  else reachable('#open-studio', 'studio with sidebar')
   reachable('#message', 'message with sidebar')
   reachable('button.send', 'send with sidebar')
   reachable('.sb-open [data-sidebar-toggle]', 'hide sidebar')
@@ -395,19 +422,10 @@ const landscapeBlock = (css: string): string => {
 describe('phone held sideways', () => {
   const block = landscapeBlock(quiet)
 
-  test('one landscape-phone block takes the sidebar and toolbar away only while a terminal is live', () => {
-    expect(quiet.split(LANDSCAPE)).toHaveLength(2)
-    expect(block).toContain('body[data-live="true"] .toolbar { display: none; }')
-    expect(block).toContain('body[data-live="true"] .sb-shell.collapsed .sb { display: none; }')
-    expect(block).toContain('body[data-live="true"] .sb-shell { grid-template-columns: minmax(0, 1fr); }')
-  })
-
-  test('the sessions list opens as a sheet over the terminal', () => {
-    expect(block).toContain('body[data-live="true"] .sb-shell:not(.collapsed) .sb { position: fixed;')
-  })
-
-  test('the layout follows the visible viewport so the prompt stays above the keyboard', () => {
-    expect(block).toContain('height: var(--vvh, 100dvh);')
+  test('while a terminal is live on a phone the toolbar goes away and the sessions drawer follows the visible viewport', () => {
+    const drawer = mediaBlock(quiet, PHONE_TERMINAL_QUERY)
+    expect(drawer).toContain('body[data-live="true"] .toolbar { display: none; }')
+    expect(drawer).toContain('body[data-live="true"] .sb-shell, body[data-live="true"] .canvas { height: var(--vvh, 100dvh); }')
   })
 
   test('the slim bar buttons, key row and pill are display none outside the block', () => {

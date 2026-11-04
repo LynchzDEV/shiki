@@ -104,14 +104,6 @@ export function createLandscape(activeView: () => LandscapeView | null): Landsca
   const sheetOpen = (): boolean => !sidebarShell.classList.contains('collapsed')
   const toggleSheet = (): void => { document.querySelector<HTMLElement>('[data-sidebar-toggle]')?.click() }
   const sheetMode = (): boolean => enabled && document.body.dataset.live === 'true' && sheetOpen()
-  $('sidebar').addEventListener('click', (event) => {
-    if (sheetMode() && (event.target as Element).closest('.sb-row, .sb-new')) toggleSheet()
-  })
-  document.addEventListener('pointerdown', (event) => {
-    if (!sheetMode()) return
-    const target = event.target as Element
-    if (!target.closest('#sidebar, [data-sidebar-sheet]')) toggleSheet()
-  })
 
   const viewport = window.visualViewport
   function fitViewport(): void {
