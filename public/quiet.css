@@ -1558,6 +1558,16 @@ dialog, .access-dialog, .confirm-dialog { max-width: calc(100vw - 32px); max-hei
   #live .term-bar-status { padding: 4px 6px; }
   #live .term-bar-status span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 }
+@media (min-width: 901px) and (max-width: 1100px) and (pointer: coarse) and (orientation: landscape) {
+  .sb-shell, .sb-shell.collapsed { grid-template-columns: 320px minmax(0, 1fr); transition: none; }
+  .sb-shell.collapsed .sb-open { display: contents; }
+  .sb-shell.collapsed .sb-strip { display: none; }
+  .sb-shell.collapsed .sb { align-items: stretch; padding: 16px 14px; gap: 6px; }
+  .sb [data-sidebar-toggle] { display: none; }
+  .sb .sb-icon { width: 44px; height: 44px; }
+  .sb-new, .sb-link, .sb-row { min-height: 44px; }
+  .nt-panel { max-width: calc(100vw - 320px - 24px); }
+}
 .q-land { width: min(760px, 94vw); }
 .q-land-body { max-height: 62vh; overflow: auto; margin-bottom: 14px; font-size: 13.5px; line-height: 1.6; }
 .q-land-md { color: var(--text); }

@@ -457,3 +457,24 @@ describe('terminal on touch layouts', () => {
     expect(touch).not.toMatch(/#[0-9a-f]{3,8}\b/i)
   })
 })
+
+describe('iPhone Duo open', () => {
+  const duo = mediaBlock(quiet, DUO_OPEN_QUERY)
+
+  test('a 320px sessions list stays open beside the chat or terminal, with no rail and no hide button', () => {
+    expect(quiet.split(`@media ${DUO_OPEN_QUERY} {`)).toHaveLength(2)
+    expect(duo).toContain('.sb-shell, .sb-shell.collapsed { grid-template-columns: 320px minmax(0, 1fr);')
+    expect(duo).toContain('.sb-shell.collapsed .sb-open { display: contents; }')
+    expect(duo).toContain('.sb-shell.collapsed .sb-strip { display: none; }')
+    expect(duo).toContain('.sb [data-sidebar-toggle] { display: none; }')
+  })
+
+  test('the Waiting panel never reaches over the sessions list', () => {
+    expect(duo).toContain('.nt-panel { max-width: calc(100vw - 320px - 24px); }')
+  })
+
+  test('the drawer destination rows and the phone Sessions button stay hidden; the desktop toolbar keeps them', () => {
+    expect(duo).not.toContain('sb-destinations')
+    expect(duo).not.toContain('phone-sessions')
+  })
+})
