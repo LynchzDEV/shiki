@@ -1,3 +1,5 @@
+import { isTouchLayout } from './shared'
+
 const GAP = 22
 const REACH = 150
 const FOLLOW = 0.12
@@ -22,7 +24,7 @@ function readPaused(): boolean {
 const canvas = document.getElementById('backdrop') as HTMLCanvasElement | null
 const motion = document.getElementById('motion') as HTMLInputElement | null
 const context = canvas?.getContext('2d')
-if (canvas && motion && context) {
+if (canvas && motion && context && !isTouchLayout()) {
   let paused = readPaused()
   let dots: Dot[] = []
   const ripples: Ripple[] = []
