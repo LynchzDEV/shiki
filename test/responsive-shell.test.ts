@@ -6,7 +6,7 @@ import type { Elysia } from 'elysia'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 
-import { PHONE_TERMINAL_QUERY } from '../client/shared'
+import { DUO_OPEN_QUERY, PHONE_TERMINAL_QUERY } from '../client/shared'
 import { createApp } from '../server/index'
 
 const scratch = process.env.SKD_GOAL_SCRATCH ?? join(tmpdir(), 'mc-responsive-shots')
@@ -413,35 +413,45 @@ function showShot(arg: { id: string; longText: string }): void {
   if (shown) { shown.style.animation = 'none'; shown.style.opacity = '1' }
 }
 
-const LANDSCAPE = '@media (orientation: landscape) and (max-height: 500px) and (pointer: coarse) {'
-const landscapeBlock = (css: string): string => {
-  const start = css.indexOf(LANDSCAPE)
-  return start < 0 ? '' : css.slice(start, css.indexOf('\n}', start))
-}
+const TOUCH_QUERY = `${PHONE_TERMINAL_QUERY}, ${DUO_OPEN_QUERY}`
 
-describe('phone held sideways', () => {
-  const block = landscapeBlock(quiet)
+describe('terminal on touch layouts', () => {
+  const touch = mediaBlock(quiet, TOUCH_QUERY)
+  const phone = mediaBlock(quiet, PHONE_TERMINAL_QUERY)
 
-  test('while a terminal is live on a phone the toolbar goes away and the sessions drawer follows the visible viewport', () => {
-    const drawer = mediaBlock(quiet, PHONE_TERMINAL_QUERY)
-    expect(drawer).toContain('body[data-live="true"] .toolbar { display: none; }')
-    expect(drawer).toContain('body[data-live="true"] .sb-shell, body[data-live="true"] .canvas { height: var(--vvh, 100dvh); }')
+  test('every touch media query in quiet.css is one of the exported constants', () => {
+    const coarse = [...quiet.matchAll(/@media ([^{]*pointer: coarse[^{]*) \{/g)].map(match => match[1])
+    expect(coarse.length).toBeGreaterThan(0)
+    for (const query of coarse) expect([PHONE_TERMINAL_QUERY, TOUCH_QUERY, DUO_OPEN_QUERY]).toContain(query)
+    expect(quiet.split(`@media ${TOUCH_QUERY} {`)).toHaveLength(2)
   })
 
-  test('the slim bar buttons, key row and pill are display none outside the block', () => {
-    expect(quiet.replace(block, '')).toContain('.term-bar .term-bar-mobile, .key-row, .live-jump { display: none; }')
-    expect(block).toContain('#live .term-bar .term-bar-mobile { display: grid;')
-    expect(block).toContain('.key-row { display: flex;')
-    expect(block).toContain('.live-jump:not([hidden]) { display: inline-flex;')
-    expect(block).toContain('#live .term-bar { position: static;')
+  test('the terminal bar is a row above the output, not floating over it', () => {
+    expect(touch).toContain('#live .term-bar { position: static;')
+    expect(quiet.replace(touch, '')).toContain('.term-bar .term-bar-mobile, .key-row, .live-jump { display: none; }')
+    expect(touch).toContain('#live .term-bar .term-bar-mobile { display: grid; width: 44px; height: 44px;')
+    expect(touch).toContain('#live .term-bar .term-bar-mobile:is([data-click], [data-sidebar-sheet]) { display: none; }')
+    expect(phone).toContain('#live .term-bar .term-bar-mobile[data-sidebar-sheet] { display: grid; }')
+    expect(touch).toContain('#live .term-bar-name { flex: 1; min-width: 0;')
   })
 
-  test('keys are 34px tall and share the row evenly so ten fit across 844px', () => {
-    expect(block).toContain('.key-row button { flex: 1 1 0; min-width: 0; height: 34px; min-height: 34px;')
+  test('the key row and Back to live show with 44px keys that scroll sideways instead of overflowing', () => {
+    expect(touch).toContain('.key-row { display: flex; flex: none; flex-wrap: nowrap; overflow-x: auto;')
+    expect(touch).toContain('.key-row button { flex: 1 0 44px; min-width: 44px; height: 44px; min-height: 44px;')
+    expect(touch).toContain('.live-jump:not([hidden]) { display: inline-flex;')
+    expect(touch).toContain('min-height: 44px; padding: 0 16px;')
+  })
+
+  test('split drop zones are hidden on touch layouts', () => {
+    expect(touch).toContain('.drop-zone { display: none; }')
+  })
+
+  test('on a phone the status is a dot whose label stays readable to screen readers', () => {
+    expect(phone).toContain('#live .term-bar-status span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%);')
   })
 
   test('the pill and keys use cockpit tokens, never a literal colour', () => {
-    expect(block).toContain('background: var(--accent);')
-    expect(block).not.toMatch(/#[0-9a-f]{3,8}\b/i)
+    expect(touch).toContain('background: var(--accent);')
+    expect(touch).not.toMatch(/#[0-9a-f]{3,8}\b/i)
   })
 })

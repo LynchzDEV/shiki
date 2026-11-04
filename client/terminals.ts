@@ -3,7 +3,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { ClipboardAddon } from '@xterm/addon-clipboard'
-import { errorText, getJson, pathsFromUriList, postJson, providerName, readArray, readRecord, shellQuote, uploadDrop } from './shared'
+import { errorText, getJson, pathsFromUriList, postJson, providerName, readArray, readRecord } from './shared'
 import { launchChoice, readRecentDirectories, restoreRequested } from './shell-launch'
 import { launchWorkflowOptions, launchWorkflowRequest } from './workflow-options'
 import { writeOnlyClipboard, dragKind, dropCopy, findCount, findKeys, restoreTarget, nextActive, sessionSlot, sessionState, splitPlan, statusPill, terminalKeys, type Session, type TerminalKey, type SessionState } from './terminal-state'
@@ -14,6 +14,7 @@ import { morph, reveal, rollText } from './morph'
 import { TERMINAL_FONT, terminalTheme } from './terminal-theme'
 import { attachTouchScroll } from './terminal-touch'
 import { createLandscape } from './terminal-landscape'
+import { typeFiles } from './terminal-files'
 
 type Provider = { id: string; name: string; models: string[] }
 
@@ -319,19 +320,33 @@ function dropTarget(event: DragEvent): TerminalView | null {
   const id = (event.target as Element | null)?.closest<HTMLElement>('.term-host')?.dataset.id ?? activeId
   return id ? views.get(id) ?? null : null
 }
-async function dropFiles(transfer: DataTransfer | null, view: TerminalView): Promise<void> {
+async function addFiles(files: File[], localPaths: string[], view: TerminalView): Promise<void> {
   if (view.socket?.readyState !== WebSocket.OPEN) { toast('That terminal is not connected'); return }
-  let paths = pathsFromUriList(transfer?.getData('text/uri-list') ?? '')
-  if (paths.length === 0 && transfer) {
-    try { paths = await Promise.all(Array.from(transfer.files).map(uploadDrop)) }
-    catch (error) { toast(error instanceof Error ? error.message : 'Upload failed'); return }
-  }
-  if (paths.length === 0) { toast('Nothing to add'); return }
-  if (view.socket?.readyState !== WebSocket.OPEN) { toast('That terminal disconnected before the files were added'); return }
-  view.socket.send(new TextEncoder().encode(`${paths.map(shellQuote).join(' ')} `))
-  activate(view.session.id)
-  toast(dropCopy(paths.length).toast)
+  let delivered = false
+  const typed = await typeFiles(files, localPaths, {
+    toast,
+    send: (text) => {
+      if (view.socket?.readyState !== WebSocket.OPEN) { toast('That terminal disconnected before the files were added'); return }
+      view.socket.send(new TextEncoder().encode(text))
+      activate(view.session.id)
+      delivered = true
+    },
+  })
+  if (delivered && typed === (localPaths.length || files.length)) toast(dropCopy(typed).toast)
 }
+const dropFiles = (transfer: DataTransfer | null, view: TerminalView): Promise<void> =>
+  addFiles(Array.from(transfer?.files ?? []), pathsFromUriList(transfer?.getData('text/uri-list') ?? ''), view)
+const attachInput = document.getElementById('term-attach-input') as HTMLInputElement | null
+document.getElementById('live')?.addEventListener('click', (event) => {
+  if ((event.target as Element).closest('[data-attach]')) attachInput?.click()
+})
+attachInput?.addEventListener('change', () => {
+  const files = Array.from(attachInput.files ?? [])
+  attachInput.value = ''
+  const view = activeId ? views.get(activeId) : undefined
+  if (view) void addFiles(files, [], view)
+  else toast('Open a terminal first')
+})
 dropStage.addEventListener('dragover', (event) => {
   const kind = dragKind(event.dataTransfer?.types ?? [])
   if (kind === 'none') return

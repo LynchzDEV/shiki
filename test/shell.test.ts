@@ -194,13 +194,16 @@ describe('phone sessions drawer', () => {
 describe('phone held sideways', () => {
   const termBar = (markup: string): string => markup.slice(markup.indexOf('<template id="term-bar">'), markup.indexOf('</template>', markup.indexOf('<template id="term-bar">')))
 
-  test('the terminal bar carries Sessions before the name and Flow, bell and Keyboard after Find', async () => {
+  test('the terminal bar carries Sessions before the name and Flow, bell, Keyboard and Attach after Find', async () => {
     const markup = await (await app.handle(new Request('http://localhost/'))).text()
     const bar = termBar(markup)
-    const order = ['data-sidebar-sheet', 'class="term-bar-logo"', 'class="term-bar-name"', 'class="term-bar-status"', 'class="term-bar-find"', 'data-click="toggle-flow"', 'data-click="open-attention"', 'data-keyboard'].map(marker => bar.indexOf(marker))
+    const order = ['data-sidebar-sheet', 'class="term-bar-logo"', 'class="term-bar-name"', 'class="term-bar-status"', 'class="term-bar-find"', 'data-click="toggle-flow"', 'data-click="open-attention"', 'data-keyboard', 'data-attach'].map(marker => bar.indexOf(marker))
     expect(order.every(index => index > 0)).toBe(true)
     expect(order).toEqual([...order].sort((a, b) => a - b))
-    expect(bar.match(/class="sb-icon term-bar-mobile"/g)).toHaveLength(4)
+    expect(bar.match(/class="sb-icon term-bar-mobile"/g)).toHaveLength(5)
+    expect(bar).toContain('data-attach aria-label="Attach files"')
+    expect(markup).toContain('<input type="file" multiple id="term-attach-input" hidden>')
+    expect(markup).toContain('<symbol id="clip-icon"')
     expect(bar).toContain('aria-label="Keyboard" aria-pressed="false"')
     expect(markup).toContain('<symbol id="keyboard-icon"')
   })

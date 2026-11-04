@@ -1,8 +1,7 @@
 import type { Terminal } from '@xterm/xterm'
 import { KEY_ROW_BYTES, backToLiveText, liveJump, withCtrl, type KeyRowByte } from './terminal-state'
 import { scrollTerminal } from './terminal-touch'
-
-export const LANDSCAPE_QUERY = '(orientation: landscape) and (max-height: 500px) and (pointer: coarse)'
+import { DUO_OPEN_QUERY, PHONE_TERMINAL_QUERY, isTouchLayout } from './shared'
 
 export type LandscapeView = { terminal: Terminal; send(data: string): void; resize(): void }
 export type Landscape = { attach(view: LandscapeView): void; typed(data: string): string; refresh(): void }
@@ -12,7 +11,8 @@ const toast = (text: string): void => { dispatchEvent(new CustomEvent('quiet:toa
 const isByteKey = (key: string): key is KeyRowByte => key in KEY_ROW_BYTES
 
 export function createLandscape(activeView: () => LandscapeView | null): Landscape {
-  const media = matchMedia(LANDSCAPE_QUERY)
+  const phone = matchMedia(PHONE_TERMINAL_QUERY)
+  const duoOpen = matchMedia(DUO_OPEN_QUERY)
   const row = $('key-row')
   const ctrl = row.querySelector<HTMLButtonElement>('[data-key="ctrl"]') as HTMLButtonElement
   const paste = row.querySelector<HTMLButtonElement>('[data-key="paste"]') as HTMLButtonElement
@@ -103,7 +103,7 @@ export function createLandscape(activeView: () => LandscapeView | null): Landsca
 
   const sheetOpen = (): boolean => !sidebarShell.classList.contains('collapsed')
   const toggleSheet = (): void => { document.querySelector<HTMLElement>('[data-sidebar-toggle]')?.click() }
-  const sheetMode = (): boolean => enabled && document.body.dataset.live === 'true' && sheetOpen()
+  const sheetMode = (): boolean => phone.matches && document.body.dataset.live === 'true' && sheetOpen()
 
   const viewport = window.visualViewport
   function fitViewport(): void {
@@ -114,7 +114,7 @@ export function createLandscape(activeView: () => LandscapeView | null): Landsca
   }
 
   function sync(): void {
-    enabled = media.matches
+    enabled = isTouchLayout()
     armCtrl(false)
     if (enabled) {
       viewport?.addEventListener('resize', fitViewport)
@@ -130,7 +130,8 @@ export function createLandscape(activeView: () => LandscapeView | null): Landsca
     if (view) paintPill(view)
     else pill.hidden = true
   }
-  media.addEventListener('change', sync)
+  phone.addEventListener('change', sync)
+  duoOpen.addEventListener('change', sync)
   sync()
 
   return {
