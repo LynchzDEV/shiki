@@ -83,6 +83,19 @@ test('start, preflight and retry answer 404 for an unknown item and 409 for the 
   expect((await retry.json()).error).toBe('There is no stage to retry')
 })
 
+test('done lands a waiting item and refuses anything else', async () => {
+  const h = await setup()
+  const ship = await script('ship.sh', 'exit 0')
+  const item = await h.park([stage('prod', ship)], { state: 'awaiting-stage' })
+  const done = await h.post(`/api/queue/${item.id}/land/done`)
+  expect(done.status).toBe(200)
+  expect((await done.json()).item.state).toBe('landed')
+  const again = await h.post(`/api/queue/${item.id}/land/done`)
+  expect(again.status).toBe(409)
+  expect((await again.json()).error).toBe('It is landed now')
+  expect((await h.post('/api/queue/nope/land/done')).status).toBe(404)
+})
+
 test('preflight refresh returns the item with the new preflight', async () => {
   const h = await setup()
   const check = await script('check.sh', 'echo "# Ready\\nSafety: prod"')

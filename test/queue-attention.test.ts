@@ -56,6 +56,28 @@ test('a sweep clears alerts left from before a restart without waiting for a cha
   expect(keys(attention)).toEqual([`queue:${waiting.id}`])
 })
 
+const prodLand = (status: 'skipped' | 'ok') => ({ stage: 'prod', stages: { prod: { status } }, plan: [] })
+
+test('a card marked done clears its alert and a landed card keeps its alert', async () => {
+  const store = createQueueStore(join(dir, 'queue.json'))
+  const attention = createAttentionStore(join(dir, 'attention.json'))
+  const skipped = await store.update((await store.add(task('a'), 'end')).id, { state: 'landed', land: prodLand('skipped') })
+  const shipped = await store.update((await store.add(task('b'), 'end')).id, { state: 'landed', land: prodLand('ok') })
+  await raiseQueueAlert(attention, skipped, 'Deploy prod is ready')
+  await raiseQueueAlert(attention, shipped, 'Landed')
+  await sweepQueueAlerts(store, attention)
+  expect(keys(attention)).toEqual([`queue:${shipped.id}`])
+})
+
+test('a requeued card with a stale skip keeps its alert', async () => {
+  const store = createQueueStore(join(dir, 'queue.json'))
+  const attention = createAttentionStore(join(dir, 'attention.json'))
+  const requeued = await store.update((await store.add(task('a'), 'end')).id, { state: 'ready', land: prodLand('skipped') })
+  await raiseQueueAlert(attention, requeued, 'Built and ready for review')
+  await sweepQueueAlerts(store, attention)
+  expect(keys(attention)).toEqual([`queue:${requeued.id}`])
+})
+
 test('a failed sweep is logged, never left unhandled', async () => {
   const store = createQueueStore(join(dir, 'queue.json'))
   const real = createAttentionStore(join(dir, 'attention.json'))

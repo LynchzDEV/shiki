@@ -7,10 +7,12 @@ export function raiseQueueAlert(attention: AttentionStore, item: QueueItem, reas
   return attention.raise({ key: attentionKey.queue(item.id), kind: 'queue', title: item.title, detail: reason, command: null, chatId: null, jobId: null, requestId: null })
 }
 
+const markedDone = (item: QueueItem): boolean => item.state === 'landed' && item.land?.stages[item.land.stage]?.status === 'skipped'
+
 function needsNoPerson(store: QueueStore, alert: AttentionItem): boolean {
   if (alert.kind !== 'queue') return false
   const item = store.get(alert.key.slice('queue:'.length))
-  return item === undefined || !NEEDS_PERSON.has(item.state)
+  return item === undefined || !NEEDS_PERSON.has(item.state) || markedDone(item)
 }
 
 export function sweepQueueAlerts(store: QueueStore, attention: AttentionStore): Promise<number> {

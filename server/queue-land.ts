@@ -378,6 +378,12 @@ export function createLand(deps: LandDeps) {
       return posting
     },
 
+    async markDone(id: string): Promise<QueueItem> {
+      const item = found(id)
+      if (item.state !== 'awaiting-stage' || item.land === undefined) throw new QueueRefusal(`It is ${item.state} now`, 409)
+      return store.update(id, { state: 'landed', error: null, land: progress(item, item.land.stage, { status: 'skipped' }) })
+    },
+
     async stop(id: string): Promise<void> {
       const item = found(id)
       const name = item.land?.stage

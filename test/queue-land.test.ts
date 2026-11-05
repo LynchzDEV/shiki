@@ -243,6 +243,20 @@ test('a button stage runs its preflight and waits for a person', async () => {
   expect(await Bun.file(join(dir, 'shipped')).exists()).toBe(false)
 })
 
+test('marking a waiting stage done lands it without running the stage', async () => {
+  const h = harness()
+  const ship = await script('ship.sh', `touch ${dir}/shipped`)
+  const id = await h.ship([button('prod', ship)])
+  await h.engine.landIdle()
+  expect(h.item(id).state).toBe('awaiting-stage')
+  const alerts = h.alerts.length
+  await h.engine.markDone(id)
+  expect(h.item(id)).toMatchObject({ state: 'landed', error: null, land: { stages: { prod: { status: 'skipped' } } } })
+  expect(await Bun.file(join(dir, 'shipped')).exists()).toBe(false)
+  expect(h.alerts.length).toBe(alerts)
+  expect(await h.engine.report(id)).toContain('## Deploy prod: skipped')
+})
+
 test('a button stage without a preflight waits with an empty, passing preflight', async () => {
   const h = harness()
   const ship = await script('ship.sh', 'exit 0')

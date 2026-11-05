@@ -61,6 +61,7 @@ export type QueueEngine = {
   startStage(id: string, stage: string): Promise<QueueItem>
   refreshPreflight(id: string, stage: string): Promise<QueueItem>
   retryStage(id: string): Promise<QueueItem>
+  markDone(id: string): Promise<QueueItem>
   landIdle(): Promise<void>
   landLog(id: string, stage: string): Promise<string>
   report(id: string): Promise<string>
@@ -582,6 +583,7 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
     startStage: (id, stage) => serial(() => land.startStage(id, stage)),
     refreshPreflight: (id, stage) => serial(() => land.refreshPreflight(id, stage)),
     retryStage: id => serial(() => land.retryStage(id)),
+    markDone: id => serial(() => land.markDone(id)),
     landIdle: land.idle,
     landLog: land.log,
     report: async id => buildReport(found(store, id), runId => deps.runner.get(runId)),

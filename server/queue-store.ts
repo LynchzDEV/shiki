@@ -13,7 +13,7 @@ export type QueueState = 'queued' | 'building' | 'waiting-info' | 'waiting-pick'
 
 export type QueuePick = { options: string[]; path: string; recommended: string | null; tester: string | null; summary: string }
 export type LandStageState = {
-  status: 'running' | 'ok' | 'failed' | 'waiting'
+  status: 'running' | 'ok' | 'failed' | 'waiting' | 'skipped'
   startedAt?: number; endedAt?: number; exitCode?: number | null; posted?: string; warning?: string
   preflight?: { exitCode: number; markdown: string }
 }
