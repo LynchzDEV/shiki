@@ -263,6 +263,19 @@ describe('shiki queue with several repos', () => {
     expect(h.out().indexOf('Safety: prod')).toBeLessThan(h.out().indexOf('Started prod.'))
   })
 
+  test('done posts to the done route and says so', async () => {
+    const h = harness()
+    expect(await main(['queue', 'done', 'q1'], h.deps)).toBe(0)
+    expect(routesOf(h.calls)).toEqual(['POST /api/queue/q1/land/done'])
+    expect(h.out()).toContain('Marked done.')
+  })
+
+  test('done shows the refusal from the server', async () => {
+    const h = harness(() => Response.json({ error: 'It is landed now' }, { status: 409 }))
+    expect(await main(['queue', 'done', 'q1'], h.deps)).not.toBe(0)
+    expect(h.err()).toContain('It is landed now')
+  })
+
   test('land on an unknown item is a usage error', async () => {
     const h = harness(() => Response.json({ items: [] }))
     expect(await main(['queue', 'land', 'zz', 'prod', '--yes'], h.deps)).not.toBe(0)

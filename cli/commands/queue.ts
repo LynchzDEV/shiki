@@ -176,6 +176,12 @@ export const queueCommands: Command[] = [
     run: landStage,
   },
   {
+    path: ['queue', 'done'],
+    args: ['id'],
+    summary: 'Close an item waiting on a land stage as done, without running the stage',
+    run: async (ctx) => emit(ctx, await ctx.client.post(itemPath(ctx, '/land/done'), {}), () => 'Marked done.\n'),
+  },
+  {
     path: ['queue', 'check'],
     summary: 'Check sources for replies now',
     run: async (ctx) => emit(ctx, await ctx.client.post('/api/queue/check', {}), (value) => `Checked ${cell(field(value, 'checked'))}, resumed ${cell(field(value, 'resumed'))}\n`),
