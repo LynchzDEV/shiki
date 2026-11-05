@@ -116,7 +116,7 @@ test('a run blocked with questions posts them, parks the item and frees the slot
   const h = harness()
   await h.engine.add(add)
   await h.engine.add({ ...add, externalId: '2' })
-  await h.engine.onRunSettled(h.settle('run-1', { status: 'blocked', attempts: [blockedWith(['Which page?'])] }))
+  await h.engine.onRunSettled(h.settle('run-1', { status: 'blocked', attempts: [blockedWith(['biz: Which page?'])] }))
   expect(h.posted).toEqual([{ id: '1', kind: 'ask', lines: ['Which page?'] }])
   expect(h.store.list()[0]).toMatchObject({ state: 'waiting-info', questions: ['Which page?'], lastSeenId: 'c1', currentRunId: null })
   expect(h.store.list()[1]!.state).toBe('building')
@@ -141,7 +141,7 @@ test('a blocked run without questions, a failed or a stopped run fails the item 
 test('posting the questions failing fails the item with the reason', async () => {
   const h = harness({}, { post: async () => { throw new Error('ClickUp is down') } })
   await h.engine.add(add)
-  await h.engine.onRunSettled(h.settle('run-1', { status: 'blocked', attempts: [blockedWith(['Which page?'])] }))
+  await h.engine.onRunSettled(h.settle('run-1', { status: 'blocked', attempts: [blockedWith(['biz: Which page?'])] }))
   expect(h.store.list()[0]).toMatchObject({ state: 'failed', error: 'Could not post the questions: ClickUp is down' })
 })
 
@@ -367,7 +367,7 @@ test('two adds of the same item at once keep only one', async () => {
 test('requeue rebuilds a waiting item on the same worktree with its answers', async () => {
   const h = harness()
   await h.engine.add(add)
-  await h.engine.onRunSettled(h.settle('run-1', { status: 'blocked', attempts: [blockedWith(['Which page?'])] }))
+  await h.engine.onRunSettled(h.settle('run-1', { status: 'blocked', attempts: [blockedWith(['biz: Which page?'])] }))
   const parked = h.store.list()[0]!
   const answers = join(dir, 'answers-1.md')
   await writeFile(answers, '# answers')
@@ -394,7 +394,7 @@ test('a run retried in Studio that is blocked with questions posts them and park
   await h.engine.add(add)
   const failed = h.settle('run-1', { status: 'failed', error: 'boom' })
   await h.engine.onRunSettled(failed)
-  await h.engine.onRunSettled(h.settle('run-1', { status: 'blocked', error: null, attempts: [blockedWith(['Which page?'])] }))
+  await h.engine.onRunSettled(h.settle('run-1', { status: 'blocked', error: null, attempts: [blockedWith(['biz: Which page?'])] }))
   expect(h.posted).toEqual([{ id: '1', kind: 'ask', lines: ['Which page?'] }])
   expect(h.store.list()[0]).toMatchObject({ state: 'waiting-info', questions: ['Which page?'], lastSeenId: 'c1' })
 })
@@ -437,12 +437,12 @@ test('asking again keeps the reply cursor so replies written meanwhile are still
   let comment = 0
   const h = harness({}, { post: async () => ({ commentId: `c${++comment}` }) })
   await h.engine.add(add)
-  await h.engine.onRunSettled(h.settle('run-1', { status: 'blocked', attempts: [blockedWith(['Which page?'])] }))
+  await h.engine.onRunSettled(h.settle('run-1', { status: 'blocked', attempts: [blockedWith(['biz: Which page?'])] }))
   const item = h.store.list()[0]!
   expect(item.lastSeenId).toBe('c1')
   await h.store.update(item.id, { lastSeenId: 'r1' })
   await h.engine.requeue(item.id)
-  await h.engine.onRunSettled(h.settle('run-2', { status: 'blocked', attempts: [blockedWith(['Which button?'])] }))
+  await h.engine.onRunSettled(h.settle('run-2', { status: 'blocked', attempts: [blockedWith(['biz: Which button?'])] }))
   expect(h.store.get(item.id)).toMatchObject({ state: 'waiting-info', questions: ['Which button?'], lastSeenId: 'r1' })
 })
 

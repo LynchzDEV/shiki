@@ -39,6 +39,7 @@ let paintAfterPress = false
 let pressLimit: ReturnType<typeof setTimeout> | undefined
 let paintedKey: string | null = null
 const openIds = new Set<string>()
+const drafts = new Map<string, string>()
 
 const toast = (text: string): void => { dispatchEvent(new CustomEvent('quiet:toast', { detail: text })) }
 const watch = (item: QueueItemView | undefined): void => {
@@ -106,6 +107,17 @@ function start(section: HTMLElement): void {
     return tree === null ? statusLine('Loading the git tree…') : renderTree(tree, items, flows)
   }
 
+  function restoreAnswerFocus(): () => void {
+    const box = document.activeElement as HTMLTextAreaElement | null
+    if (box?.dataset?.answer === undefined || !section.contains(box)) return () => {}
+    const { selectionStart, selectionEnd } = box
+    return () => {
+      const next = [...section.querySelectorAll<HTMLTextAreaElement>('textarea[data-answer]')].find(entry => entry.dataset.answer === box.dataset.answer)
+      next?.focus()
+      next?.setSelectionRange(selectionStart, selectionEnd)
+    }
+  }
+
   function paint(): void {
     if (!loaded) return
     if (dragId !== null) { paintAfterDrag = true; return }
@@ -115,7 +127,9 @@ function start(section: HTMLElement): void {
     if (key !== paintedKey) {
       paintedKey = key
       const shown = layout === 'tree' ? { layout, treeView: treeView() } : { layout }
-      section.replaceChildren(renderQueue(items, { plugins, flows, now, checkedAt, openIds, paused, parallel, armed, menuId, ...shown }))
+      const refocus = restoreAnswerFocus()
+      section.replaceChildren(renderQueue(items, { plugins, flows, now, checkedAt, openIds, paused, parallel, armed, menuId, drafts, ...shown }))
+      refocus()
     }
     applyFocus()
   }
@@ -149,6 +163,16 @@ function start(section: HTMLElement): void {
     const result = await work()
     button.removeAttribute('disabled')
     toast(result.ok ? done : errorText(result))
+  }
+
+  async function sendAnswer(button: HTMLElement, item: QueueItemView): Promise<void> {
+    const text = (drafts.get(item.id) ?? '').trim()
+    if (text === '') { toast('Write an answer first'); return }
+    button.setAttribute('disabled', '')
+    const result = await postJson(`/api/queue/${encodeURIComponent(item.id)}/answer`, { text })
+    button.removeAttribute('disabled')
+    if (result.ok) drafts.delete(item.id)
+    toast(result.ok ? `Answer sent for ${item.title}` : errorText(result))
   }
 
   async function checkReplies(button: HTMLElement): Promise<void> {
@@ -217,6 +241,7 @@ function start(section: HTMLElement): void {
     if (button && item && action === 'remove') { void act(button, () => deleteJson(`/api/queue/${encodeURIComponent(item.id)}`), `Removed ${item.title}`); return }
     if (button && item && action === 'open-run') { dispatchEvent(new CustomEvent('quiet:studio-run', { detail: { runId: item.runIds.at(-1) } })); return }
     if (button && item && action === 'watch') { watch(item); return }
+    if (button && item && action === 'answer') { void sendAnswer(button, item); return }
     if (button && item && action === 'land-confirm') { landDialogs.confirm(item.id); return }
     if (button && item && action === 'land-log') { landDialogs.log(item.id); return }
     if (button && item && action === 'report') { landDialogs.report(item.id); return }
@@ -240,6 +265,11 @@ function start(section: HTMLElement): void {
     paintedKey = null
     paint()
   }
+
+  section.addEventListener('input', (event) => {
+    const box = event.target instanceof Element ? event.target.closest<HTMLTextAreaElement>('textarea[data-answer]') : null
+    if (box?.dataset.answer !== undefined) drafts.set(box.dataset.answer, box.value)
+  })
 
   section.addEventListener('pointerdown', (event) => {
     pressed = event.button === 0

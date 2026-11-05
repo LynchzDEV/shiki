@@ -14,7 +14,7 @@ import { eventStreamResponse, type RunEvents } from '../run-events'
 import { MAX_QUEUE_PARALLEL, readConfig, writeConfig } from '../secrets'
 
 type Status = { status?: number | string }
-type QueueEngineRoutes = Pick<QueueEngine, 'add' | 'requeue' | 'pick' | 'checkReplies' | 'remove' | 'stop' | 'move' | 'checkedAt' | 'subscribeChecks' | 'startStage' | 'refreshPreflight' | 'retryStage' | 'landLog' | 'report'> & Partial<Pick<QueueEngine, 'preparing' | 'paused' | 'kick'>>
+type QueueEngineRoutes = Pick<QueueEngine, 'add' | 'requeue' | 'pick' | 'checkReplies' | 'answer' | 'remove' | 'stop' | 'move' | 'checkedAt' | 'subscribeChecks' | 'startStage' | 'refreshPreflight' | 'retryStage' | 'landLog' | 'report'> & Partial<Pick<QueueEngine, 'preparing' | 'paused' | 'kick'>>
 export type QueueRunLookup = { get(id: string): QueueStepRun | undefined; subscribe(listener: () => void): () => void }
 const NO_RUNS: QueueRunLookup = { get: () => undefined, subscribe: () => () => {} }
 
@@ -31,6 +31,7 @@ const pickAnswerSchema = z.object({ id: oneLineText(16).pipe(z.string().min(1)),
   .refine(entry => entry.useDefault === true || entry.answer.trim() !== '')
 const pickSchema = z.object({ option: z.string().min(1).max(16), tester: oneLineText(200).optional(), note: z.string().max(4000).optional(), answers: z.array(pickAnswerSchema).max(20).optional(), feedback: z.string().max(4000).optional() })
 const confirmSchema = z.object({ confirm: z.literal(true) })
+const answerSchema = z.object({ text: z.string().trim().min(1).max(8000) })
 const moveSchema = z.object({ to: z.number().int().min(0) })
 const settingsSchema = z.object({ parallel: z.number().int().min(1).max(MAX_QUEUE_PARALLEL) })
 const NO_ITEM = 'No such queue item'
@@ -148,6 +149,11 @@ export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: 
       if (option === NO_PICK && (feedback ?? '').trim() === '') { set.status = 400; return { error: 'Say what should change' } }
       if (option !== NO_PICK && feedback !== undefined) { set.status = 400; return { error: 'Feedback is only for none of these' } }
       return refusing(set, async () => ({ item: cleaned(await engine.pick(params.id, parsed.data)) }))
+    })
+    .post('/api/queue/:id/answer', ({ params, body, set }) => {
+      const parsed = answerSchema.safeParse(body)
+      if (!parsed.success) { set.status = 400; return { error: 'Write an answer of 1 to 8000 characters' } }
+      return refusing(set, async () => ({ item: cleaned(await engine.answer(params.id, parsed.data.text)) }))
     })
     .get('/queue/:id/files/*', ({ params }) => mockupResponse(store.get(params.id)?.worktree ?? null, params['*']))
     .post('/api/queue/:id/land/retry', ({ params, set }) => refusing(set, async () => ({ item: cleaned(await engine.retryStage(params.id)) }), explainMissing))

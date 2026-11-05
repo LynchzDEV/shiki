@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 
-import { answersMarkdown, blockedSummary, branchLabel, cardImagesMarkdown, cleanPickSummary, pickOf, questionsOf, stillOpenMarkdown, runRequest, SETTLED, type RunView } from '../server/queue-prompts'
+import { answersMarkdown, blockedSummary, branchLabel, cardImagesMarkdown, cleanPickSummary, pickOf, techQuestionsOf, stillOpenMarkdown, runRequest, SETTLED, type RunView } from '../server/queue-prompts'
 import type { WorkflowAttempt } from '../server/workflow-runner'
 
 const attempt = (over: Partial<WorkflowAttempt>): WorkflowAttempt => ({ nodeId: 'plan', number: 1, jobId: 'j', status: 'settled', prompt: '', startedAt: 1, endedAt: 2, result: null, checks: [], output: '', workspace: null, tokenId: 't', pathId: 'main', from: [], ...over })
@@ -30,19 +30,19 @@ test('runRequest points at the context, lists answers, and explains how to ask',
   expect(runRequest({ title: 'T', url: 'u', contextPath: '/c.md', answerPaths: [] })).not.toContain('answered')
 })
 
-test('questionsOf reads the evidence of the last settled blocked step', () => {
+test('techQuestionsOf reads the evidence of the last settled blocked step', () => {
   const asked = run('blocked', [
     attempt({ nodeId: 'plan', number: 1, endedAt: 5, result: { outcome: 'fail', summary: 'x', evidence: ['old'] } }),
     attempt({ nodeId: 'plan', number: 2, endedAt: 9, result: { outcome: 'blocked', summary: 'Need info', evidence: ['Which page?', '  ', 'Thai or English?'] } }),
   ])
-  expect(questionsOf(asked)).toEqual(['Which page?', 'Thai or English?'])
+  expect(techQuestionsOf(asked)).toEqual(['Which page?', 'Thai or English?'])
 })
 
-test('questionsOf is empty for a cap block, an interrupt, a pass or a run without results', () => {
-  expect(questionsOf(run('blocked', [attempt({ result: { outcome: 'fail', summary: 'cap', evidence: ['e'] } })]))).toEqual([])
-  expect(questionsOf(run('blocked', [attempt({ interrupted: true, result: { outcome: 'blocked', summary: 'Interrupted before it finished', evidence: ['x'] } })]))).toEqual([])
-  expect(questionsOf(run('done', [attempt({ result: { outcome: 'pass', summary: 'ok', evidence: ['e'] } })]))).toEqual([])
-  expect(questionsOf(run('failed', []))).toEqual([])
+test('techQuestionsOf is empty for a cap block, an interrupt, a pass or a run without results', () => {
+  expect(techQuestionsOf(run('blocked', [attempt({ result: { outcome: 'fail', summary: 'cap', evidence: ['e'] } })]))).toEqual([])
+  expect(techQuestionsOf(run('blocked', [attempt({ interrupted: true, result: { outcome: 'blocked', summary: 'Interrupted before it finished', evidence: ['x'] } })]))).toEqual([])
+  expect(techQuestionsOf(run('done', [attempt({ result: { outcome: 'pass', summary: 'ok', evidence: ['e'] } })]))).toEqual([])
+  expect(techQuestionsOf(run('failed', []))).toEqual([])
 })
 
 test('answersMarkdown pairs the questions with each reply and its images', () => {
@@ -50,8 +50,8 @@ test('answersMarkdown pairs the questions with each reply and its images', () =>
   expect(md).toBe('# Answers from the requester\n\n## Questions asked\n\n- Which page?\n\n## Replies\n\n### Ploy\n\nThe login page\n\n### Ploy\n\nSee screenshot\n\n## Images\n\n- /wt/ctx/shot.png\n')
 })
 
-test('questionsOf ignores a stopped run even when its last step asked questions', () => {
-  expect(questionsOf(run('stopped', [attempt({ result: { outcome: 'blocked', summary: 'Need info', evidence: ['Which page?'] } })]))).toEqual([])
+test('techQuestionsOf ignores a stopped run even when its last step asked questions', () => {
+  expect(techQuestionsOf(run('stopped', [attempt({ result: { outcome: 'blocked', summary: 'Need info', evidence: ['Which page?'] } })]))).toEqual([])
 })
 
 test('branchLabel keeps a long id whole and drops the title slug when there is no room', () => {
@@ -62,23 +62,23 @@ test('branchLabel keeps a long id whole and drops the title slug when there is n
 test('a step blocked with questions keeps them when a parallel step is interrupted as the run blocks', () => {
   const asked = attempt({ nodeId: 'plan-a', number: 2, endedAt: 9, result: { outcome: 'blocked', summary: 'Need info', evidence: ['Which page?'] } })
   const sibling = attempt({ nodeId: 'plan-b', number: 1, endedAt: 10, interrupted: true, result: { outcome: 'blocked', summary: 'Interrupted before it finished', evidence: [] } })
-  expect(questionsOf(run('blocked', [sibling, asked]))).toEqual(['Which page?'])
+  expect(techQuestionsOf(run('blocked', [sibling, asked]))).toEqual(['Which page?'])
 })
 
 test('a join conflict the runner blocked on is never asked of the requester', () => {
   const join = attempt({ nodeId: 'join', number: 3, jobId: null, endedAt: 9, result: { outcome: 'blocked', summary: 'Paths could not be joined: a.ts', evidence: ['Joined: p1', 'Conflicts in p2: a.ts'] } })
-  expect(questionsOf(run('blocked', [join]))).toEqual([])
+  expect(techQuestionsOf(run('blocked', [join]))).toEqual([])
 })
 
-test('questionsOf reads the questions of a step run in the session, which has no job', () => {
+test('techQuestionsOf reads the questions of a step run in the session, which has no job', () => {
   const asked = attempt({ jobId: null, inSession: true, endedAt: 9, result: { outcome: 'blocked', summary: 'Need info', evidence: ['Which page?'] } })
-  expect(questionsOf(run('blocked', [asked]))).toEqual(['Which page?'])
+  expect(techQuestionsOf(run('blocked', [asked]))).toEqual(['Which page?'])
 })
 
-test('questionsOf does not reach back to an older blocked step once a join conflict blocks the run', () => {
+test('techQuestionsOf does not reach back to an older blocked step once a join conflict blocks the run', () => {
   const older = attempt({ nodeId: 'plan-a', number: 1, endedAt: 5, result: { outcome: 'blocked', summary: 'Need info', evidence: ['Which page?'] } })
   const join = attempt({ nodeId: 'join', number: 2, jobId: null, endedAt: 9, result: { outcome: 'blocked', summary: 'Paths could not be joined: a.ts', evidence: ['Conflicts in p2: a.ts'] } })
-  expect(questionsOf(run('blocked', [older, join]))).toEqual([])
+  expect(techQuestionsOf(run('blocked', [older, join]))).toEqual([])
 })
 
 const blocked = (...evidence: string[]): RunView => run('blocked', [attempt({ result: { outcome: 'blocked', summary: 'Pick one', evidence } })])
@@ -127,8 +127,8 @@ test('pickOf rejects what it cannot show', () => {
   invalid('pick: A,B | visualizer/x | C')
 })
 
-test('questionsOf leaves pick lines out, like repo lines', () => {
-  expect(questionsOf(blocked('Which page?', PICK, '- `Pick: A,B | visualizer/x`', 'repo: api'))).toEqual(['Which page?'])
+test('techQuestionsOf leaves pick lines out, like repo lines', () => {
+  expect(techQuestionsOf(blocked('Which page?', PICK, '- `Pick: A,B | visualizer/x`', 'repo: api'))).toEqual(['Which page?'])
 })
 
 test('a card image name with a line break cannot start a new line in the context file', () => {

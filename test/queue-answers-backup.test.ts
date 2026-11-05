@@ -66,7 +66,7 @@ test('a second reply after the worktree was deleted brings the earlier answers b
   const parked = await parkedItem(h)
   h.answer(async () => reply('r1', 'The login page'))
   await h.engine.checkReplies()
-  await h.engine.onRunSettled(h.settle('run-2', { status: 'blocked', attempts: [blockedWith(['Which button?'])] }))
+  await h.engine.onRunSettled(h.settle('run-2', { status: 'blocked', attempts: [blockedWith(['biz: Which button?'])] }))
   const first = h.store.get(parked.id)!.answerPaths[0]!
   const before = await readFile(first)
   await rm(parked.worktree!, { recursive: true, force: true })

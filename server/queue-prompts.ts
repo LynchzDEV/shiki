@@ -38,7 +38,7 @@ function reposLines(item: Pick<QueueItem, 'repo' | 'worktree'> & { repos: readon
   return [
     `This item spans several repos in ${item.repo}. The real repos there are READ-ONLY: read them to plan, never change them: ${available.map(name => join(item.repo, name)).join(', ')}.`,
     `Work only in the repo copies in this workspace, at ${item.worktree}/<name>. Copies ready now: ${copies}. Each copy is its own git worktree; make, test and inspect changes inside it.`,
-    'To get a copy of another repo, end the step with SKD_RESULT blocked and one evidence item per repo in exactly the form `repo: <name>`. Any other evidence item is a question for the requester.',
+    'To get a copy of another repo, end the step with SKD_RESULT blocked and one evidence item per repo in exactly the form `repo: <name>`. Any other evidence item is a question, tagged biz: or tech: as described below.',
     'Ask for every repo you need in one go: Shikidan makes the copies and starts a new run, and stops after 3 such asks.',
   ]
 }
@@ -49,7 +49,8 @@ export function runRequest(item: Pick<QueueItem, 'title' | 'url' | 'contextPath'
     ...(item.repos === undefined ? [] : reposLines({ ...item, repos: item.repos }, available)),
     `Read the task context in ${item.contextPath}.`,
     ...(item.answerPaths.length > 0 ? [`The requester answered your earlier questions: read ${item.answerPaths.join(', ')}.`] : []),
-    'If information you need is missing and you cannot decide it yourself, end the step with SKD_RESULT blocked and put each question for the requester as one evidence item.',
+    'If information you need is missing and you cannot decide it yourself, end the step with SKD_RESULT blocked and put each question as one evidence item starting biz: or tech:.',
+    'biz: is only for a product or business decision a non-technical person can answer, written in plain Thai with no technical words. Solve technical problems yourself. If only the owner can answer a technical question, use tech:.',
   ].join('\n')
 }
 
@@ -121,8 +122,19 @@ const pickBody = (line: string): string | null => {
   return body !== null && body.includes('|') ? body : null
 }
 
-export function questionsOf(run: RunView): string[] {
-  return blockedEvidence(run).filter(line => requestedRepos(line) === null && pickBody(line) === null)
+export function taggedBody(line: string, tag: string): string | null {
+  const bare = line.replace(BULLET, '').trim()
+  return bare.toLowerCase().startsWith(`${tag}:`) ? bare.slice(tag.length + 1).trim() : null
+}
+
+const questionLines = (run: RunView): string[] => blockedEvidence(run).filter(line => requestedRepos(line) === null && pickBody(line) === null)
+
+export function bizQuestionsOf(run: RunView): string[] {
+  return questionLines(run).flatMap(line => taggedBody(line, 'biz') || [])
+}
+
+export function techQuestionsOf(run: RunView): string[] {
+  return questionLines(run).filter(line => taggedBody(line, 'biz') === null).flatMap(line => taggedBody(line, 'tech') ?? line).filter(line => line !== '')
 }
 
 export function repoRequestsOf(run: RunView): string[] {

@@ -7,7 +7,7 @@ export type LandView = { stage: string; runId?: string; message?: string; plan: 
 export type QueueItemView = {
   id: string; source: string; externalId: string; title: string; url: string; flowId: string | null
   state: QueueState; runIds: string[]; questions: string[]; error: string | null; updatedAt: number
-  repo?: string; repos?: string[]; realChanged?: string[]; currentRunId?: string; resumeRunId?: string; step?: QueueStepView; preparing?: true; pick?: QueuePickView; land?: LandView
+  repo?: string; repos?: string[]; realChanged?: string[]; currentRunId?: string; resumeRunId?: string; step?: QueueStepView; preparing?: true; pick?: QueuePickView; land?: LandView; askedIn?: 'shikidan'
 }
 
 export type QueueStepView = { title: string; attempt: number; maxAttempts: number }
@@ -18,7 +18,7 @@ export type QueueLayout = 'list' | 'tree'
 export type QueuePaused = { reason: string; until: number }
 export type QueueContext = {
   plugins: QueuePlugin[]; flows: QueueFlow[]; now: number; checkedAt: number | null; openIds: ReadonlySet<string>
-  layout?: QueueLayout; treeView?: HTMLElement; paused?: QueuePaused | null; parallel?: number; armed?: string | null; menuId?: string | null
+  layout?: QueueLayout; treeView?: HTMLElement; paused?: QueuePaused | null; parallel?: number; armed?: string | null; menuId?: string | null; drafts?: ReadonlyMap<string, string>
 }
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
@@ -188,6 +188,7 @@ function progressText(item: QueueItemView, items: readonly QueueItemView[], now:
 
 export const armKey = (act: string, id: string): string => `${act}:${id}`
 
+const asksOwner = (item: QueueItemView): boolean => item.state === 'waiting-info' && item.askedIn === 'shikidan'
 const isRunning = (item: QueueItemView): boolean => item.state === 'building' || item.state === 'landing' || item.preparing === true
 
 type Action = { label: string; act: string; icon?: string; danger?: true; confirm?: true; note?: string; ariaLabel?: string }
@@ -260,6 +261,15 @@ function questionsThread(item: QueueItemView, now: number): HTMLElement {
   return el('div', { class: 'q-thread' }, ...asked, foot)
 }
 
+function answerBox(item: QueueItemView, draft: string): HTMLElement {
+  const box = el('textarea', { class: 'q-answer-text', 'data-answer': item.id, rows: '3', maxlength: '8000', placeholder: 'Your answer', 'aria-label': `Your answer for ${item.title}` }) as HTMLTextAreaElement
+  box.value = draft
+  return el('div', { class: 'q-thread q-answer' },
+    el('ul', { class: 'md-list' }, ...item.questions.map(question => el('li', {}, question))),
+    box,
+    el('div', { class: 'q-answer-foot' }, el('span', {}, 'This stays in Shikidan. Nothing is posted on the card.'), button('Send', 'connection-button primary', { 'data-id': item.id, 'data-act': 'answer' })))
+}
+
 const folderName = (path: string): string => path.split('/').filter(part => part !== '').at(-1) ?? path
 
 function folderWithRepos(item: QueueItemView): HTMLElement[] {
@@ -273,9 +283,10 @@ function folderWithRepos(item: QueueItemView): HTMLElement[] {
 
 function row(item: QueueItemView, items: readonly QueueItemView[], context: QueueContext): HTMLElement {
   const movable = waitingInLine(item)
-  const openable = item.state === 'waiting-info' && item.questions.length > 0
+  const answering = asksOwner(item)
+  const openable = item.state === 'waiting-info' && item.questions.length > 0 && !answering
   const open = openable && context.openIds.has(item.id)
-  const watchable = !openable && watchRunId(item) !== undefined
+  const watchable = !openable && !answering && watchRunId(item) !== undefined
   const rowKeys = watchable && item.state !== 'building'
   const meta = el('div', { class: 'q-meta' },
     sourceBadge(item, context.plugins),
@@ -284,11 +295,12 @@ function row(item: QueueItemView, items: readonly QueueItemView[], context: Queu
     el('span', {}, progressText(item, items, context.now)))
   return el('article', { class: 'q-row', 'data-id': item.id, 'data-state': item.state, 'data-movable': movable, draggable: movable ? 'true' : false, 'data-openable': openable, 'data-open': open, 'data-watchable': watchable, tabindex: rowKeys ? '0' : false, title: watchable ? 'Watch this run' : false, 'aria-label': rowKeys ? `${item.title}, ${PILL[item.state].label}. Press Enter to watch its run` : false },
     el('span', { class: 'q-grip', title: movable ? 'Drag to reorder' : false }, icon('q-grip')),
-    pill(item.state, stagePill(item)),
+    pill(item.state, answering ? 'Needs your answer' : stagePill(item)),
     el('div', { class: 'q-main' }, el('strong', {}, item.title), meta),
     actions(item, context.armed, context.menuId),
     ...(failedAtStage(item) && item.error?.includes('\n') === true ? [el('pre', { class: 'q-land-error' }, item.error.slice(item.error.indexOf('\n') + 1))] : []),
-    ...(open ? [questionsThread(item, context.now)] : []))
+    ...(open ? [questionsThread(item, context.now)] : []),
+    ...(answering ? [answerBox(item, context.drafts?.get(item.id) ?? '')] : []))
 }
 
 function emptyState(): HTMLElement {
@@ -366,6 +378,7 @@ function readItem(value: unknown): QueueItemView | null {
     ...(isText(entry.currentRunId) ? { currentRunId: entry.currentRunId } : {}),
     ...(isText(entry.resumeRunId) ? { resumeRunId: entry.resumeRunId } : {}),
     ...(entry.preparing === true ? { preparing: true as const } : {}),
+    ...(entry.askedIn === 'shikidan' ? { askedIn: 'shikidan' as const } : {}),
     ...(readStep(entry.step) ?? {}),
     ...(readPick(entry.pick) ?? {}),
     ...(readLand(entry.land) ?? {}),

@@ -32,7 +32,7 @@ async function parked(replies: () => Promise<SourceReplies>, overrides: Partial<
   }
   const engine = createQueueEngine(deps)
   const item = await engine.add({ source: 'clickup-board', externalId: '1', repo: '/repo' })
-  const blocked: RunView = { id: 'run-1', status: 'blocked', error: null, attempts: [{ nodeId: 'plan', number: 1, jobId: 'j', status: 'settled', prompt: '', startedAt: 1, endedAt: 2, result: { outcome: 'blocked', summary: 's', evidence: ['Which page?'] }, checks: [], output: '', workspace: null, tokenId: 't', pathId: 'main', from: [] }] }
+  const blocked: RunView = { id: 'run-1', status: 'blocked', error: null, attempts: [{ nodeId: 'plan', number: 1, jobId: 'j', status: 'settled', prompt: '', startedAt: 1, endedAt: 2, result: { outcome: 'blocked', summary: 's', evidence: ['biz: Which page?'] }, checks: [], output: '', workspace: null, tokenId: 't', pathId: 'main', from: [] }] }
   runs.set(blocked.id, blocked)
   await engine.onRunSettled(blocked)
   Object.assign(deps, overrides)

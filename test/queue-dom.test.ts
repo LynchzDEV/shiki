@@ -1118,6 +1118,13 @@ test('asking for new designs posts none with feedback and no answers, then retur
   expect(shown.at(-1)).toBe('queue')
 })
 
+const readItems = (list: QueueItem[]) => queue.readQueueItems(list) as unknown as QueueItem[]
+const asking = item({ id: 'a1', state: 'waiting-info', askedIn: 'shikidan', title: 'Key links', questions: ['Which key file?', 'Which database?'], runIds: ['r-a1'], worktree: '/w' })
+const answerBox = (id = 'a1') => rowOf(id).querySelector('textarea') as HTMLTextAreaElement
+const typeAnswer = (text: string) => {
+  answerBox().value = text
+  answerBox().dispatchEvent(new window.Event('input', { bubbles: true }))
+}
 const press = (element: Element, button = 0) => element.dispatchEvent(new window.MouseEvent('pointerdown', { bubbles: true, button }))
 const release = (type = 'pointerup') => { dispatchEvent(new Event(type)) }
 
@@ -1128,6 +1135,88 @@ test('a card past its visit budget shows the attempt with no of', () => {
   expect(progress({ title: 'Execute', attempt: 3, maxAttempts: 3 })).toContain('Execute · attempt 3 of 3')
   expect(progress({ title: 'Recover', attempt: 1, maxAttempts: 1 })).toContain('Recover')
   expect(progress({ title: 'Recover', attempt: 1, maxAttempts: 1 })).not.toContain('attempt')
+})
+
+test('a question for the owner shows Needs your answer, the questions as a list, a box and Send', () => {
+  const row = rows(queue.renderQueue(readItems([asking]), context()))[0]!
+  expect(row.querySelector('.pill-state')!.textContent).toBe('Needs your answer')
+  expect([...row.querySelectorAll('.q-answer li')].map(entry => entry.textContent)).toEqual(['Which key file?', 'Which database?'])
+  expect(row.querySelector('textarea')).not.toBeNull()
+  expect(row.querySelector('button[data-act="answer"]')!.textContent).toBe('Send')
+  expect(row.hasAttribute('data-openable')).toBe(false)
+  expect(row.hasAttribute('data-watchable')).toBe(false)
+})
+
+test('a question on the source still opens as a thread and has no answer box', () => {
+  const row = rows(queue.renderQueue(readItems([waiting]), context({ openIds: new Set(['w1']) })))[0]!
+  expect(row.querySelector('.pill-state')!.textContent).toBe('Waiting info')
+  expect(row.querySelector('.q-thread')).not.toBeNull()
+  expect(row.querySelector('textarea')).toBeNull()
+  expect(row.hasAttribute('data-openable')).toBe(true)
+})
+
+test('a draft survives a repaint, keeps focus and caret, and is not sent anywhere', async () => {
+  doc.body.append(section())
+  send([asking, building])
+  await flush()
+  typeAnswer('half an answer')
+  answerBox().focus()
+  answerBox().setSelectionRange(4, 7)
+  const before = answerBox()
+  send([asking, { ...building, updatedAt: NOW - 1000 }])
+  await flush()
+  expect(answerBox()).not.toBe(before)
+  expect(answerBox().value).toBe('half an answer')
+  expect(doc.activeElement).toBe(answerBox())
+  expect([answerBox().selectionStart, answerBox().selectionEnd]).toEqual([4, 7])
+  expect(calls).toEqual([])
+  typeAnswer('')
+})
+
+test('clicking in the answer box neither watches the run nor toggles the row', async () => {
+  send([asking])
+  await flush()
+  click(answerBox())
+  click(rowOf('a1').querySelector('.q-answer li')!)
+  expect(watched).toEqual([])
+  expect(rowOf('a1').hasAttribute('data-open')).toBe(false)
+})
+
+test('Send with empty text says so and posts nothing', async () => {
+  send([asking])
+  await flush()
+  typeAnswer('   ')
+  click(rowOf('a1').querySelector('button[data-act="answer"]')!)
+  await flush()
+  expect(toasts).toEqual(['Write an answer first'])
+  expect(calls).toEqual([])
+})
+
+test('Send posts the answer, says so and clears the draft', async () => {
+  send([asking])
+  await flush()
+  typeAnswer('The test database')
+  click(rowOf('a1').querySelector('button[data-act="answer"]')!)
+  await flush()
+  expect(calls).toEqual([{ method: 'POST', url: '/api/queue/a1/answer', body: { text: 'The test database' } }])
+  expect(toasts).toEqual(['Answer sent for Key links'])
+  send([asking, building])
+  await flush()
+  expect(answerBox().value).toBe('')
+})
+
+test('a refused Send shows the reason and keeps the draft', async () => {
+  send([asking])
+  await flush()
+  typeAnswer('The test database')
+  replies.set('POST /api/queue/a1/answer', () => Response.json({ error: 'It is not waiting for your answer' }, { status: 409 }))
+  click(rowOf('a1').querySelector('button[data-act="answer"]')!)
+  await flush()
+  expect(toasts).toEqual(['It is not waiting for your answer'])
+  send([asking, building])
+  await flush()
+  expect(answerBox().value).toBe('The test database')
+  typeAnswer('')
 })
 
 test('the list is not rebuilt when the render inputs are unchanged, and is when they change', async () => {

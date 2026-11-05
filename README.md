@@ -183,6 +183,8 @@ shiki queue requeue <id>              # a failed card resumes the run it failed 
 
 **At once** on the Queue screen, or `shiki queue parallel <n>`, lets up to four cards build at the same time (default 1), but keep it at 1 for projects whose worktrees share one test database, because two cards running tests at once deadlock there.
 
+**Questions go to the right person.** An agent tags each question. `biz:` is a product or business decision, written in plain Thai, and goes on the card. Everything else, tagged `tech:` or untagged, stays in Shikidan: the row says **Needs your answer** with a box to reply in, nothing is posted on the card, and sending the answer rebuilds the card with it (`POST /api/queue/<id>/answer` with `{ "text": "..." }`). When a run asks both, the technical questions come first and the agent asks the business ones again after your answer.
+
 - `--json` prints the server's JSON as one document (NDJSON for `job follow` and `job new --follow`); every command supports it.
 - `--url` > `SKD_URL` > `http://127.0.0.1:7777`. Local URLs need no token. For other URLs set `SKD_TOKEN`; otherwise `apiToken` from `secrets.json` is used when present.
 - Exit codes: `0` ok, `1` API error (message on stderr), `2` usage error, `3` Shikidan isn't running.

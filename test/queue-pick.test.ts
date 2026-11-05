@@ -68,7 +68,7 @@ test('a bad pick line fails the item with the reason', async () => {
 
 test('a pick: line without a bar is an ordinary question', async () => {
   const h = await building()
-  await h.block('run-1', ['Pick: which page first?'])
+  await h.block('run-1', ['biz: Pick: which page first?'])
   expect(h.posted).toEqual([['Pick: which page first?']])
   expect(h.store.get(h.item.id)).toMatchObject({ state: 'waiting-info', questions: ['Pick: which page first?'] })
 })

@@ -1388,6 +1388,9 @@ a.q-src:hover { color: var(--accent); }
 .q-bubble { padding: 11px 14px; border-radius: var(--r-md); corner-shape: var(--corner); background: var(--paper); border: 1px solid var(--line); font-size: 13.5px; line-height: 1.65; color: var(--text); }
 .q-bubble p { margin: 0; white-space: pre-wrap; }
 .q-thread-foot { display: flex; align-items: center; gap: 12px; padding-left: 40px; font-size: 12px; color: var(--muted); }
+.q-answer ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 13.5px; line-height: 1.5; color: var(--text); }
+.q-answer-text { width: 100%; min-height: 72px; padding: 10px 12px; resize: vertical; border: 1px solid var(--line); border-radius: var(--r-md); corner-shape: var(--corner); background: var(--paper); color: var(--text); font: inherit; font-size: 13.5px; line-height: 1.5; }
+.q-answer-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--muted); }
 .q-empty .mk-logo { background: var(--purple-bg); color: var(--purple-ink); }
 .q-empty .mk-logo svg { fill: none; stroke: currentColor; }
 .q-empty-ways { display: grid; gap: 10px; width: 100%; margin-top: 10px; text-align: left; }

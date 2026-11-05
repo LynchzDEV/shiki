@@ -25,6 +25,7 @@ function failureCounter(deps: QueueEngineDeps, reason: string) {
 export type ReplyCheck = {
   read(item: QueueItem): Promise<SourceReplies | null>
   apply(item: QueueItem, worktree: string, result: SourceReplies): Promise<boolean>
+  answer(item: QueueItem, worktree: string, text: string): Promise<void>
 }
 
 export function replyCheck(deps: QueueEngineDeps, fail: (item: QueueItem, reason: string) => Promise<void>): ReplyCheck {
@@ -40,7 +41,7 @@ export function replyCheck(deps: QueueEngineDeps, fail: (item: QueueItem, reason
     const markdown = answersMarkdown(item.questions, replies, images)
     const path = await deps.writeContext(item.source, { name: `answers-${item.externalId}`, markdown }, worktree)
     await backUpAnswers(deps.backupDir(item.id), path, markdown)
-    await store.update(item.id, { state: 'queued', worktree, answerPaths: [...item.answerPaths, path], questions: [], lastSeenId: lastId ?? item.lastSeenId })
+    await store.update(item.id, { state: 'queued', worktree, answerPaths: [...item.answerPaths, path], questions: [], lastSeenId: lastId ?? item.lastSeenId, land: undefined })
     await store.toFront(item.id)
   }
 
@@ -70,5 +71,7 @@ export function replyCheck(deps: QueueEngineDeps, fail: (item: QueueItem, reason
     }
   }
 
-  return { read, apply }
+  const answer = (item: QueueItem, worktree: string, text: string): Promise<void> => resume(item, worktree, [{ id: 'owner', author: 'Owner', text, images: [] }], null)
+
+  return { read, apply, answer }
 }

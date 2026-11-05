@@ -25,6 +25,7 @@ export type QueueItem = {
   runIds: string[]; currentRunId: string | null; questions: string[]; lastSeenId: string | null; error: string | null
   createdAt: number; updatedAt: number; repos?: string[]; repoReruns?: number
   realBaseline?: Record<string, string>; realChanged?: string[]; pick?: QueuePick; land?: LandProgress; autoPicks?: number; resumeRunId?: string
+  askedIn?: 'shikidan'
 }
 
 export type NewQueueItem = Pick<QueueItem, 'source' | 'externalId' | 'title' | 'url' | 'repo' | 'flowId' | 'repos'>
@@ -68,6 +69,7 @@ function isItem(value: unknown): value is QueueItem {
     && (item.land === undefined || isLand(item.land))
     && (item.repoReruns === undefined || (Number.isInteger(item.repoReruns) && (item.repoReruns as number) >= 0))
     && (item.resumeRunId === undefined || isText(item.resumeRunId))
+    && (item.askedIn === undefined || item.askedIn === 'shikidan')
 }
 
 const isRecord = (value: unknown): boolean => typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -140,6 +142,7 @@ export function createQueueStore(path: string, clock: () => number = Date.now): 
       const next: QueueItem = { ...current, ...definedFields(patch), updatedAt: clock() }
       if ('pick' in patch && patch.pick === undefined) delete next.pick
       if ('land' in patch && patch.land === undefined) delete next.land
+      if (next.state !== 'waiting-info' || ('askedIn' in patch && patch.askedIn === undefined)) delete next.askedIn
       if (('resumeRunId' in patch && patch.resumeRunId === undefined) || !RESUMABLE.has(next.state)) delete next.resumeRunId
       await save(items.map(item => (item.id === id ? next : item)))
       return next

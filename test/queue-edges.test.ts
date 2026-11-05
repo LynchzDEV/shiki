@@ -111,7 +111,7 @@ test('a parallel step interrupted as the run blocks does not hide the questions 
   const h = harness()
   await h.engine.add(add)
   const sibling = blockedWith([], { nodeId: 'plan-b', interrupted: true, endedAt: 10 })
-  await h.engine.onRunSettled(h.settle('run-1', { status: 'blocked', attempts: [blockedWith(['Which page?'], { nodeId: 'plan-a', number: 2, endedAt: 9 }), sibling] }))
+  await h.engine.onRunSettled(h.settle('run-1', { status: 'blocked', attempts: [blockedWith(['biz: Which page?'], { nodeId: 'plan-a', number: 2, endedAt: 9 }), sibling] }))
   expect(h.posted).toEqual([{ id: '1', kind: 'ask', lines: ['Which page?'] }])
   expect(h.store.list()[0]).toMatchObject({ state: 'waiting-info', questions: ['Which page?'] })
 })
@@ -119,7 +119,7 @@ test('a parallel step interrupted as the run blocks does not hide the questions 
 test('a stopped run whose last step asked questions still fails rather than asks', async () => {
   const h = harness()
   await h.engine.add(add)
-  await h.engine.onRunSettled(h.settle('run-1', { status: 'stopped', error: null, attempts: [blockedWith(['Which page?'])] }))
+  await h.engine.onRunSettled(h.settle('run-1', { status: 'stopped', error: null, attempts: [blockedWith(['biz: Which page?'])] }))
   expect(h.posted).toEqual([])
   expect(h.store.list()[0]).toMatchObject({ state: 'failed', error: 'Run stopped' })
 })
@@ -252,7 +252,7 @@ test('restart: a queued item is built by recover', async () => {
 test('restart: a building item whose run asked questions while MC was down posts them and parks', async () => {
   const h = harness()
   await h.engine.add(add)
-  h.settle('run-1', { status: 'blocked', attempts: [blockedWith(['Which page?'])] })
+  h.settle('run-1', { status: 'blocked', attempts: [blockedWith(['biz: Which page?'])] })
   const after = h.restart()
   await after.engine.recover()
   expect(h.posted).toEqual([{ id: '1', kind: 'ask', lines: ['Which page?'] }])

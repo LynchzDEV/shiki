@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { questionsOf, repoRequestsOf, runRequest, type RunView } from '../server/queue-prompts'
+import { techQuestionsOf, repoRequestsOf, runRequest, type RunView } from '../server/queue-prompts'
 import { prepareRepoWorkspace, registerQueueWorkspaces } from '../server/repo-workspace'
 import { createQueueStore } from '../server/queue-store'
 import { validateWorkspaceCwd } from '../server/workspace'
@@ -61,7 +61,7 @@ test('a run that asks for a repo and asks questions gets the repo and parks for 
   await repos('a', 'b')
   const h = harness()
   const item = await h.engine.add({ ...multi, repo: parent, repos: [] })
-  await h.engine.onRunSettled(h.settle('run-1', blocked(['repo: b', 'Which page?'])))
+  await h.engine.onRunSettled(h.settle('run-1', blocked(['repo: b', 'biz: Which page?'])))
   expect(h.posted).toEqual([{ id: '7', kind: 'ask', lines: ['Which page?'] }])
   expect(h.store.get(item.id)).toMatchObject({ state: 'waiting-info', repos: ['b'], questions: ['Which page?'] })
   expect(existsSync(join(workspace(), 'b', 'README.md'))).toBe(true)
@@ -121,16 +121,16 @@ test('a single-repo item whose run only asks for repos fails with a plain reason
 test('a single-repo item never asks the source about repo lines', async () => {
   const h = queueHarness(scratch)
   const item = await h.engine.add({ ...multi, repo: '/repo' })
-  await h.engine.onRunSettled(h.settle('run-1', blocked(['repo: a', 'Which page?'])))
+  await h.engine.onRunSettled(h.settle('run-1', blocked(['repo: a', 'biz: Which page?'])))
   expect(h.posted).toEqual([{ id: '7', kind: 'ask', lines: ['Which page?'] }])
   expect(h.store.get(item.id)).toMatchObject({ state: 'waiting-info', questions: ['Which page?'] })
   expect('repos' in h.store.get(item.id)!).toBe(false)
 })
 
-test('questionsOf leaves out repo requests in any of the forms an agent writes them', () => {
+test('techQuestionsOf leaves out repo requests in any of the forms an agent writes them', () => {
   const asks = ['repo: api', '  repo:web ', '`repo: api`', 'Repo: api', 'REPO: api', '- repo: api', '* `repo: web`', '1. repo: api', '"repo: api"', 'repo: `api`', 'repo: api, web']
   const run: RunView = { id: 'r', status: 'blocked', error: null, attempts: [blockedWith([...asks, 'Which page?', 'Is the repo: label right?'])] }
-  expect(questionsOf(run)).toEqual(['Which page?', 'Is the repo: label right?'])
+  expect(techQuestionsOf(run)).toEqual(['Which page?', 'Is the repo: label right?'])
   expect(repoRequestsOf(run)).toEqual(['api', 'web'])
 })
 

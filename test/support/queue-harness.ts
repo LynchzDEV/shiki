@@ -72,7 +72,7 @@ export async function refusal(work: Promise<unknown>): Promise<unknown> {
 
 export async function parkedItem(h: QueueHarness) {
   const item = await h.engine.add(add)
-  await h.engine.onRunSettled(h.settle('run-1', { status: 'blocked', attempts: [blockedWith(['Which page?'])] }))
+  await h.engine.onRunSettled(h.settle('run-1', { status: 'blocked', attempts: [blockedWith(['biz: Which page?'])] }))
   return h.store.get(item.id)!
 }
 

@@ -2,10 +2,11 @@ import { basename, join } from 'node:path'
 
 import type { TaskContext } from './plugins/context-files'
 import { backUpAnswers, dropAnswerBackups, restoreAnswers } from './queue-answers'
-import { blockedSummary, cardImagesMarkdown, NO_PICK, noPickMarkdown, pickOf, questionsOf, repoRequestsOf, runRequest, SETTLED, oneLine, stillOpenMarkdown, type PickAnswer, type RunView } from './queue-prompts'
+import { bizQuestionsOf, blockedSummary, cardImagesMarkdown, NO_PICK, noPickMarkdown, pickOf, repoRequestsOf, runRequest, SETTLED, oneLine, stillOpenMarkdown, techQuestionsOf, type PickAnswer, type RunView } from './queue-prompts'
 import { adoptionProblem, grantRepos, movedRealRepos, movedText, realRepoStates, reposToOffer, SINGLE_REPO_ASK } from './queue-repo-asks'
 import { importCardImages, queueFolder, refuseLinkedQueueFolders } from './queue-files'
 import { createLand, PICK_FILE, type Land } from './queue-land'
+import { askOwner } from './queue-recover'
 import { buildReport } from './queue-report'
 import { QueueRefusal } from './queue-refusal'
 import { message, replyCheck } from './queue-replies'
@@ -56,6 +57,7 @@ export type QueueEngine = {
   stop(id: string): Promise<QueueItem>
   move(id: string, to: number): Promise<void>
   checkReplies(): Promise<{ checked: number; resumed: number }>
+  answer(id: string, text: string): Promise<QueueItem>
   startStage(id: string, stage: string): Promise<QueueItem>
   refreshPreflight(id: string, stage: string): Promise<QueueItem>
   retryStage(id: string): Promise<QueueItem>
@@ -157,7 +159,9 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
   async function askOrFail(settled: QueueItem, run: RunView): Promise<void> {
     const fail = failer(run.id)
     let item = settled
-    const questions = questionsOf(run)
+    const biz = bizQuestionsOf(run)
+    const tech = techQuestionsOf(run)
+    const questions = [...tech, ...biz]
     if (item.repos === undefined && questions.length === 0 && repoRequestsOf(run).length > 0) return fail(item, SINGLE_REPO_ASK)
     const asked = item.repos === undefined ? [] : repoRequestsOf(run)
     if (asked.length > 0) {
@@ -175,9 +179,10 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
       return
     }
     if (questions.length === 0) return fail(item, run.error ?? `Run ${run.status}`)
+    if (tech.length > 0) return askOwner(deps, item, tech)
     try {
-      const posted = await deps.source(item.source).post({ id: item.externalId, kind: 'ask', lines: questions })
-      await store.update(item.id, { state: 'waiting-info', questions, lastSeenId: item.lastSeenId ?? posted.commentId, currentRunId: null })
+      const posted = await deps.source(item.source).post({ id: item.externalId, kind: 'ask', lines: biz })
+      await store.update(item.id, { state: 'waiting-info', questions: biz, askedIn: undefined, lastSeenId: item.lastSeenId ?? posted.commentId, currentRunId: null })
     } catch (error) {
       await fail(item, `Could not post the questions: ${message(error)}`)
     }
@@ -434,7 +439,7 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
   }
 
   const checkReplies = async (): Promise<{ checked: number; resumed: number }> => {
-    const waiting = store.list().filter(item => item.state === 'waiting-info' && item.worktree !== null)
+    const waiting = store.list().filter(item => item.state === 'waiting-info' && item.worktree !== null && item.askedIn !== 'shikidan')
     const reads = await Promise.allSettled(waiting.map(item => runningInStudio(item) ? Promise.resolve(null) : replies.read(item)))
     return serial(async () => {
       let resumed = 0
@@ -447,6 +452,21 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
       return { checked: waiting.length, resumed }
     }).then((counts) => { markChecked(); return counts })
   }
+
+  const answer = (id: string, text: string): Promise<QueueItem> => serial(async () => {
+    const item = found(store, id)
+    if (item.state !== 'waiting-info' || item.askedIn !== 'shikidan') throw new QueueRefusal('It is not waiting for your answer', 409)
+    if (item.worktree === null) throw new QueueRefusal('It has no workspace', 409)
+    if (runningInStudio(item)) throw new QueueRefusal('It is running in Studio now', 409)
+    try {
+      await replies.answer(item, item.worktree, text)
+    } catch (error) {
+      if (error instanceof WorktreeGone) throw new QueueRefusal(error.message, 409)
+      throw error
+    }
+    await startNext()
+    return found(store, id)
+  })
 
   async function recover(): Promise<void> {
     await serial(async () => {
@@ -477,6 +497,7 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
     report: async id => buildReport(found(store, id), runId => deps.runner.get(runId)),
     onRunSettled: run => serial(async () => { await settle(run); await startNext() }),
     checkReplies,
+    answer,
     checkedAt: () => lastCheckedAt,
     preparing: () => preparingId,
     paused,
