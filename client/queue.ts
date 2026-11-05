@@ -248,7 +248,7 @@ function start(section: HTMLElement): void {
     if (button && item && action === 'land-log') { landDialogs.log(item.id); return }
     if (button && item && action === 'report') { landDialogs.report(item.id); return }
     if (button && item && action === 'land-retry') { void act(button, () => postJson(`/api/queue/${encodeURIComponent(item.id)}/land/retry`, {}), `Retrying the stage of ${item.title}`); return }
-    if (target?.closest('a, button')) return
+    if (target?.closest('a, button, .q-acts')) return
     const row = rowFor(target)
     if (row?.hasAttribute('data-watchable') === true) { watch(itemFor(row.dataset.id)); return }
     if (row?.hasAttribute('data-openable') !== true || row.dataset.id === undefined) return

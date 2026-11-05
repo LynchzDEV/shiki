@@ -417,6 +417,14 @@ test('rows with a run but no Watch button are one named tab stop; a building row
   expect(watched).toEqual([])
 })
 
+test('the open ⋯ menu neither shows the row tooltip nor opens the run when a gap in it is clicked', () => {
+  click(rowOf('b1').querySelector('.q-more')!)
+  expect(rowOf('b1').querySelector('.q-acts')?.getAttribute('title')).toBe('')
+  click(rowOf('b1').querySelector('.q-menu .divider')!)
+  click(rowOf('b1').querySelector('.q-menu')!)
+  expect(watched).toEqual([])
+})
+
 test('a key pressed on a button inside a row does not also open the run', () => {
   buttonNamed('Open run', rowOf('r1')).dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
   expect(watched).toEqual([])

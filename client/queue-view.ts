@@ -255,7 +255,7 @@ function actions(item: QueueItemView, armed: string | null | undefined, menuId: 
   const mainButton = main === null ? [] : [button(main.label, 'connection-button primary', { 'data-id': item.id, 'data-act': main.act, 'aria-label': main.ariaLabel ?? false }, main.icon)]
   const markDone = item.state === 'awaiting-stage' && main !== null ? [el('button', { type: 'button', class: 'q-done', 'data-id': item.id, 'data-act': 'mark-done', 'aria-label': `Mark ${item.title} as done`, title: 'Mark as done' }, icon('check-icon'))] : []
   const more = el('button', { type: 'button', class: 'q-more', 'data-id': item.id, 'data-act': 'more', 'aria-haspopup': 'menu', 'aria-expanded': String(open), 'aria-label': `More actions for ${item.title}`, title: 'More actions' }, icon('more-icon'))
-  return el('div', { class: 'q-acts' }, ...markDone, ...mainButton, more, ...(open ? [actionMenu(item, armed)] : []))
+  return el('div', { class: 'q-acts', title: '' }, ...markDone, ...mainButton, more, ...(open ? [actionMenu(item, armed)] : []))
 }
 
 function questionsThread(item: QueueItemView, now: number): HTMLElement {
