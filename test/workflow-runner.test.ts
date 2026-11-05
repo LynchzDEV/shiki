@@ -231,6 +231,122 @@ test('a re-check after a fail carries the convergence note', async () => {
   expect(done.attempts.find(attempt => attempt.nodeId === 'review')!.prompt).not.toContain('This is a re-check')
 })
 
+const assignmentOf = (prompt: string) => { const start = prompt.indexOf('{\n  "request"'); return JSON.parse(prompt.slice(start, prompt.indexOf('\n}', start) + 2)) }
+
+test('a step sent back by a failure names that failure and marks older results', async () => {
+  const store = await build(scripted({ accept: ['fail'], ui: ['fail'] }))
+  await store.save(checkedGraph())
+  const run = await runner.start({ workflowId: 'checked', cwd: repo, request: 'Build it', label: 'sent back' })
+  const done = await finished(run.id)
+  const executes = done.attempts.filter(attempt => attempt.nodeId === 'execute')
+  const uiFail = done.attempts.find(attempt => attempt.nodeId === 'ui' && attempt.result?.outcome === 'fail')!
+  const sentBack = assignmentOf(executes[2]!.prompt).sentBack as string
+  expect(sentBack).toContain(`Step "ui" (id ui, attempt ${uiFail.number}) sent you back with this failure: Completed fixture`)
+  expect(executes[0]!.prompt).not.toContain('sent you back')
+  expect(assignmentOf(executes[1]!.prompt).sentBack).toContain('Step "accept" (id accept, attempt 3)')
+  const inputs = assignmentOf(executes[2]!.prompt).upstreamEvidence as Array<{ node: string; older?: true }>
+  expect(inputs.find(input => input.node === 'plan')!.older).toBe(true)
+  expect(inputs.find(input => input.node === 'ui')!.older).toBeUndefined()
+  expect(executes[0]!.prompt).not.toContain('"older"')
+})
+
+test('a step whose sender passed gets no sent-back note', async () => {
+  const store = await build(scripted({}))
+  await store.save(checkedGraph())
+  const run = await runner.start({ workflowId: 'checked', cwd: repo, request: 'Build it', label: 'passed sender' })
+  const done = await finished(run.id)
+  expect(done.attempts.every(attempt => !attempt.prompt.includes('sent you back'))).toBe(true)
+})
+
+const evidenceOf = (prompt: string) => assignmentOf(prompt).upstreamEvidence as Array<{ node: string; older?: true }>
+const stepOf = (id: string, kind: string, maxVisits = 5) => ({ id, title: id, kind, agent: { role: kind === 'review' ? 'review' : 'execute' }, instructions: `STEP-${id}`, maxVisits, position: { x: 0, y: 0 } })
+const sentBackGraph = (id: string, edges: Workflow['edges']): Workflow => {
+  const graph = withoutSession()
+  return { ...graph, id, nodes: [graph.nodes[0]!, graph.nodes[1]!, stepOf('execute', 'implement'), stepOf('dod', 'task'), stepOf('interrogate', 'task'), stepOf('review', 'review')].filter(step => step.id !== 'interrogate' || edges.some(edge => edge.source === 'interrogate')) as Workflow['nodes'], edges: [
+    { source: 'plan', target: 'verify-plan', outcome: 'pass' }, { source: 'verify-plan', target: 'execute', outcome: 'pass' }, { source: 'review', target: 'execute', outcome: 'fail' }, ...edges,
+  ] }
+}
+
+test('an older failure stays in the evidence, marked older, beside the fresh failure that sent the step back', async () => {
+  const store = await build(scripted({ interrogate: ['pass', 'fail'], dod: ['fail'] }))
+  await store.save(sentBackGraph('older-failure', [
+    { source: 'execute', target: 'interrogate', outcome: 'pass' }, { source: 'interrogate', target: 'dod', outcome: 'pass' }, { source: 'dod', target: 'review', outcome: 'pass' },
+    { source: 'dod', target: 'execute', outcome: 'fail' }, { source: 'interrogate', target: 'execute', outcome: 'fail' },
+  ]))
+  const run = await runner.start({ workflowId: 'older-failure', cwd: repo, request: 'Build it', label: 'older failure' })
+  const done = await finished(run.id)
+  const executes = done.attempts.filter(attempt => attempt.nodeId === 'execute')
+  const fresh = done.attempts.find(attempt => attempt.nodeId === 'interrogate' && attempt.result?.outcome === 'fail')!
+  const older = done.attempts.find(attempt => attempt.nodeId === 'dod' && attempt.result?.outcome === 'fail')!
+  expect(assignmentOf(executes[1]!.prompt).sentBack).toContain(`(id dod, attempt ${older.number})`)
+  expect(assignmentOf(executes[2]!.prompt).sentBack).toContain(`(id interrogate, attempt ${fresh.number})`)
+  const inputs = evidenceOf(executes[2]!.prompt)
+  expect(inputs.find(input => input.node === 'dod')).toMatchObject({ outcome: { outcome: 'fail' }, older: true })
+  expect(inputs.find(input => input.node === 'interrogate')!.older).toBeUndefined()
+})
+
+test('a step sent back by a blocked sender gets no sent-back note', async () => {
+  const store = await build(scripted({ dod: ['blocked'] }))
+  await store.save(sentBackGraph('blocked-sender', [{ source: 'execute', target: 'dod', outcome: 'pass' }, { source: 'dod', target: 'review', outcome: 'pass' }, { source: 'dod', target: 'execute', outcome: 'blocked' }]))
+  const run = await runner.start({ workflowId: 'blocked-sender', cwd: repo, request: 'Build it', label: 'blocked sender' })
+  const done = await finished(run.id)
+  const executes = done.attempts.filter(attempt => attempt.nodeId === 'execute')
+  expect(executes.length).toBeGreaterThan(1)
+  expect(executes.every(attempt => !attempt.prompt.includes('sent you back'))).toBe(true)
+})
+
+test('a stopped and retried visit still names the failure that sent it back and its interrupted visit does not move the older cutoff', async () => {
+  let executeVisits = 0
+  const store = await build(({ prompt }) => {
+    const step = /STEP-(\w+)/.exec(prompt)?.[1]
+    if (step === 'execute' && ++executeVisits === 2) return { cmd: '/bin/sh', args: ['-c', 'sleep 5'], env: {} }
+    return { cmd: '/bin/echo', args: [report(step === 'dod' && !prompt.includes('failed once') && executeVisits === 1 ? 'fail' : 'pass')], env: {} }
+  })
+  await store.save(sentBackGraph('stop-retry', [{ source: 'execute', target: 'dod', outcome: 'pass' }, { source: 'dod', target: 'review', outcome: 'pass' }, { source: 'dod', target: 'execute', outcome: 'fail' }]))
+  const run = await runner.start({ workflowId: 'stop-retry', cwd: repo, request: 'Build it', label: 'stop retry' })
+  await until(run.id, current => current.attempts.filter(attempt => attempt.nodeId === 'execute').length === 2 && current.attempts.some(attempt => attempt.nodeId === 'execute' && attempt.status === 'running'))
+  await runner.stop(run.id)
+  await allJobsStopped()
+  await runner.retry(run.id)
+  const done = await finished(run.id)
+  const executes = done.attempts.filter(attempt => attempt.nodeId === 'execute')
+  const failed = done.attempts.find(attempt => attempt.nodeId === 'dod' && attempt.result?.outcome === 'fail')!
+  const resumed = executes.at(-1)!
+  expect(executes[1]!.interrupted).toBe(true)
+  expect(assignmentOf(resumed.prompt).sentBack).toContain(`(id dod, attempt ${failed.number})`)
+  expect(evidenceOf(resumed.prompt).find(input => input.node === 'dod')!.older).toBeUndefined()
+})
+
+test('a step fed by a failed join names the join attempt as the sender', async () => {
+  await homeConfig()
+  await build(scripted({}))
+  const graph = forked({ a: { checks: writes('same.txt', 'a') }, b: { checks: writes('same.txt', 'b') }, review: { kind: 'review', agent: { role: 'review', engine: 'claude' } } }, {
+    nodes: [{ id: 'fix', title: 'Fix', kind: 'implement', agent: { role: 'execute', engine: 'codex' }, instructions: 'STEP-fix' }],
+    edges: [{ source: 'join', target: 'fix', outcome: 'fail' }, { source: 'fix', target: 'review', outcome: 'pass' }],
+  })
+  const started = await runner.start({ cwd: repo, request: 'Write the same file', label: 'join sender', graph }, { startedByUser: true })
+  const done = await finished(started.id)
+  const joined = joins(done)[0]!
+  const fix = done.attempts.find(attempt => attempt.nodeId === 'fix')!
+  expect(joined.result!.outcome).toBe('fail')
+  expect(assignmentOf(fix.prompt).sentBack).toContain(`(id join, attempt ${joined.number}) sent you back with this failure: Paths could not be joined`)
+})
+
+test('a failure on one parallel path is not a sent-back note or an older mark on the other path', async () => {
+  await homeConfig()
+  let failedOnce = false
+  await build(({ prompt }) => ({ cmd: '/bin/echo', args: [report(prompt.includes('STEP-a') && !failedOnce && (failedOnce = true) ? 'fail' : 'pass')], env: {} }))
+  const graph = forked({ a: { instructions: 'STEP-a' }, b: { instructions: 'STEP-b' } }, { edges: [{ source: 'a', target: 'a', outcome: 'fail' }] })
+  const started = await runner.start({ cwd: repo, request: 'Write both files', label: 'parallel isolation', graph }, { startedByUser: true })
+  const done = await finished(started.id)
+  const pathA = done.attempts.filter(attempt => attempt.nodeId === 'a')
+  const pathB = done.attempts.find(attempt => attempt.nodeId === 'b')!
+  expect(pathA).toHaveLength(2)
+  expect(assignmentOf(pathA[1]!.prompt).sentBack).toContain('(id a, attempt')
+  expect(pathB.prompt).not.toContain('sent you back')
+  expect(pathB.prompt).not.toContain('"older"')
+})
+
 test('retry gives every step a fresh budget', async () => {
   const store = await build(() => ({ cmd: '/bin/echo', args: [report('fail')], env: {} }))
   await store.save({ ...classicWorkflow(), id: 'loop', entry: 'test', nodes: [{ id: 'test', title: 'Test', instructions: 'Check', maxVisits: 2 }], edges: [{ source: 'test', target: 'test', outcome: 'fail' }] })

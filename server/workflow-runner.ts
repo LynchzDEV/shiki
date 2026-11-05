@@ -494,7 +494,8 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
       else if (!reviewer.sameFamily || sameFamilyUses(run) >= SAME_FAMILY_REVIEWS) return unavailableBlock(run, reviewer.engine, reason, null)
     }
     const latest = new Map(related.filter(attempt => attempt.result).map(attempt => [attempt.nodeId, attempt]))
-    const inputs = [...latest.values()].map(attempt => ({ node: attempt.nodeId, outcome: attempt.result, output: attempt.output, checks: attempt.checks, workspace: attempt.workspace }))
+    const lastFinished = related.filter(attempt => attempt.nodeId === node.id && attempt.status === 'settled' && attempt.result !== null && !attempt.interrupted).at(-1)
+    const inputs = [...latest.values()].map(attempt => ({ node: attempt.nodeId, outcome: attempt.result, output: attempt.output, checks: attempt.checks, workspace: attempt.workspace, ...(lastFinished && attempt.number < lastFinished.number ? { older: true } : {}) }))
     const agent = run.agents[node.id]!
     if (agent.inSession && !sessionOf(run)) return block(run, sessionClosed(node.title))
     const policy = agent.inSession ? { ...run.policy, coreRules: sessionRules(mcUrl(), run.id, node.id) } : run.policy
@@ -503,7 +504,9 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
     const repoRules = node.kind === 'plan' ? await shapeRulesFor(run.cwd) : ''
     const lastOwn = related.filter(attempt => attempt.nodeId === node.id && attempt.status === 'settled' && attempt.result !== null).at(-1)
     const recheck: Record<string, string> = RECHECKED_KINDS.has(node.kind) && lastOwn?.result?.outcome === 'fail' ? { recheck: RECHECK_NOTE } : {}
-    const prompt = composeWorkflowPrompt(policy, run.workflow, node, run.request, inputs, run.skills[node.id], { ...shapeNotes(run.workflow, node, inputs.map(input => input.output), repoRules), ...recheck })
+    const sender = token.from.length === 1 ? run.attempts[token.from[0]!] : undefined
+    const sentBack: Record<string, string> = sender?.result?.outcome === 'fail' && !sender.interrupted ? { sentBack: `Step "${run.workflow.nodes.find(step => step.id === sender.nodeId)?.title ?? sender.nodeId}" (id ${sender.nodeId}, attempt ${sender.number}) sent you back with this failure: ${sender.result.summary}. Fix this first; its full result is in upstreamEvidence. Results marked older came before your last finished visit; re-check them only if this fix touches them.` } : {}
+    const prompt = composeWorkflowPrompt(policy, run.workflow, node, run.request, inputs, run.skills[node.id], { ...shapeNotes(run.workflow, node, inputs.map(input => input.output), repoRules), ...recheck, ...sentBack })
     const session = agent.inSession ? { inSession: true as const, sessionNotifiedAt: null, workspaceSnapshot: await workspaceSnapshot(token.workspace) } : {}
     const attempt: WorkflowAttempt = { nodeId: node.id, number: run.attempts.length, jobId: null, status: agent.inSession ? 'running' : 'starting', prompt, startedAt: Date.now(), endedAt: null, result: null, checks: [], output: '', workspace: null, tokenId: token.id, pathId: token.pathId, from: token.from, ...session }
     if (prompt.length > 500000) return block(run, 'Combined task inputs exceed 500 KB; use artifact paths for large outputs')
