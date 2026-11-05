@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, expect, test } from 'bun:test'
+import { afterAll, beforeAll, beforeEach, expect, spyOn, test } from 'bun:test'
 import { JSDOM } from 'jsdom'
 
 import type { QueueItem } from '../server/queue-store'
@@ -1116,4 +1116,149 @@ test('asking for new designs posts none with feedback and no answers, then retur
   expect(post.body).toEqual({ option: 'none', feedback: 'keep B but drop the badge', tester: 'Mint', note: '' })
   expect(toasts).toEqual(['Asked for new designs for Login button wording'])
   expect(shown.at(-1)).toBe('queue')
+})
+
+const press = (element: Element, button = 0) => element.dispatchEvent(new window.MouseEvent('pointerdown', { bubbles: true, button }))
+const release = (type = 'pointerup') => { dispatchEvent(new Event(type)) }
+
+test('a card past its visit budget shows the attempt with no of', () => {
+  const progress = (step: { title: string; attempt: number; maxAttempts: number }) => queue.renderQueue([{ ...building, step } as QueueItem], context()).querySelector('.q-meta')!.textContent
+  expect(progress({ title: 'Execute', attempt: 6, maxAttempts: 3 })).toContain('Execute · attempt 6')
+  expect(progress({ title: 'Execute', attempt: 6, maxAttempts: 3 })).not.toContain(' of ')
+  expect(progress({ title: 'Execute', attempt: 3, maxAttempts: 3 })).toContain('Execute · attempt 3 of 3')
+  expect(progress({ title: 'Recover', attempt: 1, maxAttempts: 1 })).toContain('Recover')
+  expect(progress({ title: 'Recover', attempt: 1, maxAttempts: 1 })).not.toContain('attempt')
+})
+
+test('the list is not rebuilt when the render inputs are unchanged, and is when they change', async () => {
+  send([building])
+  await flush()
+  const before = rowOf('b1')
+  send([{ ...building }])
+  await flush()
+  expect(rowOf('b1')).toBe(before)
+  send([{ ...building, title: 'Renamed' }])
+  await flush()
+  expect(rowOf('b1')).not.toBe(before)
+})
+
+test('relative times still update once a minute with the same inputs', async () => {
+  send([building])
+  await flush()
+  const before = rowOf('b1')
+  const later = spyOn(Date, 'now').mockReturnValue(Date.now() + 61_000)
+  send([{ ...building }])
+  await flush()
+  later.mockRestore()
+  expect(rowOf('b1')).not.toBe(before)
+})
+
+test('a rebuild waits while a row is pressed and lands after release, so a click is not swallowed', async () => {
+  send([building, queuedA])
+  await flush()
+  const held = rowOf('b1')
+  press(held)
+  send([building, queuedA, queuedB])
+  await flush()
+  expect(rowOf('b1')).toBe(held)
+  expect(rows()).toHaveLength(2)
+  release()
+  expect(rowOf('b1')).toBe(held)
+  await flush()
+  expect(rows()).toHaveLength(3)
+  expect(rowOf('b1')).not.toBe(held)
+})
+
+test('losing the window while a row is pressed applies the held rebuild', async () => {
+  send([building])
+  await flush()
+  press(rowOf('b1'))
+  send([building, queuedA])
+  await flush()
+  expect(rows()).toHaveLength(1)
+  release('blur')
+  await flush()
+  expect(rows()).toHaveLength(2)
+})
+
+test('pointercancel also applies a held rebuild', async () => {
+  send([building])
+  await flush()
+  press(rowOf('b1'))
+  send([building, queuedA])
+  await flush()
+  expect(rows()).toHaveLength(1)
+  release('pointercancel')
+  await flush()
+  expect(rows()).toHaveLength(2)
+})
+
+test('a press anywhere in the list holds a rebuild, so a button outside a row keeps its click too', async () => {
+  send([building])
+  await flush()
+  press(section().querySelector('.q-bar')!)
+  send([building, queuedA])
+  await flush()
+  expect(rows()).toHaveLength(1)
+  release()
+  await flush()
+  expect(rows()).toHaveLength(2)
+})
+
+test('a right or middle press holds nothing, because no pointerup is promised after its menu', async () => {
+  send([building])
+  await flush()
+  press(rowOf('b1'), 2)
+  send([building, queuedA])
+  await flush()
+  expect(rows()).toHaveLength(2)
+  press(rowOf('b1'), 1)
+  send([building])
+  await flush()
+  expect(rows()).toHaveLength(1)
+})
+
+test('a context menu releases a held press', async () => {
+  send([building])
+  await flush()
+  press(rowOf('b1'))
+  send([building, queuedA])
+  await flush()
+  expect(rows()).toHaveLength(1)
+  release('contextmenu')
+  await flush()
+  expect(rows()).toHaveLength(2)
+})
+
+test('the end of a drag releases a held press', async () => {
+  send([queuedA, queuedB])
+  await flush()
+  const row = rowOf('q1')
+  press(row)
+  drag('dragstart', row)
+  send([queuedA, queuedB, building])
+  await flush()
+  expect(rows()).toHaveLength(2)
+  drag('dragend', row)
+  await flush()
+  expect(rows()).toHaveLength(3)
+})
+
+test('a press with no release cannot freeze the list for more than 10 seconds', async () => {
+  send([building])
+  await flush()
+  const timers = spyOn(globalThis, 'setTimeout')
+  press(rowOf('b1'))
+  const limit = timers.mock.calls.find(call => call[1] === 10_000)
+  timers.mockRestore()
+  expect(limit).toBeDefined()
+  send([building, queuedA])
+  await flush()
+  expect(rows()).toHaveLength(1)
+  ;(limit![0] as () => void)()
+  await flush()
+  expect(rows()).toHaveLength(2)
+  send([building])
+  await flush()
+  expect(rows()).toHaveLength(1)
 })

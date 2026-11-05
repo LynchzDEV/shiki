@@ -11,6 +11,8 @@ export { parseItemRef } from './queue-dialog'
 export { readQueueItems, renderQueue } from './queue-view'
 
 const REFRESH_MS = 30_000
+const MINUTE_MS = 60_000
+const PRESS_LIMIT_MS = 10_000
 const FOCUS_MS = 1600
 const LAYOUT_KEY = 'skd.queue.layout'
 const ROW_SELECTOR = '.q-row, .q-notyet, .q-tree-tip'
@@ -32,6 +34,10 @@ let treeRequest = 0
 let armed: string | null = null
 let menuId: string | null = null
 let disarmTimer: ReturnType<typeof setTimeout> | undefined
+let pressed = false
+let paintAfterPress = false
+let pressLimit: ReturnType<typeof setTimeout> | undefined
+let paintedKey: string | null = null
 const openIds = new Set<string>()
 
 const toast = (text: string): void => { dispatchEvent(new CustomEvent('quiet:toast', { detail: text })) }
@@ -103,8 +109,14 @@ function start(section: HTMLElement): void {
   function paint(): void {
     if (!loaded) return
     if (dragId !== null) { paintAfterDrag = true; return }
-    const shown = layout === 'tree' ? { layout, treeView: treeView() } : { layout }
-    section.replaceChildren(renderQueue(items, { plugins, flows, now: Date.now(), checkedAt, openIds, paused, parallel, armed, menuId, ...shown }))
+    if (pressed) { paintAfterPress = true; return }
+    const now = Date.now()
+    const key = JSON.stringify([items, plugins, flows, checkedAt, paused, parallel, armed, menuId, layout, tree, treeError, [...openIds], Math.floor(now / MINUTE_MS)])
+    if (key !== paintedKey) {
+      paintedKey = key
+      const shown = layout === 'tree' ? { layout, treeView: treeView() } : { layout }
+      section.replaceChildren(renderQueue(items, { plugins, flows, now, checkedAt, openIds, paused, parallel, armed, menuId, ...shown }))
+    }
     applyFocus()
   }
 
@@ -225,8 +237,27 @@ function start(section: HTMLElement): void {
     if (saved !== undefined) parallel = saved
     toast(saved === undefined ? errorText(result) : parallelText(saved))
     select.disabled = false
+    paintedKey = null
     paint()
   }
+
+  section.addEventListener('pointerdown', (event) => {
+    pressed = event.button === 0
+    clearTimeout(pressLimit)
+    if (pressed) pressLimit = setTimeout(release, PRESS_LIMIT_MS)
+  })
+  const release = (): void => {
+    pressed = false
+    clearTimeout(pressLimit)
+    if (!paintAfterPress) return
+    paintAfterPress = false
+    // The click fires right after pointerup: repainting before it would remove its target.
+    setTimeout(paint, 0)
+  }
+  addEventListener('pointerup', release, true)
+  addEventListener('pointercancel', release, true)
+  addEventListener('blur', release)
+  addEventListener('contextmenu', release, true)
 
   section.addEventListener('change', (event) => {
     const select = event.target instanceof Element ? event.target.closest<HTMLSelectElement>('select[name=parallel]') : null
@@ -248,6 +279,7 @@ function start(section: HTMLElement): void {
   const endDrag = (): void => {
     dragId = null
     clearDrop()
+    release()
     if (!paintAfterDrag) return
     paintAfterDrag = false
     paint()

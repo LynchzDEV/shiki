@@ -166,6 +166,7 @@ export function watchRunId(item: Pick<QueueItemView, 'currentRunId' | 'runIds'>)
 }
 
 export function stepText(step: QueueStepView): string {
+  if (step.attempt > step.maxAttempts) return `${step.title} · attempt ${step.attempt}`
   return step.maxAttempts > 1 ? `${step.title} · attempt ${step.attempt} of ${step.maxAttempts}` : step.title
 }
 

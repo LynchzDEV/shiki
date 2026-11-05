@@ -119,3 +119,9 @@ test('no branches and nothing queued says how lanes appear', () => {
   expect(view.querySelector('.q-notyet')).toBeNull()
   expect(view.textContent).toContain('No branches yet')
 })
+
+test('a lane with no commits says none are waiting once the card ships, and no commits yet before that', () => {
+  const lanes = (state: QueueItem['state']) => layout.treeRows({ repo: '/r', base: { branch: 'main', commits: [{ sha: 'abc1234', subject: 'x' }] }, lanes: [lane('i', 'queue/i', 'abc1234', [])] }, [item({ id: 'i', state })])
+  for (const state of ['landing', 'awaiting-stage', 'landed'] as const) expect(lanes(state)[0]!.subject).toBe('No commits waiting')
+  for (const state of ['queued', 'ready', 'failed', 'waiting-info', 'waiting-pick'] as const) expect(lanes(state)[0]!.subject).toBe('No commits yet')
+})
