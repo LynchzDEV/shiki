@@ -58,14 +58,25 @@ type Attempt = RunView['attempts'][number]
 
 const byAgent = (attempt: Attempt): boolean => attempt.jobId !== null || attempt.inSession === true
 
-function lastBlocked(run: RunView): Attempt | undefined {
+function lastSettled(run: RunView): Attempt | undefined {
   const settled = run.attempts.filter(attempt => attempt.result !== null && attempt.endedAt !== null && !attempt.interrupted)
   const last = settled.sort((a, b) => (a.endedAt ?? 0) - (b.endedAt ?? 0)).at(-1)
-  if (run.status !== 'blocked' || last === undefined || !byAgent(last) || last.result?.outcome !== 'blocked') return undefined
-  return last
+  return last !== undefined && byAgent(last) ? last : undefined
 }
 
-const blockedEvidence = (run: RunView): string[] => lastBlocked(run)?.result?.evidence.map(line => line.trim()).filter(line => line !== '') ?? []
+function lastBlocked(run: RunView): Attempt | undefined {
+  const last = lastSettled(run)
+  return run.status === 'blocked' && last?.result?.outcome === 'blocked' ? last : undefined
+}
+
+const cleanEvidence = (attempt: Attempt | undefined): string[] => attempt?.result?.evidence.map(line => line.trim()).filter(line => line !== '') ?? []
+const blockedEvidence = (run: RunView): string[] => cleanEvidence(lastBlocked(run))
+export const lastEvidence = (run: RunView): string[] => cleanEvidence(lastSettled(run))
+export const agentCouldFix = (run: RunView): boolean => {
+  const last = [...run.attempts].sort((a, b) => (a.endedAt ?? 0) - (b.endedAt ?? 0)).at(-1)
+  const blockedAfterPass = run.status === 'blocked' && last?.result?.outcome === 'pass'
+  return last !== undefined && last.interrupted !== true && !blockedAfterPass && lastSettled(run) !== undefined
+}
 
 const MAX_SUMMARY = 64000
 

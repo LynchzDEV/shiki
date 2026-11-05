@@ -188,6 +188,7 @@ function progressText(item: QueueItemView, items: readonly QueueItemView[], now:
 
 export const armKey = (act: string, id: string): string => `${act}:${id}`
 
+const inRecovery = (item: QueueItemView): boolean => item.state === 'landing' && Boolean(item.currentRunId)
 const asksOwner = (item: QueueItemView): boolean => item.state === 'waiting-info' && item.askedIn === 'shikidan'
 const isRunning = (item: QueueItemView): boolean => item.state === 'building' || item.state === 'landing' || item.preparing === true
 
@@ -195,13 +196,15 @@ type Action = { label: string; act: string; icon?: string; danger?: true; confir
 
 const LANDING_STOP_NOTE = 'A push or deploy cut short can leave the remote half-updated.'
 const REPORT: Action = { label: 'Report', act: 'report', icon: 'file-icon' }
+const LAND_LOG: Action = { label: 'Log', act: 'land-log', icon: 'file-icon' }
 const OPEN_RUN: Action = { label: 'Open run', act: 'open-run', icon: 'flow-icon' }
 const REQUEUE: Action = { label: 'Requeue', act: 'requeue', icon: 'mk-refresh' }
 const requeueOrResume = (item: QueueItemView): Action => (item.resumeRunId === undefined ? REQUEUE : { ...REQUEUE, label: 'Resume' })
 
 function mainAction(item: QueueItemView): Action | null {
-  if (item.state === 'building') return watchRunId(item) === undefined ? null : { label: 'Watch', act: 'watch', icon: 'eye-icon', ariaLabel: `Watch ${item.title}` }
-  if (item.state === 'landing') return { label: 'Log', act: 'land-log', icon: 'file-icon' }
+  const watching: Action = { label: 'Watch', act: 'watch', icon: 'eye-icon', ariaLabel: `Watch ${item.title}` }
+  if (item.state === 'building') return watchRunId(item) === undefined ? null : watching
+  if (item.state === 'landing') return inRecovery(item) ? watching : LAND_LOG
   if (item.state === 'waiting-pick') return { label: 'Pick', act: 'pick', ariaLabel: `Pick a variant for ${item.title}` }
   if (item.state === 'ready') return item.runIds.length > 0 ? OPEN_RUN : null
   if (item.state === 'failed') return failedAtStage(item) ? { label: 'Retry stage', act: 'land-retry', icon: 'mk-refresh' } : requeueOrResume(item)
@@ -212,6 +215,7 @@ function mainAction(item: QueueItemView): Action | null {
 function calmActions(item: QueueItemView): Action[] {
   const calm: Action[] = []
   if (item.state === 'waiting-pick' || item.state === 'waiting-info' || item.state === 'ready') calm.push(REQUEUE)
+  if (inRecovery(item)) calm.push(LAND_LOG)
   if (failedAtStage(item)) calm.push(requeueOrResume(item))
   if (item.state === 'failed' && item.resumeRunId !== undefined) calm.push({ label: 'Start over', act: 'start-over', icon: 'back-icon' })
   if (['failed', 'landing', 'awaiting-stage', 'landed'].includes(item.state) && item.runIds.length > 0) calm.push(OPEN_RUN)

@@ -28,6 +28,7 @@ export const nodeSchema = z.object({
   checks: z.array(commandSchema).max(10).default([]),
   setup: z.array(commandSchema).max(10).default([]),
   maxVisits: z.number().int().min(1).max(10).default(3),
+  denyTools: z.array(z.string().min(1).max(200)).max(20).optional(),
   position: z.object({ x: z.number().finite(), y: z.number().finite() }).default({ x: 0, y: 0 }),
 })
 export const workflowSchema = z.object({

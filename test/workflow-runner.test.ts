@@ -12,6 +12,7 @@ import { classicWorkflow } from './support/classic-workflow'
 import { homeScratch, sweepHomeScratch } from './support/home-scratch'
 import type { TerminalRecord } from '../server/terminals'
 import type { Unavailable } from '../server/engine-availability'
+import { recoverGraph, recoveryVerdict } from '../server/queue-recover'
 import { mcUrl, writeConfig } from '../server/secrets'
 
 let dir: string, repo: string, manager: JobManager, runner: WorkflowRunner, settledRuns: WorkflowRun[]
@@ -948,9 +949,9 @@ test('a change may not move the entry, drop a step that ran, or rewrite one', as
   const rewritten = { ...chain, nodes: [{ ...chain.nodes[0]!, instructions: 'Something else' }, ...chain.nodes.slice(1)] }
   const refusal = await runner.propose(started.id, { graph: rewritten, reason: 'x' }, { via: 'drawer' }).catch(error => error)
   expect(refusal).not.toBeInstanceOf(RunActionError)
-  expect(refusal.message).toBe('Alpha already ran, so its kind, instructions, agent, checks and setup cannot change')
+  expect(refusal.message).toBe('Alpha already ran, so its kind, instructions, agent, checks, setup and deny list cannot change')
   const rechecked = { ...chain, nodes: [{ ...chain.nodes[0]!, checks: [{ command: '/usr/bin/true' }] }, ...chain.nodes.slice(1)] }
-  await expect(runner.propose(started.id, { graph: rechecked, reason: 'x' }, { via: 'drawer' })).rejects.toThrow('Alpha already ran, so its kind, instructions, agent, checks and setup cannot change')
+  await expect(runner.propose(started.id, { graph: rechecked, reason: 'x' }, { via: 'drawer' })).rejects.toThrow('Alpha already ran, so its kind, instructions, agent, checks, setup and deny list cannot change')
   const after = runner.get(started.id)!
   expect(after.workflow).toEqual(before.workflow)
   expect(after.versions).toEqual(before.versions)
@@ -2256,4 +2257,71 @@ test('retrying a dismissed run clears the dismissal', async () => {
   const retried = await runner.retry(id)
   expect(retried.dismissedAt).toBeNull()
   expect((await finished(id)).status).toBe('done')
+})
+
+const agentSaying = (result: () => { outcome: string; evidence: string[] }): EngineResolver => () => ({ cmd: '/bin/echo', args: [JSON.stringify({ type: 'result', result: `SKD_RESULT ${JSON.stringify({ summary: 'Completed fixture', ...result() })}` })], env: {} })
+
+test('the queue Recover graph runs on the real runner as one claude opus task, after a failed run in the same workspace, and that run can then be retried', async () => {
+  let said = { outcome: 'fail', evidence: ['tests are red'] }
+  await build(agentSaying(() => said))
+  await writeConfig({ roles: { plan: { engine: 'claude', model: null }, execute: { engine: 'claude', model: null } } })
+  const failedRun = await runner.start({ graph: recoverGraph(), cwd: repo, request: 'A card build that fails', label: 'build' }, { startedByUser: true })
+  expect((await finished(failedRun.id)).status).toBe('failed')
+  said = { outcome: 'pass', evidence: ['linked the key file'] }
+  const recovery = await runner.start({ graph: recoverGraph(), cwd: repo, request: 'Recover it', label: 'Recover' }, { startedByUser: true })
+  expect(recovery.status).not.toBe('awaiting-approval')
+  expect(recovery.agents.recover).toMatchObject({ engine: 'claude', model: 'opus' })
+  const done = await finished(recovery.id)
+  expect(done.status).toBe('done')
+  expect(done.attempts.map(attempt => attempt.nodeId)).toEqual(['recover'])
+  expect(recoveryVerdict(done)).toEqual({ kind: 'pass' })
+  const retried = await runner.retry(failedRun.id)
+  expect(retried.id).toBe(failedRun.id)
+  expect((await finished(failedRun.id)).status).toBe('done')
+})
+
+test('the real runner keeps the code: and tech: evidence a recovery verdict reads', async () => {
+  let said = { outcome: 'fail', evidence: ['code: the migration is wrong'] }
+  await build(agentSaying(() => said))
+  const code = await runner.start({ graph: recoverGraph(), cwd: repo, request: 'Recover it', label: 'Recover' }, { startedByUser: true })
+  expect(recoveryVerdict(await finished(code.id))).toEqual({ kind: 'code', evidence: ['the migration is wrong'] })
+  said = { outcome: 'blocked', evidence: ['tech: Which key file?'] }
+  const tech = await runner.start({ graph: recoverGraph(), cwd: repo, request: 'Recover it', label: 'Recover' }, { startedByUser: true })
+  expect(recoveryVerdict(await finished(tech.id))).toEqual({ kind: 'tech', questions: ['Which key file?'] })
+})
+
+test('the deny list reaches the engine for a recovery run, and a normal step gets none', async () => {
+  const seen: Array<{ engine: string; disallowedTools?: string[] }> = []
+  await build(params => { seen.push({ engine: params.engine, disallowedTools: params.disallowedTools }); return resolver(params) })
+  const recovery = await runner.start({ graph: recoverGraph(), cwd: repo, request: 'Recover it', label: 'Recover' }, { startedByUser: true })
+  await finished(recovery.id)
+  expect(seen.map(entry => entry.disallowedTools)).toEqual([recoverGraph().nodes[0]!.denyTools])
+  expect(seen[0]!.disallowedTools).toContain('Bash(*git*push*)')
+  seen.length = 0
+  const normal = await runner.start({ graph: { ...recoverGraph(), nodes: [{ ...recoverGraph().nodes[0]!, denyTools: undefined }] }, cwd: repo, request: 'Plain', label: 'Plain' }, { startedByUser: true })
+  await finished(normal.id)
+  expect(seen).toEqual([{ engine: 'claude', disallowedTools: undefined }])
+})
+
+test('a step cannot be added to a run with a deny list, because it would launch without one', async () => {
+  await build(slow, false)
+  const recovery = await runner.start({ graph: recoverGraph(), cwd: repo, request: 'Recover it', label: 'Recover' }, { startedByUser: true })
+  await until(recovery.id, run => run.attempts[0]?.status === 'running')
+  const graph = recoverGraph()
+  const added = { ...graph, nodes: [...graph.nodes, { id: 'extra', title: 'Extra', instructions: 'Do more' }], edges: [{ source: 'recover', target: 'extra', outcome: 'pass' as const }] }
+  await expect(runner.propose(recovery.id, { graph: added, reason: 'x' }, { via: 'drawer' })).rejects.toThrow('This flow runs with a deny list, so steps cannot be added to it')
+  expect(runner.get(recovery.id)!.workflow.nodes.map(node => node.id)).toEqual(['recover'])
+})
+
+test('a run with a deny list is never swapped to another engine when claude is down', async () => {
+  const seen: string[] = []
+  await build(params => { seen.push(params.engine); return resolver(params) })
+  await writeConfig({ fallback: { engine: 'codex', model: null } })
+  down = engine => (engine === 'claude' ? { reason: 'usage limit', until: null } : null)
+  const recovery = await runner.start({ graph: recoverGraph(), cwd: repo, request: 'Recover it', label: 'Recover' }, { startedByUser: true })
+  const done = await finished(recovery.id)
+  expect(done.status).toBe('blocked')
+  expect(done.unavailable).toMatchObject({ engine: 'claude' })
+  expect(done.agents.recover).toMatchObject({ engine: 'claude' })
+  expect(seen).toEqual([])
 })

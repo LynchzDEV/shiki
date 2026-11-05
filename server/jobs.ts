@@ -109,6 +109,7 @@ export type CreateJobParams = {
   connection?: import('./agent-connections').AgentConnection
   coreRules?: string
   mcpServers?: import('./workflows').WorkflowNode['mcpServers']
+  disallowedTools?: string[]
   purpose?: JobPurpose
   chatId?: string
   chatTurn?: string
@@ -757,6 +758,7 @@ export function createJobManager(options: JobManagerOptions = {}): JobManager {
         connection: params.connection,
         coreRules: params.coreRules,
         mcpServers: params.mcpServers,
+        ...(params.disallowedTools === undefined ? {} : { disallowedTools: params.disallowedTools }),
         ...(params.resumeSessionId === undefined ? {} : { resumeSessionId: params.resumeSessionId }),
         ...(params.workflowRunId ? { step: true } : {}),
         ...(typeof params.model === 'string' && params.model !== '' ? { model: params.model } : {}),

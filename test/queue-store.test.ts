@@ -161,3 +161,21 @@ test('an item with a malformed land record is left out', async () => {
   expect(createQueueStore(path).get(a.id)).toBeUndefined()
   logged.mockRestore()
 })
+
+test('recovery counters must be whole numbers, and items without them still load', async () => {
+  const base = { source: 's', externalId: '1', title: 't', url: 'u', repo: '/r', flowId: null, state: 'landing', worktree: '/w', contextPath: null, answerPaths: [], runIds: ['r1'], currentRunId: null, questions: [], lastSeenId: null, error: null, createdAt: 1, updatedAt: 1 }
+  const land = { stage: 'uat', stages: {}, plan: [] }
+  const spy = spyOn(console, 'error').mockImplementation(() => {})
+  await mkdir(dirname(path), { recursive: true })
+  await writeFile(path, JSON.stringify({ items: [
+    { ...base, id: 'plain', land },
+    { ...base, id: 'good', land: { ...land, recover: { stage: 'uat', attempts: 2, reason: 'x' } }, recoverRebuilds: 1, recoverBuild: { runId: 'r1', attempts: 1 } },
+    { ...base, id: 'bad-rebuilds', recoverRebuilds: 'one' },
+    { ...base, id: 'bad-build', recoverBuild: { runId: 'r1', attempts: 'many' } },
+    { ...base, id: 'bad-land', land: { ...land, recover: { stage: 'uat', attempts: -1, reason: 'x' } } },
+    { ...base, id: 'null-build', recoverBuild: null },
+    { ...base, id: 'null-land', land: { ...land, recover: null } },
+  ] }))
+  expect(createQueueStore(path).list().map(entry => entry.id)).toEqual(['plain', 'good'])
+  spy.mockRestore()
+})

@@ -1137,6 +1137,16 @@ test('a card past its visit budget shows the attempt with no of', () => {
   expect(progress({ title: 'Recover', attempt: 1, maxAttempts: 1 })).not.toContain('attempt')
 })
 
+test('a recovering card shows the attempt, offers Watch first and keeps the log in the menu', () => {
+  const recovering = item({ id: 'l1', state: 'landing', runIds: ['r-1'], currentRunId: 'r-rec', land: { stage: 'uat', stages: { uat: { status: 'failed' } }, plan: [{ id: 'uat', run: 'auto', command: { command: 'x', args: [], timeoutSeconds: 1 }, env: {} }], message: 'Recovering, attempt 2 of 3', runId: 'r-1' } })
+  const { main, menu, row } = offered([recovering], 'l1')
+  expect(row.querySelector('.q-meta')!.textContent).toContain('Recovering, attempt 2 of 3')
+  expect(main).toEqual(['Watch'])
+  expect(menu).toContain('Log')
+  const shipping = item({ id: 'l2', state: 'landing', runIds: ['r-1'], land: { stage: 'uat', stages: {}, plan: [], runId: 'r-1' } })
+  expect(offered([shipping], 'l2').main).toEqual(['Log'])
+})
+
 test('a question for the owner shows Needs your answer, the questions as a list, a box and Send', () => {
   const row = rows(queue.renderQueue(readItems([asking]), context()))[0]!
   expect(row.querySelector('.pill-state')!.textContent).toBe('Needs your answer')

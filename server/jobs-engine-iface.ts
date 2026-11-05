@@ -22,6 +22,7 @@ export type EngineResolverParams = {
   forkSession?: boolean
   resumeSessionAt?: string
   allowedTools?: string[]
+  disallowedTools?: string[]
   step?: boolean
 }
 
@@ -99,12 +100,14 @@ async function chatBridgeSpawn(
   }
 }
 
-export const realEngineResolver: EngineResolver = async ({ engine, prompt, resumeSessionId, model, connection, coreRules, mcpServers, readOnly, purpose, edit, images, permissionMode, forkSession, resumeSessionAt, allowedTools, step }) => {
+export const realEngineResolver: EngineResolver = async ({ engine, prompt, resumeSessionId, model, connection, coreRules, mcpServers, readOnly, purpose, edit, images, permissionMode, forkSession, resumeSessionAt, allowedTools, disallowedTools, step }) => {
   if (!ENGINE_NAMES.includes(engine as EngineName)) {
+    if (disallowedTools?.length) throw new Error(`${engine} cannot enforce a deny list`)
     const selected = await modelDiscovery().effective(connection ?? await createConnectionStore().get(engine))
     if (selected.id !== engine) throw new Error('Connection does not match the selected engine')
     return { cmd: process.execPath, args: [join(import.meta.dir, 'agent-bridge.ts')], env: {}, stdin: JSON.stringify({ connection: selected, prompt, resumeSessionId, model, mcpServers, readOnly, purpose, edit }) }
   }
+  if (engine === 'codex' && disallowedTools?.length) throw new Error('codex cannot enforce a deny list')
   if (mcpServers?.length) throw new Error('Attached MCP tools require an ACP connection; configure a native ACP adapter for this agent')
   const name = engine as EngineName
   if (chatUsesBridge(engine, purpose)) {
@@ -116,6 +119,7 @@ export const realEngineResolver: EngineResolver = async ({ engine, prompt, resum
     : engineArgs(name, prompt, resumeSessionId, model)
   if (coreRules) args.unshift(...(name === 'codex' ? ['-c', `developer_instructions=${JSON.stringify(coreRules)}`] : ['--append-system-prompt', coreRules]))
   if (purpose === 'chat' && edit === false && name !== 'codex') args.push('--disallowedTools', 'Edit,Write,MultiEdit,NotebookEdit')
+  if (disallowedTools?.length) args.push('--disallowedTools', disallowedTools.join(','))
   if (purpose === 'chat' && name !== 'codex') args.push('--include-partial-messages')
   const pluginSettings = purpose !== 'chat' && name !== 'codex' ? workerPluginSettings() : null
   if (pluginSettings) args.push('--settings', pluginSettings)

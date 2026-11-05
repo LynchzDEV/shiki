@@ -17,7 +17,9 @@ export type LandStageState = {
   startedAt?: number; endedAt?: number; exitCode?: number | null; posted?: string; warning?: string
   preflight?: { exitCode: number; markdown: string }
 }
-export type LandProgress = { stage: string; stages: Record<string, LandStageState>; message?: string; plan: LandStage[]; plugin?: string; runId?: string }
+export type LandRecover = { stage: string; attempts: number; runId?: string; reason: string }
+export type LandProgress = { stage: string; stages: Record<string, LandStageState>; message?: string; plan: LandStage[]; plugin?: string; runId?: string; recover?: LandRecover }
+export type BuildRecover = { runId: string; attempts: number; recoveryRunId?: string }
 
 export type QueueItem = {
   id: string; source: string; externalId: string; title: string; url: string; repo: string; flowId: string | null
@@ -25,7 +27,7 @@ export type QueueItem = {
   runIds: string[]; currentRunId: string | null; questions: string[]; lastSeenId: string | null; error: string | null
   createdAt: number; updatedAt: number; repos?: string[]; repoReruns?: number
   realBaseline?: Record<string, string>; realChanged?: string[]; pick?: QueuePick; land?: LandProgress; autoPicks?: number; resumeRunId?: string
-  askedIn?: 'shikidan'
+  askedIn?: 'shikidan'; recoverRebuilds?: number; recoverBuild?: BuildRecover
 }
 
 export type NewQueueItem = Pick<QueueItem, 'source' | 'externalId' | 'title' | 'url' | 'repo' | 'flowId' | 'repos'>
@@ -70,10 +72,15 @@ function isItem(value: unknown): value is QueueItem {
     && (item.repoReruns === undefined || (Number.isInteger(item.repoReruns) && (item.repoReruns as number) >= 0))
     && (item.resumeRunId === undefined || isText(item.resumeRunId))
     && (item.askedIn === undefined || item.askedIn === 'shikidan')
+    && (item.recoverRebuilds === undefined || isCount(item.recoverRebuilds))
+    && (item.recoverBuild === undefined || (isRecord(item.recoverBuild) && isCount((item.recoverBuild as { attempts?: unknown }).attempts)))
 }
 
+const isCount = (value: unknown): boolean => Number.isInteger(value) && (value as number) >= 0
 const isRecord = (value: unknown): boolean => typeof value === 'object' && value !== null && !Array.isArray(value)
-const isLand = (value: unknown): boolean => isRecord(value) && isText((value as Record<string, unknown>).stage) && ((value as Record<string, unknown>).runId === undefined || isText((value as Record<string, unknown>).runId)) && isRecord((value as Record<string, unknown>).stages) && Array.isArray((value as Record<string, unknown>).plan)
+const isLand = (value: unknown): boolean => isRecord(value) && isText((value as Record<string, unknown>).stage) && ((value as Record<string, unknown>).runId === undefined || isText((value as Record<string, unknown>).runId)) && isRecord((value as Record<string, unknown>).stages) && Array.isArray((value as Record<string, unknown>).plan) && isStoredRecover((value as Record<string, unknown>).recover)
+
+const isStoredRecover = (value: unknown): boolean => value === undefined || (isRecord(value) && isCount((value as Record<string, unknown>).attempts))
 
 const isMissingFile = (error: unknown): boolean => (error as NodeJS.ErrnoException | null)?.code === 'ENOENT'
 
@@ -142,6 +149,7 @@ export function createQueueStore(path: string, clock: () => number = Date.now): 
       const next: QueueItem = { ...current, ...definedFields(patch), updatedAt: clock() }
       if ('pick' in patch && patch.pick === undefined) delete next.pick
       if ('land' in patch && patch.land === undefined) delete next.land
+      if ('recoverBuild' in patch && patch.recoverBuild === undefined) delete next.recoverBuild
       if (next.state !== 'waiting-info' || ('askedIn' in patch && patch.askedIn === undefined)) delete next.askedIn
       if (('resumeRunId' in patch && patch.resumeRunId === undefined) || !RESUMABLE.has(next.state)) delete next.resumeRunId
       await save(items.map(item => (item.id === id ? next : item)))

@@ -8,15 +8,19 @@ import { logSecrets, redactAll } from './log-redaction'
 import { getSetting } from './plugins/settings'
 import { getInstalled } from './plugins/store'
 import { QueueRefusal } from './queue-refusal'
+import { afterRecoveries, applyRecovery, MAX_STAGE_RECOVERIES, recoverGraph, stageRecoveryRequest } from './queue-recover'
 import { message } from './queue-replies'
-import type { QueueSource } from './queue-source'
-import type { LandProgress, LandStageState, QueueItem, QueueStore } from './queue-store'
+import { SETTLED, type RunView } from './queue-prompts'
+import type { QueueEngineDeps } from './queue-engine'
+import type { LandProgress, LandStageState, QueueItem } from './queue-store'
 import { configDir } from './secrets'
 import type { LandStage } from './workflows'
 
 const MAX_MARKDOWN = 64 * 1024
 const TAIL_LINES = 40
+const MAX_TAIL_CHARS = 4000
 const KILL_GRACE_MS = 10_000
+const MAX_RUN_LABEL = 120
 const PREFLIGHT_FAILED = 1
 const SPAWN_FAILED = 127
 const TIMED_OUT = 124
@@ -45,18 +49,13 @@ const postFile = z.object({
   }).optional(),
 })
 
-export type LandDeps = {
-  store: QueueStore
-  source(pluginId: string): QueueSource
-  needsYou(item: QueueItem, reason: string): void
-  now?: () => number
-}
+export type LandDeps = QueueEngineDeps & { settleRun(run: RunView): void }
 
 type Spawned = { exitCode: number | null; timedOut: boolean; stdout: string; stderr: string; startError?: string }
 
 type Command = LandStage['command']
 
-const lastLines = (text: string): string => text.trimEnd().split('\n').slice(-TAIL_LINES).join('\n')
+const lastLines = (text: string): string => text.trimEnd().split('\n').slice(-TAIL_LINES).join('\n').slice(-MAX_TAIL_CHARS)
 
 function killGroup(pid: number, signal: NodeJS.Signals): void {
   try { process.kill(-pid, signal) } catch { /* the group is already gone */ }
@@ -201,7 +200,7 @@ export function createLand(deps: LandDeps) {
 
   async function fail(id: string, reason: string, stage: string, change?: Partial<LandStageState>): Promise<void> {
     const item = found(id)
-    const failed = await store.update(id, { state: 'failed', error: reason, land: progress(item, stage, change, { stage }) })
+    const failed = await store.update(id, { state: 'failed', error: reason, currentRunId: null, land: progress(item, stage, change, { stage }) })
     deps.needsYou(failed, reason.split('\n')[0]!)
   }
 
@@ -270,6 +269,30 @@ export function createLand(deps: LandDeps) {
     await advance(id, name)
   }
 
+  async function recoverStage(id: string, name: string, reason: string, change?: Partial<LandStageState>, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) return
+    const item = found(id)
+    if (stageOf(item, name).run !== 'auto' || item.worktree === null) return fail(id, reason, name, change)
+    const attempts = item.land!.recover?.stage === name ? item.land!.recover.attempts : 0
+    if (attempts >= MAX_STAGE_RECOVERIES) return fail(id, afterRecoveries(reason, attempts), name, change)
+    const attempt = attempts + 1
+    const text = `Recovering, attempt ${attempt} of ${MAX_STAGE_RECOVERIES}`
+    await store.update(id, { land: progress(item, name, change, { stage: name, message: text, recover: { stage: name, attempts, reason } }) })
+    let runId: string
+    try {
+      const log = await redactForStage(item, name, (await readLogTail(landLogPath(id, name), LOG_BYTES)).content)
+      const { command, args } = stageOf(item, name).command
+      const commandLine = await redactForStage(item, name, [command, ...args].join(' '))
+      runId = (await deps.runner.start({ cwd: item.worktree, request: stageRecoveryRequest(item, { stage: name, reason, command: commandLine, log }), label: `Recover ${name}: ${item.title}`.slice(0, MAX_RUN_LABEL), graph: recoverGraph() }, { startedByUser: true })).id
+    } catch (error) {
+      return fail(id, `${reason}\nRecovery could not start: ${message(error)}`, name)
+    }
+    if (signal?.aborted) { await deps.runner.stop?.(runId); return }
+    await store.update(id, { currentRunId: runId, land: progress(found(id), name, undefined, { message: text, recover: { stage: name, attempts: attempt, runId, reason } }) })
+    const run = deps.runner.get(runId)
+    if (run !== undefined && SETTLED.has(run.status)) deps.settleRun(run)
+  }
+
   async function execute(id: string, name: string, signal: AbortSignal): Promise<void> {
     try {
       const item = found(id)
@@ -284,10 +307,11 @@ export function createLand(deps: LandDeps) {
       if (signal.aborted) return
       const log = await redactForStage(found(id), name, (await readLogTail(logFile, LOG_BYTES)).content)
       const ended = { endedAt: clock(), exitCode: result.exitCode }
-      if (result.startError !== undefined) return await fail(id, `${name} failed to start: ${result.startError}`, name, { ...ended, status: 'failed' })
-      if (result.timedOut) return await fail(id, `${name} failed (timed out after ${stage.command.timeoutSeconds}s)\n${lastLines(log)}`, name, { ...ended, status: 'failed' })
-      if (result.exitCode !== 0) return await fail(id, `${name} failed (exit ${result.exitCode})\n${lastLines(log)}`, name, { ...ended, status: 'failed' })
-      await store.update(id, { land: progress(found(id), name, { ...ended, status: 'ok' }) })
+      const failedWith = (reason: string): Promise<void> => recoverStage(id, name, reason, { ...ended, status: 'failed' }, signal)
+      if (result.startError !== undefined) return await failedWith(`${name} failed to start: ${result.startError}`)
+      if (result.timedOut) return await failedWith(`${name} failed (timed out after ${stage.command.timeoutSeconds}s)\n${lastLines(log)}`)
+      if (result.exitCode !== 0) return await failedWith(`${name} failed (exit ${result.exitCode})\n${lastLines(log)}`)
+      await store.update(id, { land: progress(found(id), name, { ...ended, status: 'ok' }, { recover: undefined }) })
       await finish(id, name, signal)
     } catch (error) {
       if (signal.aborted) return
@@ -340,6 +364,7 @@ export function createLand(deps: LandDeps) {
       if (item.state !== 'failed' || name === undefined) throw new QueueRefusal('There is no stage to retry', 409)
       if (item.land!.runId !== item.runIds.at(-1)) throw new QueueRefusal('This item was rebuilt since that stage; it lands again after a passing run', 409)
       if (item.land!.stages[name]?.status !== 'ok') {
+        await store.update(id, { land: progress(item, name, undefined, { recover: undefined }) })
         if (stageOf(item, name).run === 'button') await awaitButton(id, name)
         else await begin(id, name)
         return found(id)
@@ -367,7 +392,25 @@ export function createLand(deps: LandDeps) {
         const name = item.land!.stage
         const running = item.land!.stages[name]?.status === 'running'
         await fail(item.id, `Shikidan restarted during ${name}; use Retry stage`, name, running ? { status: 'failed' } : undefined)
+        const orphan = item.land!.recover?.runId === undefined ? undefined : deps.runner.get(item.land!.recover.runId)
+        if (orphan !== undefined && !SETTLED.has(orphan.status)) await deps.runner.stop?.(orphan.id)?.catch(error => console.error('queue recovery run not stopped', error))
       }
+    },
+
+    async recoverySettled(run: RunView): Promise<boolean> {
+      const item = store.list().find(entry => entry.state === 'landing' && entry.land?.recover?.runId === run.id)
+      if (item === undefined) return false
+      const { runId: _consumed, ...spent } = item.land!.recover!
+      const recover = run.unavailable ? { ...spent, attempts: spent.attempts - 1 } : spent
+      const { stage: name, reason } = recover
+      const consumed = await store.update(item.id, { currentRunId: null, land: progress(item, name, undefined, { recover }) })
+      await applyRecovery(deps, consumed, run, reason, {
+        pass: () => begin(item.id, name),
+        stopped: () => fail(item.id, `Stopped by you during ${name}`, name),
+        again: () => recoverStage(item.id, name, reason),
+        fail: why => fail(item.id, why, name),
+      })
+      return true
     },
 
     async log(id: string, name: string): Promise<string> {

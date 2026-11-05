@@ -513,7 +513,7 @@ function resumable(over: Partial<QueueEngineDeps> = {}, retryFails = false) {
   const retried: string[] = []
   let next = 0
   const h = harness({ ...over, runner: {
-    start: async input => { h.started.push(input); const id = `run-${++next}`; h.runs.set(id, { id, status: 'running', error: null, attempts: [] }); return { id } },
+    start: async input => { if (input.graph !== undefined) throw new Error('no recovery in this harness'); h.started.push(input); const id = `run-${++next}`; h.runs.set(id, { id, status: 'running', error: null, attempts: [] }); return { id } },
     get: id => h.runs.get(id),
     retry: async id => {
       retried.push(id)

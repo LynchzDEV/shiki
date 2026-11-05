@@ -36,7 +36,7 @@ const run: RunView = {
 async function setup() {
   const store = createQueueStore(join(dir, 'queue.json'))
   const engine = createQueueEngine({
-    store, runner: { start: async () => ({ id: 'run-1' }), get: id => (id === 'run-1' ? run : undefined) },
+    store, runner: { start: async (input) => { if (input.graph !== undefined) throw new Error('no recovery in this harness'); return { id: 'run-1' } }, get: id => (id === 'run-1' ? run : undefined) },
     source: () => ({ item: async () => ({ title: 't', url: 'u', contextMarkdown: '' }), post: async () => ({ commentId: 'c' }), replies: async () => ({ replies: [], lastId: null }) }),
     prepareWorktree: async () => ({ worktree: dir }), writeContext: async () => '', pluginFiles: () => dir, backupDir: () => dir, needsYou: () => {},
   })

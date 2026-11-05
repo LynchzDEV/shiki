@@ -183,6 +183,15 @@ shiki queue requeue <id>              # a failed card resumes the run it failed 
 
 **At once** on the Queue screen, or `shiki queue parallel <n>`, lets up to four cards build at the same time (default 1), but keep it at 1 for projects whose worktrees share one test database, because two cards running tests at once deadlock there.
 
+**When a card hits a problem**, the queue tries to fix it before it stops and asks for you:
+
+- An automatic ship stage whose command fails (could not start, timed out, non-zero exit) starts one Recover agent (Claude Opus) in the card's worktree. It reads the log, repairs the environment and tooling, and the stage runs again, up to 3 attempts. The card stays Shipping, its row says `Recovering, attempt 1 of 3`, and Watch shows the agent. Retry stage starts the count again. A production stage behind a button is never recovered, and neither is a stage you stopped, a restart, a bad `<stage>.json` or a failed post.
+- A build run that ends with no questions gets the same agent, up to 2 attempts, and then resumes.
+- If the agent finds the card's own code is wrong, the card is rebuilt once with that finding, and fails with it the second time.
+- If the engine itself is down (a usage limit, say), no attempt is spent: the card fails with the outage, and Retry stage or Resume picks it up later. A restart never starts a Recover agent for work it interrupted; a stage that starts after the restart and then fails is recovered like any other.
+
+The Recover agent's Claude session starts with a deny list covering `kamal`, `git push`, the ship scripts and the land start route, and Shikidan will not move it to another engine or add steps to its run. This is a guard on command text, not a sandbox: a script that calls one of them under another name is only stopped by the agent's rules, and an ordinary command whose text matches, such as `git stash push` or a path like `.github/workflows/push.yml`, is refused too. The agent also holds no lock while it works, so where worktrees share a test database, tests it runs can still clash with another card's. It is not allowed to drop that database.
+
 **Questions go to the right person.** An agent tags each question. `biz:` is a product or business decision, written in plain Thai, and goes on the card. Everything else, tagged `tech:` or untagged, stays in Shikidan: the row says **Needs your answer** with a box to reply in, nothing is posted on the card, and sending the answer rebuilds the card with it (`POST /api/queue/<id>/answer` with `{ "text": "..." }`). When a run asks both, the technical questions come first and the agent asks the business ones again after your answer.
 
 - `--json` prints the server's JSON as one document (NDJSON for `job follow` and `job new --follow`); every command supports it.

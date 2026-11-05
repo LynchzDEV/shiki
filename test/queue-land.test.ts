@@ -63,7 +63,7 @@ function harness(sourceOver: Partial<QueueSource> = {}) {
   }
   const deps: QueueEngineDeps = {
     store,
-    runner: { start: async () => { const id = `run-${++next}`; runs.set(id, { id, status: 'running', error: null, attempts: [] }); return { id } }, get: id => runs.get(id) },
+    runner: { start: async (input) => { if (input.graph !== undefined) throw new Error('no recovery in this harness'); const id = `run-${++next}`; runs.set(id, { id, status: 'running', error: null, attempts: [] }); return { id } }, get: id => runs.get(id) },
     source: () => source,
     prepareWorktree: async (repo, label) => { const worktree = join(dir, 'wt', label); await mkdir(worktree, { recursive: true }); return { worktree } },
     writeContext: async (_pluginId, context, cwd) => join(cwd, `20261102-${context.name}.md`),

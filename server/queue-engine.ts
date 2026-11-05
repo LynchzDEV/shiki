@@ -2,11 +2,11 @@ import { basename, join } from 'node:path'
 
 import type { TaskContext } from './plugins/context-files'
 import { backUpAnswers, dropAnswerBackups, restoreAnswers } from './queue-answers'
-import { bizQuestionsOf, blockedSummary, cardImagesMarkdown, NO_PICK, noPickMarkdown, pickOf, repoRequestsOf, runRequest, SETTLED, oneLine, stillOpenMarkdown, techQuestionsOf, type PickAnswer, type RunView } from './queue-prompts'
+import { agentCouldFix, bizQuestionsOf, blockedSummary, cardImagesMarkdown, NO_PICK, noPickMarkdown, pickOf, repoRequestsOf, runRequest, SETTLED, oneLine, stillOpenMarkdown, techQuestionsOf, type PickAnswer, type RunView } from './queue-prompts'
 import { adoptionProblem, grantRepos, movedRealRepos, movedText, realRepoStates, reposToOffer, SINGLE_REPO_ASK } from './queue-repo-asks'
 import { importCardImages, queueFolder, refuseLinkedQueueFolders } from './queue-files'
 import { createLand, PICK_FILE, type Land } from './queue-land'
-import { askOwner } from './queue-recover'
+import { afterRecoveries, applyRecovery, askOwner, buildRecoveryRequest, MAX_BUILD_RECOVERIES, recoverGraph } from './queue-recover'
 import { buildReport } from './queue-report'
 import { QueueRefusal } from './queue-refusal'
 import { message, replyCheck } from './queue-replies'
@@ -16,7 +16,7 @@ import type { QueueItem, QueueStore } from './queue-store'
 import { fileExists, freshWorktree, WorktreeGone, worktreeRestorer } from './queue-worktree'
 
 export type QueueRunner = {
-  start(input: { cwd: string; request: string; label: string; workflowId?: string }, context: { startedByUser: boolean }): Promise<{ id: string }>
+  start(input: { cwd: string; request: string; label: string; workflowId?: string; graph?: unknown }, context: { startedByUser: boolean }): Promise<{ id: string }>
   get(id: string): RunView | undefined
   retry?(id: string): Promise<{ id: string }>
   stop?(id: string): Promise<unknown>
@@ -121,6 +121,8 @@ function found(store: QueueStore, id: string): QueueItem {
 }
 
 type QueueSteps = {
+  atBoot(work: () => Promise<void>): Promise<void>
+  failer(resumeRunId?: string): (item: QueueItem, reason: string) => Promise<void>
   fail(item: QueueItem, reason: string): Promise<void>
   settle(run: RunView): Promise<void>
   startNext(): Promise<void>
@@ -133,6 +135,12 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
   let paused: QueuePause | null = null
   let backoff = 0
   let timer: ReturnType<typeof setTimeout> | undefined
+
+  let booting = false
+  const atBoot = async (work: () => Promise<void>): Promise<void> => {
+    booting = true
+    try { await work() } finally { booting = false }
+  }
 
   const failer = (resumeRunId?: string) => async (item: QueueItem, reason: string): Promise<void> => {
     const failed = await store.update(item.id, { state: 'failed', error: reason, currentRunId: null, pick: undefined, questions: [], resumeRunId })
@@ -178,7 +186,7 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
       deps.needsYou(parked, 'Pick a design variant')
       return
     }
-    if (questions.length === 0) return fail(item, run.error ?? `Run ${run.status}`)
+    if (questions.length === 0) return recoverOrFail(item, run)
     if (tech.length > 0) return askOwner(deps, item, tech)
     try {
       const posted = await deps.source(item.source).post({ id: item.externalId, kind: 'ask', lines: biz })
@@ -186,6 +194,47 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
     } catch (error) {
       await fail(item, `Could not post the questions: ${message(error)}`)
     }
+  }
+
+  async function recoverOrFail(item: QueueItem, run: RunView): Promise<void> {
+    const reason = run.error ?? `Run ${run.status}`
+    if (run.status === 'stopped' || deps.runner.retry === undefined || !agentCouldFix(run)) return failer(run.id)(item, reason)
+    const attempts = item.recoverBuild?.runId === run.id ? item.recoverBuild.attempts : 0
+    return startBuildRecovery(item, run, reason, attempts)
+  }
+
+  async function startBuildRecovery(item: QueueItem, run: RunView, reason: string, attempts: number): Promise<void> {
+    const fail = failer(run.id)
+    if (booting) return fail(item, reason)
+    if (attempts >= MAX_BUILD_RECOVERIES) return fail(item, afterRecoveries(reason, attempts))
+    let recoveryRunId: string
+    try {
+      if (item.worktree === null) throw new Error('The item has no workspace')
+      const request = buildRecoveryRequest(item, reason, run.attempts.at(-1)?.output ?? '')
+      recoveryRunId = (await deps.runner.start({ cwd: item.worktree, request, label: `Recover: ${item.title}`.slice(0, MAX_RUN_LABEL), graph: recoverGraph() }, { startedByUser: true })).id
+    } catch (error) {
+      return fail(item, `${reason}\nRecovery could not start: ${message(error)}`)
+    }
+    await store.update(item.id, { state: 'building', currentRunId: recoveryRunId, error: null, questions: [], pick: undefined, recoverBuild: { runId: run.id, attempts: attempts + 1, recoveryRunId } })
+    await settleIfDone(recoveryRunId)
+  }
+
+  async function buildRecoverySettled(item: QueueItem, run: RunView): Promise<void> {
+    const { runId, attempts } = item.recoverBuild!
+    const failed = deps.runner.get(runId)
+    const reason = failed?.error ?? (failed === undefined ? `Run ${run.status}` : `Run ${failed.status}`)
+    if (booting) return failer(runId)(item, reason)
+    if (run.unavailable) await store.update(item.id, { recoverBuild: { runId, attempts: attempts - 1 } })
+    await applyRecovery(deps, item, run, reason, {
+      pass: async () => {
+        const resumedRun = await deps.runner.retry!(runId)
+        await store.update(item.id, { currentRunId: resumedRun.id, recoverBuild: { runId, attempts } })
+        await settleIfDone(resumedRun.id)
+      },
+      stopped: () => failer(runId)(item, run.error ?? reason),
+      again: () => startBuildRecovery(item, failed ?? run, reason, attempts),
+      fail: why => failer(runId)(item, why),
+    })
   }
 
   async function autoPicked(item: QueueItem, option: string, plugin: string | undefined): Promise<boolean> {
@@ -243,6 +292,9 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
 
   async function settle(run: RunView): Promise<void> {
     if (!SETTLED.has(run.status)) return
+    if (await land.recoverySettled(run)) return
+    const recovering = store.list().find(entry => entry.state === 'building' && entry.recoverBuild?.recoveryRunId === run.id)
+    if (recovering !== undefined) return buildRecoverySettled(recovering, run)
     const found = settling(run)
     if (found === undefined) return
     applied.set(run.id, fingerprint(run))
@@ -324,7 +376,7 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
     }
   }
 
-  return { fail, settle, startNext, paused: () => paused }
+  return { atBoot, failer, fail, settle, startNext, paused: () => paused }
 }
 
 export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
@@ -332,8 +384,8 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
   const checkListeners = new Set<() => void>()
   const tell = (): void => { for (const listener of checkListeners) listener() }
   let preparingId: string | null = null
-  const land = createLand(deps)
-  const { fail, settle, startNext, paused } = queueSteps(deps, land, (id) => { preparingId = id; tell() }, () => { void kick().catch(error => console.error('queue resume failed', error)) }, () => tell())
+  const land = createLand({ ...deps, settleRun: (run) => { void onRunSettled(run).catch(error => console.error('Queue settle failed', error)) } })
+  const { atBoot, failer, fail, settle, startNext, paused } = queueSteps(deps, land, (id) => { preparingId = id; tell() }, () => { void kick().catch(error => console.error('queue resume failed', error)) }, () => tell())
   let lane: Promise<unknown> = Promise.resolve()
   const serial = <T>(work: () => Promise<T>): Promise<T> => {
     const result = lane.then(work)
@@ -343,6 +395,10 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
 
   function kick(): Promise<void> {
     return serial(startNext)
+  }
+
+  function onRunSettled(run: RunView): Promise<void> {
+    return serial(async () => { await settle(run); await startNext() })
   }
 
   const refuseDuplicate = (input: AddInput): void => {
@@ -371,7 +427,7 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
     if (!REQUEUEABLE.has(item.state)) throw stateRefusal(item.state)
     if (runningInStudio(item)) throw new QueueRefusal('It is running in Studio now', 409)
     const resumeRunId = item.state === 'failed' && options.fresh !== true ? item.resumeRunId : undefined
-    await store.update(id, { state: 'queued', error: null, currentRunId: null, pick: undefined, land: undefined, questions: [], repoReruns: item.repoReruns === undefined ? undefined : 0, realChanged: item.realChanged === undefined ? undefined : [], resumeRunId })
+    await store.update(id, { state: 'queued', error: null, currentRunId: null, pick: undefined, land: undefined, questions: [], repoReruns: item.repoReruns === undefined ? undefined : 0, realChanged: item.realChanged === undefined ? undefined : [], resumeRunId, recoverBuild: undefined })
     await store.move(id, store.list().length)
     await startNext()
     return found(store, id)
@@ -406,7 +462,7 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
   const stop = (id: string): Promise<QueueItem> => serial(async () => {
     const item = found(store, id)
     if (item.state === 'building') await stopRun(item)
-    else if (item.state === 'landing') await land.stop(id)
+    else if (item.state === 'landing') { await stopRun(item); await land.stop(id) }
     else throw stateRefusal(item.state)
     return found(store, id)
   })
@@ -414,7 +470,7 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
   const remove = (id: string): Promise<void> => serial(async () => {
     const item = found(store, id)
     if (item.state === 'building') await stopRun(item)
-    if (item.state === 'landing') land.halt(id)
+    if (item.state === 'landing') { await stopRun(item); land.halt(id) }
     await store.remove(id)
     await dropAnswerBackups(deps.backupDir(id)).catch(error => console.error('queue answer backups not removed', error))
   })
@@ -470,12 +526,14 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
 
   async function recover(): Promise<void> {
     await serial(async () => {
-      for (const item of store.list().filter(entry => entry.state === 'building')) {
-        const run = item.currentRunId === null ? undefined : deps.runner.get(item.currentRunId)
-        if (run === undefined) await fail(item, 'Its run is gone')
-        else if (SETTLED.has(run.status)) await settle(run)
-      }
       await land.recover()
+      await atBoot(async () => {
+        for (const item of store.list().filter(entry => entry.state === 'building')) {
+          const run = item.currentRunId === null ? undefined : deps.runner.get(item.currentRunId)
+          if (run === undefined) await failer(item.recoverBuild?.runId)(item, 'Its run is gone')
+          else if (SETTLED.has(run.status)) await settle(run)
+        }
+      })
       await startNext()
     })
   }
@@ -495,7 +553,7 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
     landIdle: land.idle,
     landLog: land.log,
     report: async id => buildReport(found(store, id), runId => deps.runner.get(runId)),
-    onRunSettled: run => serial(async () => { await settle(run); await startNext() }),
+    onRunSettled,
     checkReplies,
     answer,
     checkedAt: () => lastCheckedAt,
