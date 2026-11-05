@@ -1373,6 +1373,10 @@ a.q-src:hover { color: var(--accent); }
 .q-more { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: var(--r-xs); corner-shape: var(--corner); background: none; color: var(--muted); cursor: pointer; }
 .q-more:hover, .q-more:focus-visible, .q-more[aria-expanded="true"] { background: color-mix(in srgb, var(--hi) 55%, var(--paper)); color: var(--text); }
 .q-acts .q-more svg { width: 16px; height: 16px; }
+.q-done { position: relative; display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: var(--r-xs); corner-shape: var(--corner); background: var(--green-ink); color: var(--green-bg); cursor: pointer; }
+.q-done:hover, .q-done:focus-visible { background: color-mix(in srgb, var(--green-ink) 82%, var(--text)); }
+.q-done:disabled { opacity: .55; cursor: default; }
+.q-acts .q-done svg { width: 16px; height: 16px; stroke-width: 2; }
 .q-row:has(.q-menu) { position: relative; z-index: 4; }
 .q-acts .q-menu { top: calc(100% + 4px); right: 0; left: auto; width: 240px; max-width: calc(100vw - 16px); }
 .q-menu .row > span { white-space: nowrap; }
@@ -1504,6 +1508,7 @@ dialog, .access-dialog, .confirm-dialog { max-width: calc(100vw - 32px); max-hei
 #phone-sessions, #screen-actions, .sb-destinations, .touch-only { display: none; }
 .popover.row-menu.anchored { position: fixed; left: auto; width: 220px; z-index: 70; }
 @media (max-width: 600px), (orientation: landscape) and (max-height: 500px) and (pointer: coarse), (min-width: 901px) and (max-width: 1100px) and (pointer: coarse) and (orientation: landscape) {
+  .q-done::after { content: ""; position: absolute; inset: -6px; }
   #live.live-workspace { padding: 0 10px; }
   #live .term-host { padding: 0; gap: 0; border-radius: 0; box-shadow: none; }
   #live .term-bar { position: static; flex: none; min-height: 48px; max-width: none; gap: 6px; padding: 0; border: 0; border-radius: 0; background: transparent; }

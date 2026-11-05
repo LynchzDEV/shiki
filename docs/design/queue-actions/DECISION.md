@@ -13,5 +13,6 @@
 - Stop on a shipping card carries the note "A push or deploy cut short can leave the remote half-updated."
 - The menu stays open across live repaints. It closes on any action, a click outside, or Escape. Only one menu is open at a time.
 - "started N min ago" leaves the building card's action area; the step line in the card's details already says what is running.
+- Exception: a card waiting on a stage also shows a green check before the stage button, requested by the owner. It closes the card as done without running the stage. Its "Mark as done" tooltip needs hover, so the icon has to read on a phone without it.
 
 **Rejected:** B: the icons only show on hover, which a phone never sends, and the icons need tooltips to be read. C: every action except the main one costs an extra tap, and opening a card would compete with clicking the card to watch its run.

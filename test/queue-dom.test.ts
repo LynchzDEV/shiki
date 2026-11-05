@@ -56,7 +56,7 @@ const menuItem = (id: string, label: string): HTMLButtonElement => {
 const offered = (items: QueueItem[], id: string) => {
   const row = rows(queue.renderQueue(items, context({ menuId: id }))).find(entry => entry.dataset.id === id)!
   const texts = (selector: string) => [...row.querySelectorAll(selector)].map(button => button.textContent)
-  return { main: texts('.q-acts > button:not(.q-more)'), menu: texts('.q-menu [role="menuitem"]'), row }
+  return { main: texts('.q-acts > button:not(.q-more, .q-done)'), menu: texts('.q-menu [role="menuitem"]'), row }
 }
 const escape = () => doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
 const drag = (type: string, element: Element) => element.dispatchEvent(new window.Event(type, { bubbles: true, cancelable: true }))
@@ -962,6 +962,47 @@ test('Retry stage posts to the land retry route', async () => {
   await flush()
   expect(calls.map(call => `${call.method} ${call.url}`)).toEqual(['POST /api/queue/x1/land/retry'])
   expect(toasts).toEqual(['Retrying the stage of Stuck one'])
+})
+
+test('a card waiting on a stage shows a green check before the stage button and other cards do not', () => {
+  const { row } = offered(shipping, 'a1')
+  const buttons = [...row.querySelectorAll('.q-acts > button')]
+  expect(buttons[0]!.classList.contains('q-done')).toBe(true)
+  expect(buttons[1]!.textContent).toBe('Deploy prod')
+  const check = row.querySelector('.q-done')!
+  expect(check.getAttribute('title')).toBe('Mark as done')
+  expect(check.getAttribute('aria-label')).toBe('Mark Waiting one as done')
+  expect(row.querySelector('.q-done svg')).not.toBeNull()
+  for (const id of ['l1', 'd1', 'x1']) expect(offered(shipping, id).row.querySelector('.q-done')).toBeNull()
+})
+
+test('the check posts to the done route and opens no dialog', async () => {
+  send([awaiting])
+  await flush()
+  click(rowOf('a1').querySelector('.q-done')!)
+  await flush()
+  expect(calls.map(call => `${call.method} ${call.url}`)).toEqual(['POST /api/queue/a1/land/done'])
+  expect(toasts).toEqual(['Marked Waiting one as done'])
+  expect(doc.querySelector('dialog.q-land')).toBeNull()
+})
+
+test('a refused check shows the reason', async () => {
+  replies.set('POST /api/queue/a1/land/done', () => Response.json({ error: 'It is landed now' }, { status: 409 }))
+  send([awaiting])
+  await flush()
+  click(rowOf('a1').querySelector('.q-done')!)
+  await flush()
+  expect(toasts).toEqual(['It is landed now'])
+})
+
+test('a card marked done reads Done and a landed card reads Landed', () => {
+  const skipped = item({ id: 'd2', state: 'landed', title: 'Skipped one', runIds: ['r-d2'], land: { stage: 'prod', stages: { prod: { status: 'skipped' } }, plan: stagePlan } } as Partial<QueueItem>)
+  const row = rows(queue.renderQueue([skipped, landed], context())).find(entry => entry.dataset.id === 'd2')!
+  expect(row.querySelector('.pill-state')?.textContent).toBe('Done')
+  expect(row.querySelector('.q-meta')?.textContent).toContain('Done ·')
+  const shipped = rows(queue.renderQueue([skipped, landed], context())).find(entry => entry.dataset.id === 'd1')!
+  expect(shipped.querySelector('.pill-state')?.textContent).toBe('Landed')
+  expect(shipped.querySelector('.q-meta')?.textContent).toContain('Landed ·')
 })
 
 test('the stage button opens a confirm dialog with the preflight rendered; Confirm starts the stage', async () => {

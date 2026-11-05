@@ -110,7 +110,8 @@ export function stageLabel(land: LandView, id: string): string {
   return land.plan.find(stage => stage.id === id)?.label ?? id
 }
 
-const stagePill = (item: QueueItemView): string | undefined => (item.state === 'landing' && item.land !== undefined ? `Shipping: ${stageLabel(item.land, item.land.stage)}` : undefined)
+const markedDone = (item: QueueItemView): boolean => item.state === 'landed' && item.land?.stages[item.land.stage]?.status === 'skipped'
+const stagePill = (item: QueueItemView): string | undefined => (markedDone(item) ? 'Done' : item.state === 'landing' && item.land !== undefined ? `Shipping: ${stageLabel(item.land, item.land.stage)}` : undefined)
 const failedAtStage = (item: QueueItemView): boolean => item.state === 'failed' && item.land !== undefined && item.land.runId === item.runIds.at(-1)
 const firstLine = (text: string): string => text.split('\n')[0]!
 
@@ -182,7 +183,7 @@ function progressText(item: QueueItemView, items: readonly QueueItemView[], now:
   if (item.state === 'ready') return `Built · ${ageText(item.updatedAt, now)}`
   if (item.state === 'landing') return item.land?.message ?? `Running · ${ageText(item.updatedAt, now)}`
   if (item.state === 'awaiting-stage') return `Waiting for you · ${ageText(item.updatedAt, now)}`
-  if (item.state === 'landed') return `Landed · ${ageText(item.updatedAt, now)}`
+  if (item.state === 'landed') return `${markedDone(item) ? 'Done' : 'Landed'} · ${ageText(item.updatedAt, now)}`
   return failedAtStage(item) ? firstLine(item.error ?? 'Failed') : item.error ?? 'Failed'
 }
 
@@ -252,8 +253,9 @@ function actions(item: QueueItemView, armed: string | null | undefined, menuId: 
   const main = mainAction(item)
   const open = menuId === item.id
   const mainButton = main === null ? [] : [button(main.label, 'connection-button primary', { 'data-id': item.id, 'data-act': main.act, 'aria-label': main.ariaLabel ?? false }, main.icon)]
+  const markDone = item.state === 'awaiting-stage' && main !== null ? [el('button', { type: 'button', class: 'q-done', 'data-id': item.id, 'data-act': 'mark-done', 'aria-label': `Mark ${item.title} as done`, title: 'Mark as done' }, icon('check-icon'))] : []
   const more = el('button', { type: 'button', class: 'q-more', 'data-id': item.id, 'data-act': 'more', 'aria-haspopup': 'menu', 'aria-expanded': String(open), 'aria-label': `More actions for ${item.title}`, title: 'More actions' }, icon('more-icon'))
-  return el('div', { class: 'q-acts' }, ...mainButton, more, ...(open ? [actionMenu(item, armed)] : []))
+  return el('div', { class: 'q-acts' }, ...markDone, ...mainButton, more, ...(open ? [actionMenu(item, armed)] : []))
 }
 
 function questionsThread(item: QueueItemView, now: number): HTMLElement {

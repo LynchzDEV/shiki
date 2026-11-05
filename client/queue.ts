@@ -243,6 +243,7 @@ function start(section: HTMLElement): void {
     if (button && item && action === 'open-run') { dispatchEvent(new CustomEvent('quiet:studio-run', { detail: { runId: item.runIds.at(-1) } })); return }
     if (button && item && action === 'watch') { watch(item); return }
     if (button && item && action === 'answer') { void sendAnswer(button, item); return }
+    if (button && item && action === 'mark-done') { void act(button, () => postJson(`/api/queue/${encodeURIComponent(item.id)}/land/done`, {}), `Marked ${item.title} as done`); return }
     if (button && item && action === 'land-confirm') { landDialogs.confirm(item.id); return }
     if (button && item && action === 'land-log') { landDialogs.log(item.id); return }
     if (button && item && action === 'report') { landDialogs.report(item.id); return }
