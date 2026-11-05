@@ -185,7 +185,6 @@ function visible(on: boolean): void {
   document.body.dataset.live = String(on)
   if (on) reveal($('live'), true)
   else $('live').hidden = true
-  $('flow').hidden = !on && $('flow').dataset.open !== 'true'
   const active = on && activeId ? views.get(activeId)?.session ?? null : null
   if (changed) dispatchEvent(new CustomEvent('quiet:activity-scope', { detail: active }))
   const url = new URL(location.href)
