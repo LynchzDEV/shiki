@@ -330,6 +330,52 @@ test('a queueSource plugin with items lists them under its Queue row as before',
   await flush()
 })
 
+const landed = item({ id: 'l1', state: 'landed', title: 'Already shipped' })
+
+test('a landed item leaves the sidebar rows and count but stays on the Queue screen', async () => {
+  stream().send([building, landed])
+  await flush()
+  const group = groups()[0]!
+  expect([...group.querySelectorAll<HTMLElement>('[data-kind="queue-item"]')].map(row => row.dataset.key)).toEqual(['queue-item:b1'])
+  expect(group.querySelector('.q-sb-n')?.textContent).toBe('1')
+  expect((passedOn.at(-1) as QueueItem[]).map(entry => entry.id)).toEqual(['b1', 'l1'])
+  expect([...doc.querySelectorAll<HTMLElement>('#queue .q-row')].map(row => row.dataset.id)).toContain('l1')
+})
+
+test('a queue of only landed items shows Queue 0 with no fold button', async () => {
+  stream().send([landed])
+  await flush()
+  const group = groups()[0]!
+  expect(group.querySelector('.q-sb-n')?.textContent).toBe('0')
+  expect(group.querySelectorAll('[data-kind="queue-item"]')).toHaveLength(0)
+  expect(group.querySelector('.q-sb-fold')).toBeNull()
+})
+
+test('the collapsed rail does not count landed items', async () => {
+  stream().send([building, landed])
+  await flush()
+  doc.getElementById('sb-shell')!.classList.add('collapsed')
+  dispatchEvent(new Event('quiet:sidebar-toggle'))
+  expect(railQueue()!.getAttribute('title')).toBe('Queue · 1 item, 1 building')
+  expect(railQueue()!.querySelector('.q-mini-n')?.textContent).toBe('1')
+  doc.getElementById('sb-shell')!.classList.remove('collapsed')
+  dispatchEvent(new Event('quiet:sidebar-toggle'))
+})
+
+test('landed items under a plugin without queueSource still leave a way to the Queue screen', async () => {
+  const declared = plugins
+  plugins = plugins.map(plugin => ({ ...plugin, queueSource: false }))
+  dispatchEvent(new Event('quiet:plugins-changed'))
+  stream().send([landed])
+  await flush()
+  expect(groups()).toHaveLength(1)
+  expect(groups()[0]!.querySelector('.q-sb-n')?.textContent).toBe('0')
+  plugins = declared
+  dispatchEvent(new Event('quiet:plugins-changed'))
+  stream().send([])
+  await flush()
+})
+
 test('an empty queue shows no row under a plugin without queueSource', async () => {
   plugins = plugins.map(plugin => ({ ...plugin, queueSource: false }))
   dispatchEvent(new Event('quiet:plugins-changed'))

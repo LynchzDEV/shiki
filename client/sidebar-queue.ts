@@ -16,6 +16,8 @@ const QUEUE_DOT: Record<QueueState, { s: string; label: string }> = {
   landed: { s: 'done', label: 'Landed' },
 }
 
+const notLanded = (items: readonly QueueItemView[]): QueueItemView[] => items.filter(item => item.state !== 'landed')
+
 let queueItems: QueueItemView[] = []
 
 export const currentQueueItems = (): readonly QueueItemView[] => queueItems
@@ -111,26 +113,28 @@ function foldButton(group: HTMLElement, source: string): HTMLButtonElement {
 
 export function queueGroup(items: readonly QueueItemView[], isQueueSource: boolean, source: string): HTMLElement[] {
   if (items.length === 0 && !isQueueSource) return []
+  const open = notLanded(items)
   const head = queueLink('queue', QUEUE_KEY, showQueue)
   const icon = document.createElement('span')
   icon.className = 'sb-ic'
   icon.innerHTML = '<svg><use href="#q-queue"/></svg>'
   const text = Object.assign(document.createElement('span'), { className: 'sb-t', textContent: 'Queue' })
-  const count = Object.assign(document.createElement('em'), { className: 'q-sb-n', textContent: String(items.length) })
+  const count = Object.assign(document.createElement('em'), { className: 'q-sb-n', textContent: String(open.length) })
   head.append(icon, text, count)
   const group = document.createElement('div')
   group.className = 'q-sb q-sb-children'
   const headItem = inItem(head)
   headItem.classList.add('q-sb-head')
-  if (items.length > 0) headItem.append(foldButton(group, source))
-  group.append(headItem, ...items.map(queueItemRow))
+  if (open.length > 0) headItem.append(foldButton(group, source))
+  group.append(headItem, ...open.map(queueItemRow))
   return [group]
 }
 
 export function queueRail(items: readonly QueueItemView[], hasQueueSource: boolean): HTMLElement[] {
   if (items.length === 0 && !hasQueueSource) return []
-  const building = items.filter(item => item.state === 'building').length
-  const label = `Queue · ${items.length} item${items.length === 1 ? '' : 's'}${building > 0 ? `, ${building} building` : ''}`
+  const open = notLanded(items)
+  const building = open.filter(item => item.state === 'building').length
+  const label = `Queue · ${open.length} item${open.length === 1 ? '' : 's'}${building > 0 ? `, ${building} building` : ''}`
   const element = document.createElement('a')
   element.className = 'sb-mini'
   element.dataset.kind = 'queue'
@@ -142,7 +146,7 @@ export function queueRail(items: readonly QueueItemView[], hasQueueSource: boole
   const icon = document.createElement('span')
   icon.className = 'sb-ic'
   icon.innerHTML = '<svg><use href="#q-queue"/></svg>'
-  element.append(icon, Object.assign(document.createElement('em'), { className: 'q-mini-n', textContent: String(items.length) }))
+  element.append(icon, Object.assign(document.createElement('em'), { className: 'q-mini-n', textContent: String(open.length) }))
   if (building > 0) {
     const dot = Object.assign(document.createElement('i'), { className: 'sb-dot' })
     dot.dataset.s = 'running'
