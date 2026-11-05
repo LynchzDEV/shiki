@@ -1133,7 +1133,7 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
     run.agents = await agentsFor(run.workflow, root ? { engine: root.engine, model: root.model ?? null } : undefined, sessionOf(run))
     await preflight(run)
   }
-  async function retry(id: string): Promise<WorkflowRun> {
+  async function retry(id: string, note?: string): Promise<WorkflowRun> {
     return exclusive(id, async () => {
       const run = runs.get(id)
       if (!run) throw new Error('Run not found')
@@ -1150,6 +1150,7 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
       const taken = claimPaths(run)
       if (taken) { deps.manager.releaseWorkspace(run.cwd, run.id); throw new Error(`Another run owns ${taken}`) }
       run.status = 'running'; run.error = null; run.dismissedAt = null
+      if (note !== undefined) run.request = `${run.request}\n\n${note}`
       if (run.chatId) run.reportedAt = null
       await advance(run)
       return structuredClone(run)

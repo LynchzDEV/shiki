@@ -175,6 +175,7 @@ test('recovery counters must be whole numbers, and items without them still load
     { ...base, id: 'bad-land', land: { ...land, recover: { stage: 'uat', attempts: -1, reason: 'x' } } },
     { ...base, id: 'null-build', recoverBuild: null },
     { ...base, id: 'null-land', land: { ...land, recover: null } },
+    { ...base, id: 'bad-note', recoverBuild: { runId: 'r1', attempts: 1, note: 7 } },
   ] }))
   expect(createQueueStore(path).list().map(entry => entry.id)).toEqual(['plain', 'good'])
   spy.mockRestore()

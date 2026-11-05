@@ -2290,6 +2290,22 @@ test('the real runner keeps the code: and tech: evidence a recovery verdict read
   expect(recoveryVerdict(await finished(tech.id))).toEqual({ kind: 'tech', questions: ['Which key file?'] })
 })
 
+test('a note given to retry reaches the next prompt of the run, and a retry without one changes nothing', async () => {
+  let said = { outcome: 'fail', evidence: ['tests are red'] }
+  await build(agentSaying(() => said))
+  const run = await runner.start({ graph: recoverGraph(), cwd: repo, request: 'A card build', label: 'build' }, { startedByUser: true })
+  await finished(run.id)
+  await runner.retry(run.id)
+  const plain = await finished(run.id)
+  expect(plain.request).toBe('A card build')
+  said = { outcome: 'pass', evidence: ['done'] }
+  await runner.retry(run.id, 'The owner answered: use the test database')
+  const done = await finished(run.id)
+  expect(done.status).toBe('done')
+  expect(done.request).toBe('A card build\n\nThe owner answered: use the test database')
+  expect(done.attempts.at(-1)!.prompt).toContain('The owner answered: use the test database')
+})
+
 test('the deny list reaches the engine for a recovery run, and a normal step gets none', async () => {
   const seen: Array<{ engine: string; disallowedTools?: string[] }> = []
   await build(params => { seen.push({ engine: params.engine, disallowedTools: params.disallowedTools }); return resolver(params) })

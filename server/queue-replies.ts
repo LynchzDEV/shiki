@@ -26,6 +26,7 @@ export type ReplyCheck = {
   read(item: QueueItem): Promise<SourceReplies | null>
   apply(item: QueueItem, worktree: string, result: SourceReplies): Promise<boolean>
   answer(item: QueueItem, worktree: string, text: string): Promise<void>
+  keepAnswer(item: QueueItem, worktree: string, text: string): Promise<void>
 }
 
 export function replyCheck(deps: QueueEngineDeps, fail: (item: QueueItem, reason: string) => Promise<void>): ReplyCheck {
@@ -34,14 +35,18 @@ export function replyCheck(deps: QueueEngineDeps, fail: (item: QueueItem, reason
   const readFailures = failureCounter(deps, 'Could not read replies')
   const saveFailures = failureCounter(deps, 'Could not save the replies')
 
-  async function resume(item: QueueItem, stored: string, replies: SourceReply[], lastId: string | null): Promise<void> {
+  async function saved(item: QueueItem, stored: string, replies: SourceReply[]): Promise<{ worktree: string; answerPaths: string[] }> {
     const worktree = await restore({ ...item, worktree: stored })
     await refuseLinkedQueueFolders(worktree, item.source)
     const images = await importImages(deps.pluginFiles(item.source), replies, queueFolder(worktree, item.source))
     const markdown = answersMarkdown(item.questions, replies, images)
     const path = await deps.writeContext(item.source, { name: `answers-${item.externalId}`, markdown }, worktree)
     await backUpAnswers(deps.backupDir(item.id), path, markdown)
-    await store.update(item.id, { state: 'queued', worktree, answerPaths: [...item.answerPaths, path], questions: [], lastSeenId: lastId ?? item.lastSeenId, land: undefined })
+    return { worktree, answerPaths: [...item.answerPaths, path] }
+  }
+
+  async function resume(item: QueueItem, stored: string, replies: SourceReply[], lastId: string | null): Promise<void> {
+    await store.update(item.id, { state: 'queued', ...await saved(item, stored, replies), questions: [], lastSeenId: lastId ?? item.lastSeenId, land: undefined })
     await store.toFront(item.id)
   }
 
@@ -71,7 +76,9 @@ export function replyCheck(deps: QueueEngineDeps, fail: (item: QueueItem, reason
     }
   }
 
-  const answer = (item: QueueItem, worktree: string, text: string): Promise<void> => resume(item, worktree, [{ id: 'owner', author: 'Owner', text, images: [] }], null)
+  const fromOwner = (text: string): SourceReply[] => [{ id: 'owner', author: 'Owner', text, images: [] }]
+  const answer = (item: QueueItem, worktree: string, text: string): Promise<void> => resume(item, worktree, fromOwner(text), null)
+  const keepAnswer = async (item: QueueItem, worktree: string, text: string): Promise<void> => { await store.update(item.id, await saved(item, worktree, fromOwner(text))) }
 
-  return { read, apply, answer }
+  return { read, apply, answer, keepAnswer }
 }

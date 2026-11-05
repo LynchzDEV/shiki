@@ -16,13 +16,14 @@ afterEach(async () => { await rm(dir, { recursive: true, force: true }) })
 
 const blocked = (id: string, evidence: string[]): RunView => ({ id, status: 'blocked', error: null, attempts: [{ nodeId: 'plan', number: 0, jobId: 'j1', status: 'settled', prompt: '', startedAt: 1, endedAt: 2, result: { outcome: 'blocked', summary: 's', evidence }, checks: [], output: '', workspace: null, tokenId: 't', pathId: 'main', from: [] }] })
 
-function harness() {
+function harness({ canRetry = true } = {}) {
   const store = createQueueStore(join(dir, 'queue.json'))
   const runs = new Map<string, RunView>()
   const requests: string[] = []
   const posted: Array<Parameters<QueueSource['post']>[0]> = []
   const replyReads: string[] = []
   const alerts: string[] = []
+  const retried: Array<{ id: string; note: string | undefined }> = []
   let next = 0
   const source: QueueSource = {
     item: async ({ id }) => ({ title: `Task ${id}`, url: `https://x/t/${id}`, contextMarkdown: `# ${id}` }),
@@ -31,7 +32,7 @@ function harness() {
   }
   const deps: QueueEngineDeps = {
     store,
-    runner: { start: async (input) => { requests.push(input.request); const id = `run-${++next}`; runs.set(id, { id, status: 'running', error: null, attempts: [] }); return { id } }, get: id => runs.get(id) },
+    runner: { start: async (input) => { requests.push(input.request); const id = `run-${++next}`; runs.set(id, { id, status: 'running', error: null, attempts: [] }); return { id } }, get: id => runs.get(id), ...(canRetry ? { retry: async (id: string, note?: string) => { retried.push({ id, note }); runs.set(id, { ...runs.get(id)!, status: 'running', error: null }); return { id } } } : {}) },
     source: () => source,
     prepareWorktree: async (_repo, label) => { const worktree = join(dir, 'wt', label); await mkdir(worktree, { recursive: true }); return { worktree } },
     writeContext: async (_pluginId, context, cwd) => { const path = join(cwd, `${context.name}-${next}.md`); await writeFile(path, context.markdown); return path },
@@ -50,7 +51,7 @@ function harness() {
     await engine.onRunSettled(run)
     return added.id
   }
-  return { engine, store, runs, requests, posted, replyReads, alerts, asked, post, item: (id: string) => store.get(id)! }
+  return { engine, store, runs, requests, retried, posted, replyReads, alerts, asked, post, item: (id: string) => store.get(id)! }
 }
 
 test('bizQuestionsOf takes only biz: lines without the tag', () => {
@@ -89,6 +90,12 @@ test('a mix shows the technical questions first and posts nothing until answered
   expect(h.posted).toEqual([])
   expect(h.item(id)).toMatchObject({ state: 'waiting-info', askedIn: 'shikidan', questions: ['Which database?'] })
   await h.engine.answer(id, 'Use the test one')
+  expect(h.posted).toEqual([])
+  expect(h.retried).toHaveLength(1)
+  expect(h.retried[0]!.id).toBe('run-1')
+  for (const part of ['Use the test one', 'Which database?', 'ควรแสดงราคาไหม']) expect(h.retried[0]!.note).toContain(part)
+  expect(await readFile(h.item(id).answerPaths[0]!, 'utf8')).toContain('ควรแสดงราคาไหม')
+  expect(h.item(id).recoverBuild?.openBiz).toBeUndefined()
   const again = h.item(id).currentRunId!
   const run = blocked(again, ['biz: ควรแสดงราคาไหม'])
   h.runs.set(again, run)
@@ -146,9 +153,10 @@ test('the answer route refuses empty, blank and over-long text', async () => {
   expect(h.item(id).answerPaths).toEqual([])
 })
 
-test('a valid answer stores the file with its backup, resumes the card and posts nothing to the source', async () => {
+test('a valid answer stores the file with its backup, continues the same run and posts nothing to the source', async () => {
   const h = harness()
   const id = await h.asked(['Which database?'])
+  const worktree = h.item(id).worktree
   const response = await h.post(`/api/queue/${id}/answer`, { text: '  The test one  ' })
   expect(response.status).toBe(200)
   const item = h.item(id)
@@ -158,19 +166,26 @@ test('a valid answer stores the file with its backup, resumes the card and posts
   for (const part of ['Which database?', '### Owner', 'The test one']) expect(markdown).toContain(part)
   expect(await readFile(join(dir, 'queue-files', id, path.split('/').at(-1)!), 'utf8')).toBe(markdown)
   expect(item.state).toBe('building')
-  expect(item.currentRunId).toBe('run-2')
+  expect(item.currentRunId).toBe('run-1')
+  expect(item.runIds).toEqual(['run-1'])
+  expect(item.worktree).toBe(worktree)
   expect(item.questions).toEqual([])
   expect(item.askedIn).toBeUndefined()
-  expect(h.requests.at(-1)).toContain(path)
+  expect(h.requests).toHaveLength(1)
+  expect(h.retried).toHaveLength(1)
+  expect(h.retried[0]!.id).toBe('run-1')
+  expect(h.retried[0]!.note).toContain('The test one')
   expect(h.posted).toEqual([])
 })
 
-test('an answer given after a recovery question drops the old ship progress', async () => {
-  const h = harness()
+test('a runner that cannot retry falls back to a reply-style resume with a new run, dropping old ship progress', async () => {
+  const h = harness({ canRetry: false })
   const id = await h.asked(['Which database?'])
-  await h.store.update(id, { land: { stage: 'uat', stages: {}, plan: [], recover: { stage: 'uat', attempts: 1, reason: 'x' } } })
+  await h.store.update(id, { land: { stage: 'uat', stages: {}, plan: [] } })
   await h.engine.answer(id, 'The test one')
+  expect(h.item(id)).toMatchObject({ state: 'building', currentRunId: 'run-2', runIds: ['run-1', 'run-2'] })
   expect(h.item(id).land).toBeUndefined()
+  expect(h.requests.at(-1)).toContain(h.item(id).answerPaths[0]!)
 })
 
 test('a requeue clears askedIn', async () => {

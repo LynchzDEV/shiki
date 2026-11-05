@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Elysia } from 'elysia'
 
 import { realEngineResolver } from '../server/jobs-engine-iface'
 import { createQueueEngine, type QueueEngineDeps, type QueueRunner } from '../server/queue-engine'
@@ -10,7 +11,9 @@ import type { RunView } from '../server/queue-prompts'
 import { recoverGraph, recoveryVerdict, RECOVERY_RULES } from '../server/queue-recover'
 import type { QueueSource } from '../server/queue-source'
 import { createQueueStore } from '../server/queue-store'
+import { queueRoutes } from '../server/routes/queue'
 import { validateWorkflow, type LandStage } from '../server/workflows'
+import { repoAt } from './support/git-repos'
 
 let dir: string
 beforeEach(async () => {
@@ -40,6 +43,7 @@ function harness() {
   const started: Array<StartInput & { id: string }> = []
   const stopped: string[] = []
   const retried: string[] = []
+  const retryNotes: Array<string | undefined> = []
   const posted: Array<Parameters<QueueSource['post']>[0]> = []
   const alerts: string[] = []
   let next = 0
@@ -51,7 +55,7 @@ function harness() {
   const runner: QueueRunner = {
     start: async (input) => { const id = `run-${++next}`; runs.set(id, { id, status: 'running', error: null, attempts: [] }); started.push({ ...input, id }); return { id } },
     get: id => runs.get(id),
-    retry: async (id) => { retried.push(id); runs.set(id, { ...runs.get(id)!, status: 'running', error: null }); return { id } },
+    retry: async (id, note) => { retried.push(id); retryNotes.push(note); runs.set(id, { ...runs.get(id)!, status: 'running', error: null }); return { id } },
     stop: async (id) => { stopped.push(id); const run: RunView = { ...runs.get(id)!, status: 'stopped', error: 'Stopped by user' }; runs.set(id, run); void engine.onRunSettled(run); return run },
   }
   const deps: QueueEngineDeps = {
@@ -83,7 +87,7 @@ function harness() {
     await engine.landIdle()
     return added.id
   }
-  return { engine, store, runner, runs, started, stopped, retried, posted, alerts, item, ship, settle, deps }
+  return { engine, store, runner, runs, started, stopped, retried, retryNotes, posted, alerts, item, ship, settle, deps }
 }
 
 const failing = () => script('bad.sh', 'echo boom\nexit 3')
@@ -699,4 +703,257 @@ test('a stage that could not start and wrote no log gets a plain line, not a hea
   const { request } = h.started.at(-1)!
   expect(request).not.toContain('asking for it:')
   expect(request.trimEnd().endsWith('The stage wrote no log.')).toBe(true)
+})
+
+const answerRoute = (h: ReturnType<typeof harness>, id: string, text: string) => new Elysia().use(queueRoutes(h.store, h.engine)).handle(new Request(`http://127.0.0.1:7777/api/queue/${id}/answer`, { method: 'POST', body: JSON.stringify({ text }), headers: { host: '127.0.0.1:7777', 'content-type': 'application/json' } }))
+const statesOf = (h: ReturnType<typeof harness>, id: string) => {
+  const seen: string[] = []
+  h.store.subscribe(() => { seen.push(h.store.get(id)?.state ?? 'gone') })
+  return seen
+}
+
+test('a tech: block from a stage recovery keeps the ship progress and remembers the stage', async () => {
+  const h = harness()
+  const id = await h.ship([stage('uat', await failing())])
+  await h.settle('run-2', 'blocked', ['tech: Which key file?'])
+  expect(h.item(id)).toMatchObject({ state: 'waiting-info', askedIn: 'shikidan', questions: ['Which key file?'], land: { stage: 'uat', runId: 'run-1', stages: { uat: { status: 'failed', exitCode: 3 } }, recover: { stage: 'uat', attempts: 1, asked: true } } })
+})
+
+test('an answer after a stage recovery block starts a new recovery run, with no requeue and no new card run', async () => {
+  const h = harness()
+  const id = await h.ship([stage('uat', await failing())])
+  await h.settle('run-2', 'blocked', ['tech: Which key file?'])
+  const seen = statesOf(h, id)
+  const response = await answerRoute(h, id, 'Use config/master.key')
+  expect(response.status).toBe(200)
+  expect(seen).not.toContain('queued')
+  expect(seen).not.toContain('building')
+  const item = h.item(id)
+  expect(item.state).toBe('landing')
+  expect(item.currentRunId).toBe('run-3')
+  expect(item.runIds).toEqual(['run-1'])
+  expect(item.questions).toEqual([])
+  expect(item.askedIn).toBeUndefined()
+  expect(item.land).toMatchObject({ stage: 'uat', runId: 'run-1', message: 'Recovering, attempt 2 of 3', recover: { stage: 'uat', attempts: 2, runId: 'run-3' } })
+  expect(item.land?.recover?.asked).toBeUndefined()
+  expect(h.started).toHaveLength(3)
+  const { graph, request, cwd } = h.started.at(-1)!
+  expect(graph).toEqual(recoverGraph())
+  expect(cwd).toBe(item.worktree!)
+  for (const part of ['Use config/master.key', 'Which key file?', 'Failed stage: uat', 'boom', RECOVERY_RULES]) expect(request).toContain(part)
+  expect(item.answerPaths).toHaveLength(1)
+  expect(await readFile(item.answerPaths[0]!, 'utf8')).toContain('Use config/master.key')
+  expect(h.posted).toEqual([])
+})
+
+test('the stage passing after an answered recovery goes on as normal', async () => {
+  const h = harness()
+  const flaky = await script('flaky.sh', `if [ -f ${dir}/fixed ]; then exit 0; fi\nexit 1`)
+  const up = await script('up.sh', 'exit 0')
+  const id = await h.ship([stage('uat', flaky), stage('smoke', up)])
+  await h.settle('run-2', 'blocked', ['tech: Which key file?'])
+  await h.engine.answer(id, 'Use config/master.key')
+  await writeFile(join(dir, 'fixed'), '')
+  await h.settle('run-3', 'done')
+  expect(h.item(id).state).toBe('landed')
+  expect(h.item(id).runIds).toEqual(['run-1'])
+  expect(h.item(id).currentRunId).toBeNull()
+  expect(h.item(id).land).toMatchObject({ runId: 'run-1', stages: { uat: { status: 'ok' }, smoke: { status: 'ok' } } })
+  expect(h.item(id).land?.recover).toBeUndefined()
+  expect(h.started).toHaveLength(3)
+})
+
+test('the answered attempt counts toward the cap, and later attempts still carry the answer', async () => {
+  const h = harness()
+  const id = await h.ship([stage('uat', await failing())])
+  await h.settle('run-2', 'blocked', ['tech: Which key file?'])
+  await h.engine.answer(id, 'Use config/master.key')
+  await h.settle('run-3', 'done')
+  expect(h.item(id).land).toMatchObject({ message: 'Recovering, attempt 3 of 3', recover: { attempts: 3, runId: 'run-4' } })
+  expect(h.started.at(-1)!.request).toContain('Use config/master.key')
+  await h.settle('run-4', 'done')
+  expect(h.item(id).state).toBe('failed')
+  expect(h.item(id).error).toContain('3 recovery attempts')
+  expect(h.started).toHaveLength(4)
+})
+
+test('with the cap used up an answer allows exactly one more attempt', async () => {
+  const h = harness()
+  const id = await h.ship([stage('uat', await failing())])
+  await h.settle('run-2', 'done')
+  await h.settle('run-3', 'done')
+  await h.settle('run-4', 'blocked', ['tech: Which key file?'])
+  expect(h.item(id).land?.recover).toMatchObject({ attempts: 3, asked: true })
+  await h.engine.answer(id, 'Use config/master.key')
+  expect(h.item(id)).toMatchObject({ state: 'landing', currentRunId: 'run-5', land: { message: 'Recovering, attempt 4', recover: { attempts: 4, runId: 'run-5' } } })
+  await h.settle('run-5', 'done')
+  expect(h.item(id).state).toBe('failed')
+  expect(h.item(id).error).toContain('4 recovery attempts')
+  expect(h.started).toHaveLength(5)
+})
+
+test('a long answer and a huge log still give a request the runner accepts', async () => {
+  const h = harness()
+  const huge = await script('huge.sh', 'i=1; while [ $i -le 200 ]; do printf "%0500d\\n" $i; i=$((i+1)); done\necho the-last-line\nexit 3')
+  const id = await h.ship([stage('uat', huge)])
+  await h.settle('run-2', 'blocked', [`tech: ${'q'.repeat(4000)}`])
+  await h.engine.answer(id, `${'a'.repeat(7990)}the-answer`)
+  const { request } = h.started.at(-1)!
+  expect(request.length).toBeLessThanOrEqual(32000)
+  for (const part of ['the-answer', 'the-last-line', RECOVERY_RULES]) expect(request).toContain(part)
+})
+
+test('an answered recovery that cannot start fails at the stage, so Retry stage still works', async () => {
+  const h = harness()
+  const id = await h.ship([stage('uat', await failing())])
+  await h.settle('run-2', 'blocked', ['tech: Which key file?'])
+  const realStart = h.runner.start
+  h.runner.start = async () => { throw new Error('Workspace already has running work') }
+  await h.engine.answer(id, 'Use config/master.key')
+  expect(h.item(id).state).toBe('failed')
+  expect(h.item(id).error!.split('\n')[0]).toBe('uat failed (exit 3)')
+  expect(h.item(id).error).toContain('Workspace already has running work')
+  expect(h.item(id).answerPaths).toHaveLength(1)
+  h.runner.start = realStart
+  await h.engine.retryStage(id)
+  await h.engine.landIdle()
+  expect(h.item(id).land).toMatchObject({ recover: { attempts: 1 } })
+})
+
+test('a requeue after a stage recovery question rebuilds as usual', async () => {
+  const h = harness()
+  const id = await h.ship([stage('uat', await failing())])
+  await h.settle('run-2', 'blocked', ['tech: Which key file?'])
+  await h.engine.requeue(id)
+  expect(h.item(id)).toMatchObject({ state: 'building', currentRunId: 'run-3', runIds: ['run-1', 'run-3'] })
+  expect(h.item(id).land).toBeUndefined()
+})
+
+test('an answer after a build recovery block retries the same run with the answer, with no fresh rebuild', async () => {
+  const h = harness()
+  const id = await failedBuild(h)
+  await h.settle('run-2', 'blocked', ['tech: Which database?'])
+  expect(h.item(id)).toMatchObject({ state: 'waiting-info', recoverBuild: { runId: 'run-1', attempts: 1, asked: true } })
+  const seen = statesOf(h, id)
+  await answerRoute(h, id, 'The test one')
+  expect(seen).not.toContain('queued')
+  expect(h.retried).toEqual(['run-1'])
+  expect(h.retryNotes[0]).toContain('Which database?')
+  expect(h.retryNotes[0]).toContain('The test one')
+  expect(h.started).toHaveLength(2)
+  expect(h.item(id)).toMatchObject({ state: 'building', currentRunId: 'run-1', runIds: ['run-1'], questions: [], error: null, recoverBuild: { runId: 'run-1', attempts: 1 } })
+  expect(h.item(id).recoverBuild?.asked).toBeUndefined()
+  expect(h.item(id).answerPaths).toHaveLength(1)
+  expect(await readFile(h.item(id).answerPaths[0]!, 'utf8')).toContain('The test one')
+  await h.settle('run-1', 'done', [], { workflow: {} })
+  expect(h.item(id)).toMatchObject({ state: 'ready', error: null })
+})
+
+test('a build recovery answer that cannot resume fails the card and keeps the run resumable', async () => {
+  const h = harness()
+  const id = await failedBuild(h)
+  await h.settle('run-2', 'blocked', ['tech: Which database?'])
+  h.runner.retry = async () => { throw new Error('Workspace still has running work') }
+  await h.engine.answer(id, 'The test one')
+  expect(h.item(id).state).toBe('failed')
+  expect(h.item(id).error).toContain('Workspace still has running work')
+  expect(h.item(id).resumeRunId).toBe('run-1')
+  expect(h.item(id).answerPaths).toHaveLength(1)
+})
+
+test('an answer to a normal build step continues that run with no new run, and keeps the attempts', async () => {
+  const h = harness()
+  const plain = await h.engine.add({ source: 'clickup-board', externalId: 'a', repo: '/repo' })
+  await h.settle('run-1', 'blocked', ['tech: Which database?'])
+  expect(h.item(plain.id).recoverBuild).toMatchObject({ runId: 'run-1', attempts: 0, asked: true })
+  await h.engine.answer(plain.id, 'The test one')
+  expect(h.retried).toEqual(['run-1'])
+  expect(h.retryNotes[0]).toContain('The test one')
+  expect(h.started).toHaveLength(1)
+  expect(h.item(plain.id)).toMatchObject({ state: 'building', currentRunId: 'run-1', runIds: ['run-1'], recoverBuild: { runId: 'run-1', attempts: 0 } })
+  await h.settle('run-1', 'failed', ['tests are red'], { error: 'Execute failed' })
+  expect(h.item(plain.id)).toMatchObject({ state: 'building', recoverBuild: { runId: 'run-1', attempts: 1, recoveryRunId: 'run-2' } })
+  await h.settle('run-2', 'done')
+  await h.settle('run-1', 'blocked', ['tech: And the port?'])
+  expect(h.item(plain.id).recoverBuild).toMatchObject({ attempts: 1, asked: true })
+  await h.engine.answer(plain.id, '5432')
+  expect(h.retried).toEqual(['run-1', 'run-1', 'run-1'])
+  expect(h.item(plain.id)).toMatchObject({ currentRunId: 'run-1', recoverBuild: { attempts: 1 } })
+})
+
+test('stored recovery answers are capped at 12000 characters, keeping the latest', async () => {
+  const h = harness()
+  const id = await h.ship([stage('uat', await failing())])
+  await h.settle('run-2', 'blocked', ['tech: First?'])
+  await h.engine.answer(id, 'a'.repeat(8000))
+  await h.settle('run-3', 'blocked', ['tech: Second?'])
+  await h.engine.answer(id, `${'b'.repeat(7990)}the-latest`)
+  const { answers } = h.item(id).land!.recover!
+  expect(answers!.length).toBe(12000)
+  expect(answers).toContain('the-latest')
+  expect(answers).toContain('Second?')
+})
+
+test('an answer whose first retry throws still reaches the run when Resume retries it', async () => {
+  const h = harness()
+  const added = await h.engine.add({ source: 'clickup-board', externalId: 'a', repo: '/repo' })
+  await h.settle('run-1', 'blocked', ['tech: Which database?'])
+  const retry = h.runner.retry!
+  h.runner.retry = async () => { throw new Error('Workspace still has running work') }
+  await h.engine.answer(added.id, 'The test one')
+  expect(h.item(added.id)).toMatchObject({ state: 'failed', resumeRunId: 'run-1' })
+  h.runner.retry = retry
+  await h.engine.requeue(added.id)
+  expect(h.retried).toEqual(['run-1'])
+  expect(h.retryNotes[0]).toContain('Which database?')
+  expect(h.retryNotes[0]).toContain('The test one')
+  expect(h.retryNotes[0]).not.toContain('Repos added')
+  expect(h.started).toHaveLength(1)
+  expect(h.item(added.id)).toMatchObject({ state: 'building', currentRunId: 'run-1', recoverBuild: { runId: 'run-1', attempts: 0 } })
+  expect(h.item(added.id).recoverBuild?.note).toBeUndefined()
+  await h.settle('run-1', 'blocked', ['tech: And the port?'])
+  await h.engine.answer(added.id, '5432')
+  expect(h.retryNotes[1]).not.toContain('The test one')
+})
+
+test('when Resume cannot retry the run either, the card starts over with the answer file and no pending note', async () => {
+  const h = harness()
+  const added = await h.engine.add({ source: 'clickup-board', externalId: 'a', repo: '/repo' })
+  await h.settle('run-1', 'blocked', ['tech: Which database?'])
+  h.runner.retry = async () => { throw new Error('Workspace still has running work') }
+  await h.engine.answer(added.id, 'The test one')
+  await h.engine.requeue(added.id)
+  expect(h.started).toHaveLength(2)
+  expect(h.item(added.id)).toMatchObject({ state: 'building', currentRunId: 'run-2' })
+  expect(h.item(added.id).recoverBuild).toBeUndefined()
+  expect(h.item(added.id).answerPaths).toHaveLength(1)
+})
+
+test('a fresh requeue drops the pending note', async () => {
+  const h = harness()
+  const added = await h.engine.add({ source: 'clickup-board', externalId: 'a', repo: '/repo' })
+  await h.settle('run-1', 'blocked', ['tech: Which database?'])
+  h.runner.retry = async () => { throw new Error('Workspace still has running work') }
+  await h.engine.answer(added.id, 'The test one')
+  await h.engine.requeue(added.id, { fresh: true })
+  expect(h.item(added.id).recoverBuild).toBeUndefined()
+  expect(h.item(added.id).currentRunId).toBe('run-2')
+})
+
+test('repos granted alongside a technical question are named in the note when the run continues', async () => {
+  const parent = await mkdtemp(join(homedir(), 'mc-queue-recover-repos-'))
+  try {
+    await repoAt(join(parent, 'a'))
+    const h = harness()
+    h.deps.prepareWorkspace = async (_folder, _repos, label) => { const worktree = join(dir, 'ws', label); await mkdir(worktree, { recursive: true }); return { worktree } }
+    const added = await h.engine.add({ source: 'clickup-board', externalId: 'a', repo: parent, repos: [] })
+    await h.settle('run-1', 'blocked', ['repo: a', 'tech: Which database?'])
+    expect(h.item(added.id)).toMatchObject({ state: 'waiting-info', repos: ['a'], questions: ['Which database?'] })
+    await h.engine.answer(added.id, 'The test one')
+    expect(h.retried).toEqual(['run-1'])
+    expect(h.retryNotes[0]).toContain('Repos added to this workspace, each in its own folder: a')
+    expect(h.item(added.id).recoverBuild).toEqual({ runId: 'run-1', attempts: 0 })
+  } finally {
+    await rm(parent, { recursive: true, force: true })
+  }
 })

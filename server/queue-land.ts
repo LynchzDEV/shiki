@@ -8,7 +8,7 @@ import { logSecrets, redactAll } from './log-redaction'
 import { getSetting } from './plugins/settings'
 import { getInstalled } from './plugins/store'
 import { QueueRefusal } from './queue-refusal'
-import { afterRecoveries, applyRecovery, MAX_STAGE_RECOVERIES, recoverGraph, stageRecoveryRequest } from './queue-recover'
+import { afterRecoveries, applyRecovery, MAX_ANSWERS_CHARS, MAX_STAGE_RECOVERIES, ownerAnswerText, recoverGraph, stageRecoveryRequest } from './queue-recover'
 import { message } from './queue-replies'
 import { SETTLED, type RunView } from './queue-prompts'
 import type { QueueEngineDeps } from './queue-engine'
@@ -269,26 +269,30 @@ export function createLand(deps: LandDeps) {
     await advance(id, name)
   }
 
-  async function recoverStage(id: string, name: string, reason: string, change?: Partial<LandStageState>, signal?: AbortSignal): Promise<void> {
+  type RecoverOptions = { change?: Partial<LandStageState>; signal?: AbortSignal; answered?: true }
+
+  async function recoverStage(id: string, name: string, reason: string, { change, signal, answered }: RecoverOptions = {}): Promise<void> {
     if (signal?.aborted) return
     const item = found(id)
     if (stageOf(item, name).run !== 'auto' || item.worktree === null) return fail(id, reason, name, change)
-    const attempts = item.land!.recover?.stage === name ? item.land!.recover.attempts : 0
-    if (attempts >= MAX_STAGE_RECOVERIES) return fail(id, afterRecoveries(reason, attempts), name, change)
+    const earlier = item.land!.recover?.stage === name ? item.land!.recover : undefined
+    const attempts = earlier?.attempts ?? 0
+    if (attempts >= MAX_STAGE_RECOVERIES && answered !== true) return fail(id, afterRecoveries(reason, attempts), name, change)
     const attempt = attempts + 1
-    const text = `Recovering, attempt ${attempt} of ${MAX_STAGE_RECOVERIES}`
-    await store.update(id, { land: progress(item, name, change, { stage: name, message: text, recover: { stage: name, attempts, reason } }) })
+    const answers = earlier?.answers === undefined ? {} : { answers: earlier.answers }
+    const text = attempt > MAX_STAGE_RECOVERIES ? `Recovering, attempt ${attempt}` : `Recovering, attempt ${attempt} of ${MAX_STAGE_RECOVERIES}`
+    await store.update(id, { land: progress(item, name, change, { stage: name, message: text, recover: { stage: name, attempts, reason, ...answers } }) })
     let runId: string
     try {
       const log = await redactForStage(item, name, (await readLogTail(landLogPath(id, name), LOG_BYTES)).content)
       const { command, args } = stageOf(item, name).command
       const commandLine = await redactForStage(item, name, [command, ...args].join(' '))
-      runId = (await deps.runner.start({ cwd: item.worktree, request: stageRecoveryRequest(item, { stage: name, reason, command: commandLine, log }), label: `Recover ${name}: ${item.title}`.slice(0, MAX_RUN_LABEL), graph: recoverGraph() }, { startedByUser: true })).id
+      runId = (await deps.runner.start({ cwd: item.worktree, request: stageRecoveryRequest(item, { stage: name, reason, command: commandLine, log, answers: earlier?.answers }), label: `Recover ${name}: ${item.title}`.slice(0, MAX_RUN_LABEL), graph: recoverGraph() }, { startedByUser: true })).id
     } catch (error) {
       return fail(id, `${reason}\nRecovery could not start: ${message(error)}`, name)
     }
     if (signal?.aborted) { await deps.runner.stop?.(runId); return }
-    await store.update(id, { currentRunId: runId, land: progress(found(id), name, undefined, { message: text, recover: { stage: name, attempts: attempt, runId, reason } }) })
+    await store.update(id, { currentRunId: runId, land: progress(found(id), name, undefined, { message: text, recover: { stage: name, attempts: attempt, runId, reason, ...answers } }) })
     const run = deps.runner.get(runId)
     if (run !== undefined && SETTLED.has(run.status)) deps.settleRun(run)
   }
@@ -307,7 +311,7 @@ export function createLand(deps: LandDeps) {
       if (signal.aborted) return
       const log = await redactForStage(found(id), name, (await readLogTail(logFile, LOG_BYTES)).content)
       const ended = { endedAt: clock(), exitCode: result.exitCode }
-      const failedWith = (reason: string): Promise<void> => recoverStage(id, name, reason, { ...ended, status: 'failed' }, signal)
+      const failedWith = (reason: string): Promise<void> => recoverStage(id, name, reason, { change: { ...ended, status: 'failed' }, signal })
       if (result.startError !== undefined) return await failedWith(`${name} failed to start: ${result.startError}`)
       if (result.timedOut) return await failedWith(`${name} failed (timed out after ${stage.command.timeoutSeconds}s)\n${lastLines(log)}`)
       if (result.exitCode !== 0) return await failedWith(`${name} failed (exit ${result.exitCode})\n${lastLines(log)}`)
@@ -405,12 +409,21 @@ export function createLand(deps: LandDeps) {
       const { stage: name, reason } = recover
       const consumed = await store.update(item.id, { currentRunId: null, land: progress(item, name, undefined, { recover }) })
       await applyRecovery(deps, consumed, run, reason, {
+        whenAsking: { land: progress(consumed, name, undefined, { recover: { ...recover, asked: true } }) },
         pass: () => begin(item.id, name),
         stopped: () => fail(item.id, `Stopped by you during ${name}`, name),
         again: () => recoverStage(item.id, name, reason),
         fail: why => fail(item.id, why, name),
       })
       return true
+    },
+
+    async answered(id: string, text: string): Promise<void> {
+      const item = found(id)
+      const { asked: _asked, ...recover } = item.land!.recover!
+      const answers = [recover.answers, ownerAnswerText(item.questions, text)].filter(entry => entry !== undefined).join('\n\n').slice(-MAX_ANSWERS_CHARS)
+      await store.update(id, { state: 'landing', questions: [], error: null, land: progress(item, recover.stage, undefined, { recover: { ...recover, answers } }) })
+      await recoverStage(id, recover.stage, recover.reason, { answered: true })
     },
 
     async log(id: string, name: string): Promise<string> {

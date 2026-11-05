@@ -17,9 +17,9 @@ export type LandStageState = {
   startedAt?: number; endedAt?: number; exitCode?: number | null; posted?: string; warning?: string
   preflight?: { exitCode: number; markdown: string }
 }
-export type LandRecover = { stage: string; attempts: number; runId?: string; reason: string }
+export type LandRecover = { stage: string; attempts: number; runId?: string; reason: string; asked?: true; answers?: string }
 export type LandProgress = { stage: string; stages: Record<string, LandStageState>; message?: string; plan: LandStage[]; plugin?: string; runId?: string; recover?: LandRecover }
-export type BuildRecover = { runId: string; attempts: number; recoveryRunId?: string }
+export type BuildRecover = { runId: string; attempts: number; recoveryRunId?: string; asked?: true; openBiz?: string[]; addedRepos?: string[]; note?: string }
 
 export type QueueItem = {
   id: string; source: string; externalId: string; title: string; url: string; repo: string; flowId: string | null
@@ -73,13 +73,14 @@ function isItem(value: unknown): value is QueueItem {
     && (item.resumeRunId === undefined || isText(item.resumeRunId))
     && (item.askedIn === undefined || item.askedIn === 'shikidan')
     && (item.recoverRebuilds === undefined || isCount(item.recoverRebuilds))
-    && (item.recoverBuild === undefined || (isRecord(item.recoverBuild) && isCount((item.recoverBuild as { attempts?: unknown }).attempts)))
+    && (item.recoverBuild === undefined || isStoredBuild(item.recoverBuild))
 }
 
 const isCount = (value: unknown): boolean => Number.isInteger(value) && (value as number) >= 0
 const isRecord = (value: unknown): boolean => typeof value === 'object' && value !== null && !Array.isArray(value)
 const isLand = (value: unknown): boolean => isRecord(value) && isText((value as Record<string, unknown>).stage) && ((value as Record<string, unknown>).runId === undefined || isText((value as Record<string, unknown>).runId)) && isRecord((value as Record<string, unknown>).stages) && Array.isArray((value as Record<string, unknown>).plan) && isStoredRecover((value as Record<string, unknown>).recover)
 
+const isStoredBuild = (value: unknown): boolean => isRecord(value) && isCount((value as Record<string, unknown>).attempts) && ((value as Record<string, unknown>).note === undefined || isText((value as Record<string, unknown>).note))
 const isStoredRecover = (value: unknown): boolean => value === undefined || (isRecord(value) && isCount((value as Record<string, unknown>).attempts))
 
 const isMissingFile = (error: unknown): boolean => (error as NodeJS.ErrnoException | null)?.code === 'ENOENT'
