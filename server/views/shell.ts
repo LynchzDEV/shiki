@@ -246,6 +246,8 @@ export function ShellPage(props: ShellProps): string {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Shikidan</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <script>${LEGACY_STORAGE_COPY}</script>
   <script>try{if(localStorage.getItem('skd.theme')==='dark')document.documentElement.dataset.theme='dark'}catch{}</script>
   <link rel="stylesheet" href="/vendor/xterm.css">

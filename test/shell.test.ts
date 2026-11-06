@@ -147,6 +147,8 @@ describe('attention delivery', () => {
   test('/ links the Shikidan favicon and the attention island', async () => {
     const markup = await (await app.handle(new Request('http://localhost/'))).text()
     expect(markup).toContain('<link rel="icon" href="/favicon.svg" type="image/svg+xml">')
+    expect(markup).toContain('<link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">')
+    expect(markup).toContain('<link rel="apple-touch-icon" href="/apple-touch-icon.png">')
     expect(markup).not.toContain('href="data:,"')
     expect(markup).toContain('<script src="/js/attention.js" type="module" defer></script>')
   })
@@ -167,7 +169,36 @@ describe('attention delivery', () => {
     expect(code).toContain('mc:open')
     const icon = await app.handle(new Request('http://localhost/favicon.svg'))
     expect(icon.status).toBe(200)
-    expect(await icon.text()).toContain('<svg')
+    const svg = await icon.text()
+    expect(svg).toContain('<svg')
+    expect(svg).toContain('data:image/png;base64,')
+    expect(svg).not.toContain('m14 3 2.4 6.6')
+  })
+})
+
+const pngHeader = async (response: Response): Promise<{ width: number; height: number; colorType: number }> => {
+  const bytes = new DataView(await response.arrayBuffer())
+  return { width: bytes.getUint32(16), height: bytes.getUint32(20), colorType: bytes.getUint8(25) }
+}
+
+describe('Shikidan logo', () => {
+  test('every logo file is served as a PNG', async () => {
+    await app.modules
+    for (const path of ['/logo-wide.png', '/logo-stacked.png', '/logo-s.png', '/favicon-32.png', '/apple-touch-icon.png']) {
+      const response = await app.handle(new Request(`http://localhost${path}`))
+      expect(`${path} ${response.status} ${response.headers.get('content-type')}`).toBe(`${path} 200 image/png`)
+    }
+  })
+
+  test('the iPhone icon is a 180x180 opaque PNG, since iPhone paints transparency black', async () => {
+    await app.modules
+    expect(await pngHeader(await app.handle(new Request('http://localhost/apple-touch-icon.png')))).toEqual({ width: 180, height: 180, colorType: 2 })
+  })
+
+  test('the PNG tab icon is 32x32', async () => {
+    await app.modules
+    const { width, height } = await pngHeader(await app.handle(new Request('http://localhost/favicon-32.png')))
+    expect({ width, height }).toEqual({ width: 32, height: 32 })
   })
 })
 
