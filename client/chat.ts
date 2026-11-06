@@ -7,6 +7,7 @@ import { chatModeChoice, chatModeKey, chatSignal, costText, filterSlashCommands,
 import { ansiHtml, capOutput, type ToolCard, type ToolCardKind } from './tool-cards'
 import { collectRowStates, rowScrollOf, setRowScroll, trackRowScroll, type RowState } from './tool-row-scroll'
 import { createLiveFeed, steadyLiveText, type LiveFeed } from './live-text'
+import { isBadApple, playBadApple } from './badapple'
 
 const $ = (id: string): HTMLElement => document.getElementById(id) as HTMLElement
 const RUNNING_POLL_MS = 700
@@ -18,6 +19,8 @@ const composer = $('composer') as HTMLFormElement
 const message = $('message') as HTMLTextAreaElement
 const send = composer.querySelector('.send') as HTMLButtonElement
 const messages = $('messages')
+const easterEgg = Object.assign(document.createElement('div'), { className: 'chat' })
+messages.after(easterEgg)
 const stage = document.querySelector('.stage') as HTMLElement
 const outcomes = createOutcomeStrip()
 composer.before(outcomes.element)
@@ -25,6 +28,7 @@ const stored = (key: string): string | null => { try { return localStorage.getIt
 const keep = (key: string, value: string): void => { try { localStorage.setItem(key, value) } catch {} }
 
 let root: string | null = null
+let easterEggRun: AbortController | null = null
 let rootCwd: string | null = null
 let running = false
 let pollTimer = 0
@@ -1034,9 +1038,31 @@ function restoreComposer(text: string, images: string[]): void {
   dispatchEvent(new CustomEvent('quiet:message-restore', { detail: { text, images } }))
 }
 
-async function sendMessage(prompt: string, images: string[] = []): Promise<void> {
+function draftTurn(prompt: string, images: string[]): Turn {
+  return { id: 'pending', source: 'user', prompt, text: '', tools: 0, edits: [], steps: [], cards: [], permissions: [], images, thinking: false, started: Date.now(), ended: null, running: true, failed: false, stopped: false, error: '', errorDetail: '', versionOf: null, branchFrom: null }
+}
+
+function clearEasterEgg(): void {
+  easterEggRun?.abort()
+  easterEggRun = null
+  easterEgg.replaceChildren()
+}
+
+function startEasterEgg(prompt: string): void {
+  clearEasterEgg()
   show('conversation')
-  if (!root) { messages.replaceChildren(userRow({ id: 'pending', source: 'user', prompt, text: '', tools: 0, edits: [], steps: [], cards: [], permissions: [], images, thinking: false, started: Date.now(), ended: null, running: true, failed: false, stopped: false, error: '', errorDetail: '', versionOf: null, branchFrom: null })); setRunning(true); toBottom(); await startChat(prompt, images); if (!root) { setRunning(false); messages.replaceChildren(); restoreComposer(prompt, images); show('welcome') } return }
+  const reply = ($('assistant-row') as HTMLTemplateElement).content.firstElementChild!.cloneNode(true) as HTMLElement
+  reply.querySelector('time')!.textContent = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  easterEgg.append(userRow(draftTurn(prompt, [])), reply)
+  toBottom()
+  easterEggRun = new AbortController()
+  void playBadApple(reply.querySelector('.msg-body') as HTMLElement, easterEggRun.signal, () => toBottom())
+}
+
+async function sendMessage(prompt: string, images: string[] = []): Promise<void> {
+  clearEasterEgg()
+  show('conversation')
+  if (!root) { messages.replaceChildren(userRow(draftTurn(prompt, images))); setRunning(true); toBottom(); await startChat(prompt, images); if (!root) { setRunning(false); messages.replaceChildren(); restoreComposer(prompt, images); show('welcome') } return }
   const result = await postJson(`/api/jobs/${encodeURIComponent(root)}/reply`, {
     message: prompt,
     ...(images.length > 0 ? { images: images.map(path => ({ path })) } : {}),
@@ -1128,6 +1154,7 @@ async function pollJobs(): Promise<void> {
 }
 
 export function openChat(id: string): void {
+  clearEasterEgg()
   root = id
   agents = []
   shownTurns = []
@@ -1154,6 +1181,12 @@ composer.onsubmit = (event) => {
   if (!prompt || (running && !root)) return
   closeSlashMenu()
   closeMentionMenu()
+  if (isBadApple(prompt)) {
+    morph(composer, () => { message.value = ''; message.style.height = '' })
+    startEasterEgg(prompt)
+    message.focus()
+    return
+  }
   const snapshot = { images: [] as string[] }
   dispatchEvent(new CustomEvent('quiet:collect-images', { detail: snapshot }))
   morph(composer, () => { message.value = ''; message.style.height = '' })
@@ -1452,7 +1485,7 @@ message.addEventListener('keydown', event => {
 })
 
 addEventListener('quiet:chat-agents', (event) => outcomes.setSource(`chat=${encodeURIComponent((event as CustomEvent<string>).detail)}`))
-addEventListener('quiet:new-chat', () => { outcomes.setSource(null); liveShown.clear(); liveRendered = new WeakMap(); root = null; agents = []; shownTurns = []; threadVersions = {}; branchPoints = []; pendingFrom = null; paintComposerBanner(); closeLiveText(); messages.replaceChildren(); paintQueue([]); setRunning(false); stopPolling(); setUrl(null); delete document.body.dataset.chat; delete document.body.dataset.chatEngine; dispatchEvent(new CustomEvent('quiet:activity-scope', { detail: null })) })
+addEventListener('quiet:new-chat', () => { clearEasterEgg(); outcomes.setSource(null); liveShown.clear(); liveRendered = new WeakMap(); root = null; agents = []; shownTurns = []; threadVersions = {}; branchPoints = []; pendingFrom = null; paintComposerBanner(); closeLiveText(); messages.replaceChildren(); paintQueue([]); setRunning(false); stopPolling(); setUrl(null); delete document.body.dataset.chat; delete document.body.dataset.chatEngine; dispatchEvent(new CustomEvent('quiet:activity-scope', { detail: null })) })
 addEventListener('quiet:open-chat', (event) => openChat((event as CustomEvent<string>).detail))
 addEventListener('quiet:show', (event) => { if ((event as CustomEvent<string>).detail === 'conversation') schedule(); else stopPolling() })
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') schedule(); else stopPolling() })

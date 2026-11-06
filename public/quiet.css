@@ -814,6 +814,8 @@ a.pill:hover { color: var(--accent); }
 .backdrop { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
 .activity-line { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
 .activity-line[data-running="true"]::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 8px; border-radius: 50%; background: var(--accent); animation: pulse 1.4s ease-in-out infinite; vertical-align: 1px; }
+.badapple { overflow: hidden; margin: 4px 0 8px; }
+.badapple canvas { display: block; width: 100%; height: auto; cursor: pointer; }
 .step-tick { font-size: 12px; color: var(--muted); margin: -4px 0 8px; transition: opacity .3s; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .step-tick.out { opacity: 0; }
 .step-tick:empty { display: none; }
