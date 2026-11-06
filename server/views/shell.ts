@@ -65,7 +65,7 @@ const BODY = `
   <div class="sb-shell collapsed" id="sb-shell">
   <aside id="sidebar" class="sb" aria-label="Chats and terminals">
     <div class="sb-open">
-      <div class="sb-top"><button type="button" class="sb-icon" data-sidebar-toggle aria-expanded="true" aria-controls="sidebar" aria-label="Hide sidebar" title="Hide sidebar"><svg><use href="#sidebar-icon"/></svg></button><span class="sp"></span><button type="button" id="search" class="sb-icon" aria-pressed="false" aria-label="Search chats" title="Search chats"><svg><use href="#search-icon"/></svg></button></div>
+      <div class="sb-top"><button type="button" class="sb-icon" data-sidebar-toggle aria-expanded="true" aria-controls="sidebar" aria-label="Hide sidebar" title="Hide sidebar"><svg><use href="#sidebar-icon"/></svg></button><span class="sp"></span><img class="sb-logo" src="/logo-stacked.png" alt="Shikidan"><span class="sp"></span><button type="button" id="search" class="sb-icon" aria-pressed="false" aria-label="Search chats" title="Search chats"><svg><use href="#search-icon"/></svg></button></div>
       <nav class="sb-destinations" aria-label="Go to"><button type="button" class="sb-link" data-proxy="open-attention"><svg><use href="#bell-icon"/></svg>Waiting on you<span class="count" data-waiting-count hidden></span></button><button type="button" class="sb-link" data-show="queue"><svg><use href="#q-queue"/></svg>Queue</button><button type="button" class="sb-link" data-proxy="toggle-flow"><svg><use href="#flow-icon"/></svg>Flow</button><button type="button" class="sb-link" data-proxy="open-agents"><svg><use href="#agents-icon"/></svg>Agents</button><button type="button" class="sb-link" data-proxy="open-studio"><svg><use href="#spark-icon"/></svg>Studio</button></nav>
       <button type="button" id="new-chat" class="sb-new"><svg><use href="#plus-icon"/></svg>New chat</button>
       <button type="button" class="sb-new" data-live><svg><use href="#terminal-icon"/></svg>New terminal</button>
@@ -73,6 +73,7 @@ const BODY = `
       <div class="sb-foot"><button type="button" id="open-marketplace" class="sb-link"><svg><use href="#store-icon"/></svg>Marketplace</button><button type="button" id="all-history" class="sb-link"><svg><use href="#history-icon"/></svg>All history</button><button type="button" id="open-settings" class="sb-link" data-dialog="settings"><svg><use href="#settings-icon"/></svg>Settings</button></div>
     </div>
     <div class="sb-strip">
+      <img class="sb-strip-logo" src="/logo-stacked.png" alt="Shikidan">
       <button type="button" class="sb-icon" data-sidebar-toggle aria-expanded="false" aria-controls="sidebar" aria-label="Show sidebar" title="Show sidebar"><svg><use href="#sidebar-icon"/></svg></button>
       <button type="button" class="sb-icon accent" data-click="new-chat" aria-label="New chat" title="New chat"><svg><use href="#plus-icon"/></svg></button>
       <button type="button" class="sb-icon" data-click="search" aria-label="Search chats" title="Search chats"><svg><use href="#search-icon"/></svg></button>
@@ -86,7 +87,7 @@ const BODY = `
   </aside>
   <main class="canvas">
     <header class="toolbar">
-      <button type="button" id="phone-sessions" class="round phone-nav" data-sidebar-toggle aria-label="Sessions" aria-controls="sidebar" aria-expanded="false" title="Sessions"><svg><use href="#sidebar-icon"/></svg><span class="count" data-waiting-count hidden></span></button>
+      <button type="button" id="phone-sessions" class="round phone-nav" data-sidebar-toggle aria-label="Sessions" aria-controls="sidebar" aria-expanded="false" title="Sessions"><svg><use href="#sidebar-icon"/></svg><span class="count" data-waiting-count hidden></span></button><img class="phone-logo" src="/logo-stacked.png" alt="Shikidan">
       <nav aria-label="Session activity">
         <section class="usage-card" aria-label="Provider usage">
           <div class="usage-track" id="usage-track"></div>
@@ -130,9 +131,8 @@ const BODY = `
 
     <div class="stage">
       <section id="welcome" class="welcome" aria-labelledby="welcome-title">
-        <span class="welcome-mark"><svg><use href="#spark-icon"/></svg></span>
-        <h1 id="welcome-title">A little space to build.</h1>
-        <p>What would you like to work on?</p>
+        <h1 id="welcome-title" class="welcome-logo"><img src="/logo-wide.png" alt="Shikidan" width="440" height="165"></h1>
+        <p>What should your team build today?</p>
       </section>
 
       <section id="history" class="history content-width" aria-labelledby="history-title" hidden>
@@ -226,7 +226,7 @@ const BODY = `
   </dialog>
 
   <template id="assistant-row">
-    <div class="msg assistant"><span class="avatar"><svg><use href="#spark-icon"/></svg></span><div class="msg-body"><div class="msg-meta"><strong>Shikidan</strong><time>now</time></div></div></div>
+    <div class="msg assistant"><span class="avatar"><img src="/logo-s.png" alt=""></span><div class="msg-body"><div class="msg-meta"><strong>Shikidan</strong><time>now</time></div></div></div>
   </template>
   <template id="team-card">
     <article class="team-card"><header><strong>Team for this task</strong><span class="muted"></span><button type="button" class="text-button" data-open-agents>Open in Agents <svg><use href="#open-icon"/></svg></button></header><ol></ol><div class="team-progress" hidden><span></span></div></article>

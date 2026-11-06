@@ -182,6 +182,36 @@ const pngHeader = async (response: Response): Promise<{ width: number; height: n
 }
 
 describe('Shikidan logo', () => {
+  test('the welcome heading is the wide logo, followed by the team question', async () => {
+    const markup = await (await app.handle(new Request('http://localhost/'))).text()
+    const welcome = markup.slice(markup.indexOf('<section id="welcome"'), markup.indexOf('</section>', markup.indexOf('<section id="welcome"')))
+    expect(welcome).toContain('<h1 id="welcome-title" class="welcome-logo"><img src="/logo-wide.png" alt="Shikidan" width="440" height="165"></h1>')
+    expect(welcome).toContain('<p>What should your team build today?</p>')
+    expect(welcome).not.toContain('A little space to build.')
+    expect(welcome).not.toContain('What would you like to work on?')
+    expect(welcome).not.toContain('welcome-mark')
+  })
+
+  test('the sidebar top row, the closed rail and the phone top bar carry the plain stacked logo', async () => {
+    const markup = await (await app.handle(new Request('http://localhost/'))).text()
+    const top = markup.slice(markup.indexOf('<div class="sb-top">'), markup.indexOf('</div>', markup.indexOf('<div class="sb-top">')))
+    expect(top.indexOf('<img class="sb-logo" src="/logo-stacked.png" alt="Shikidan">')).toBeGreaterThan(top.indexOf('data-sidebar-toggle'))
+    expect(top.indexOf('<img class="sb-logo"')).toBeLessThan(top.indexOf('id="search"'))
+    const strip = markup.slice(markup.indexOf('<div class="sb-strip">'))
+    expect(strip.indexOf('<img class="sb-strip-logo" src="/logo-stacked.png" alt="Shikidan">')).toBeLessThan(strip.indexOf('data-sidebar-toggle'))
+    expect(strip.indexOf('<img class="sb-strip-logo"')).toBeGreaterThan(-1)
+    const phoneLogo = markup.indexOf('<img class="phone-logo" src="/logo-stacked.png" alt="Shikidan">')
+    expect(phoneLogo).toBeGreaterThan(markup.indexOf('id="phone-sessions"'))
+    expect(phoneLogo).toBeLessThan(markup.indexOf('<nav aria-label="Session activity">'))
+  })
+
+  test('replies carry the S mark where the sparkle was; the sparkle stays as the AI icon elsewhere', async () => {
+    const markup = await (await app.handle(new Request('http://localhost/'))).text()
+    expect(markup).toContain('<span class="avatar"><img src="/logo-s.png" alt=""></span>')
+    expect(markup).not.toContain('<span class="avatar"><svg><use href="#spark-icon"/></svg></span>')
+    expect(markup).toContain('<button type="button" class="sb-link" data-proxy="open-studio"><svg><use href="#spark-icon"/></svg>Studio</button>')
+  })
+
   test('every logo file is served as a PNG', async () => {
     await app.modules
     for (const path of ['/logo-wide.png', '/logo-stacked.png', '/logo-s.png', '/favicon-32.png', '/apple-touch-icon.png']) {

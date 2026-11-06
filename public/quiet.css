@@ -116,6 +116,8 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .welcome-mark svg { width: 22px; height: 22px; }
 h1, h2, p { margin-top: 0; }
 .welcome h1 { font-size: clamp(25px, 2.4vw, 30px); font-weight: 400; letter-spacing: -1.1px; margin-bottom: 14px; }
+.welcome .welcome-logo { margin: 0 0 14px; line-height: 0; }
+.welcome-logo img { display: block; width: min(440px, 80vw); height: auto; margin: 0 auto; }
 .welcome p { font-size: 14px; color: var(--muted); margin: 0; }
 .composer-area { padding: 18px 0 44px; flex-shrink: 0; }
 .composer { display: flex; align-items: center; gap: 14px; min-height: 54px; border: 1px solid transparent; border-radius: var(--r-lg); corner-shape: var(--corner); background: var(--paper); padding: 6px 12px; transition: border-color 160ms; }
@@ -600,6 +602,7 @@ body[data-live="true"] #agents > .activity-empty, body[data-live="true"] #agents
 .chat .msg.assistant { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 14px; align-items: start; }
 .avatar { display: grid; place-items: center; width: 34px; height: 34px; border-radius: var(--r-md); corner-shape: var(--corner); color: var(--accent); box-shadow: var(--raised); }
 .avatar svg { width: 17px; height: 17px; }
+.avatar img { width: 22px; height: 22px; object-fit: contain; }
 .msg-body { min-width: 0; }
 .msg-meta { display: flex; align-items: baseline; gap: 10px; min-height: 34px; padding-top: 7px; font-size: 13px; }
 .msg-meta strong { font-weight: 500; }
@@ -1045,6 +1048,9 @@ a.pill:hover { color: var(--accent); }
 .sb-shell.collapsed .sb { align-items: center; padding: 16px 0; gap: 12px; }
 .sb .sp { flex: 1; }
 .sb-top { display: flex; align-items: center; margin-bottom: 12px; }
+.sb-logo { display: block; height: 44px; width: auto; }
+.sb-strip-logo { display: block; width: 46px; height: auto; }
+body:has(#welcome:not([hidden])) :is(.phone-logo, .sb-strip-logo) { display: none; }
 .sb-icon { display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: var(--r-sm); corner-shape: var(--corner); background: var(--paper); box-shadow: var(--raised); color: var(--text-soft); padding: 0; }
 .sb-icon:hover { color: var(--accent); }
 .sb-icon:active, .sb-icon[aria-pressed="true"] { box-shadow: var(--inset); color: var(--accent); }
@@ -1506,6 +1512,7 @@ dialog, .access-dialog, .confirm-dialog { max-width: calc(100vw - 32px); max-hei
 
 .term-bar .term-bar-mobile, .key-row, .live-jump { display: none; }
 #phone-sessions, #screen-actions, .sb-destinations, .touch-only { display: none; }
+.phone-logo { display: none; }
 .popover.row-menu.anchored { position: fixed; left: auto; width: 220px; z-index: 70; }
 @media (max-width: 600px), (orientation: landscape) and (max-height: 500px) and (pointer: coarse), (min-width: 901px) and (max-width: 1100px) and (pointer: coarse) and (orientation: landscape) {
   .q-done::after { content: ""; position: absolute; inset: -6px; }
@@ -1552,6 +1559,7 @@ dialog, .access-dialog, .confirm-dialog { max-width: calc(100vw - 32px); max-hei
   .sb .sb-icon { width: 44px; height: 44px; }
   .sb-new, .sb-link, .sb-row { min-height: 44px; }
   #phone-sessions, #screen-actions { display: inline-flex; position: relative; width: 44px; flex-basis: 44px; min-height: 44px; }
+  .phone-logo { display: block; height: 36px; width: auto; margin: 0 auto 0 10px; }
   #screen-actions[hidden] { display: none; }
   .row-menu.anchored .row { min-height: 44px; }
   .sb-destinations { display: flex; flex-direction: column; gap: 8px; padding-bottom: 12px; }

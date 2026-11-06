@@ -36,6 +36,17 @@ describe('shipped layout at phone width', () => {
     expect(quietNarrow).not.toContain('z-index: 50')
   })
 
+  test('on a phone the stacked logo sits right after Sessions in the top bar; wider screens hide it', () => {
+    const drawer = mediaBlock(quiet, PHONE_TERMINAL_QUERY)
+    expect(quiet.indexOf('.phone-logo { display: none; }')).toBeLessThan(quiet.indexOf(`@media ${PHONE_TERMINAL_QUERY} {`))
+    expect(drawer).toContain('.phone-logo { display: block; height: 36px; width: auto; margin: 0 auto 0 10px; }')
+  })
+
+  test('while the welcome screen shows, the top bar and closed rail drop the logo; the open drawer keeps it', () => {
+    expect(quiet).toContain('body:has(#welcome:not([hidden])) :is(.phone-logo, .sb-strip-logo) { display: none; }')
+    expect(quiet).not.toMatch(/#welcome:not\(\[hidden\]\)\)[^{]*\.sb-logo/)
+  })
+
   test('on a phone the toolbar keeps only Sessions; Studio, Flow, Agents and the bell move into the drawer', () => {
     const drawer = mediaBlock(quiet, PHONE_TERMINAL_QUERY)
     expect(quiet.indexOf('#phone-sessions, #screen-actions, .sb-destinations, .touch-only { display: none; }')).toBeLessThan(quiet.indexOf(`@media ${PHONE_TERMINAL_QUERY}, `))
