@@ -200,7 +200,12 @@ The Recover agent's Claude session starts with a deny list covering `kamal`, `gi
 
 ## The Claude Code skill
 
-`bun install` (and every server start) links `~/.claude/skills/skd-dispatch` to `skills/skd-dispatch` in this repo, so `git pull` keeps the skill current. With it, a Claude Code session can hand work to Shikidan: it plans, dispatches jobs to the right AI, and reviews them, while you watch the jobs in the Agents drawer and the Flow graph. An existing hand-written skill at that path is moved to `~/.claude/skills-backup/` first, never overwritten.
+`bun install` (and every server start) links each folder under `skills/` into `~/.claude/skills/`, so `git pull` keeps the skills current:
+
+- **`shikidan`** teaches any Claude Code or Codex session to set up, check and run Shikidan: install and first start, connecting AIs and roles, the `shiki` commands for jobs, runs, the queue and plugins, and troubleshooting.
+- **`skd-dispatch`** lets a Claude Code session hand work to Shikidan: it plans, dispatches jobs to the right AI, and reviews them, while you watch the jobs in the Agents drawer and the Flow graph.
+
+An existing hand-written skill at one of those paths is moved to `~/.claude/skills-backup/` first, never overwritten. Before anything is installed, an agent working in a fresh clone reads `AGENTS.md` (Claude Code reaches it through `CLAUDE.md`), which walks it through setup step by step.
 
 On the same occasions, Shikidan translates Claude's global instructions, skills and agents for Codex, so both AIs follow the same rules. Codex-incompatible pieces are skipped, and any personal Codex files it replaces are kept under `~/.codex/backup/`.
 
