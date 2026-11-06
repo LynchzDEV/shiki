@@ -43,6 +43,7 @@ export type WorkflowAttempt = {
   reportedBy?: { via: ApprovalContext['via']; id: string; at: number }; interrupted?: true;
   shape?: FlowShape; nudgedFrom?: string;
   crashes?: number; tried?: string[]; sameFamily?: true; families?: Array<string | null>;
+  resume?: { sessionId: string; engine: string; model: string | null; prompt: string };
 }
 export type TokenState = 'ready' | 'working' | 'settled' | 'waiting'
 export type WorkflowToken = { id: string; nodeId: string; pathId: string; workspace: string; state: TokenState; attempt: number | null; from: number[] }
@@ -110,6 +111,25 @@ function reviewsAhead(graph: WorkflowRevision, from: string[]): Set<string> {
 const GATING_KINDS: ReadonlySet<WorkflowNode['kind']> = new Set(['review', 'verify-plan'])
 const RECHECKED_KINDS: ReadonlySet<WorkflowNode['kind']> = new Set(['review', 'verify-plan', 'task'])
 const RECHECK_NOTE = 'This is a re-check after your earlier fail. Fail again only for findings from your earlier check that are still not fixed, or for new defects that block shipping: wrong behaviour, data loss, broken callers, security. Report every other observation as a non-blocking note in evidence and pass.'
+const PASSED_RECHECK_NOTE = 'You already passed this step. Re-check only the changes since your last visit and anything named in sentBack; your earlier pass stands for everything else. If those changes touch no runtime code (only comments, specs, docs or fixtures), pass without re-running the full check.'
+const FIX_ROUND_NOTE = 'You are continuing your own implementation session: the assignment, plan and rules from before still apply. Fix every finding above with additional commits, keep each commit green on its own, and end with exactly one SKD_RESULT line.'
+const CHECK_TAIL_CHARS = 8000
+const sinceNote = (head: string) => `Your last visit checked ${head} (repo:commit pairs when the workspace is a folder of repos); run \`git diff <that commit>..HEAD\` in each repo to see what changed since.`
+
+export function recheckNotes(kind: WorkflowNode['kind'], lastOwn: WorkflowAttempt | undefined, codeMoved: boolean): Record<string, string> {
+  const outcome = lastOwn?.result?.outcome
+  if (!RECHECKED_KINDS.has(kind) || (outcome !== 'fail' && outcome !== 'pass')) return {}
+  if (outcome === 'pass' && (kind !== 'task' || !codeMoved)) return {}
+  const note = outcome === 'fail' ? RECHECK_NOTE : PASSED_RECHECK_NOTE
+  return { recheck: lastOwn!.workspace ? `${note} ${sinceNote(lastOwn!.workspace.head)}` : note }
+}
+
+export const checkTail = (check: CheckResult): CheckResult => ({ ...check, output: check.output.slice(-CHECK_TAIL_CHARS) })
+
+function fixRoundPrompt(failure: string, sender: WorkflowAttempt): string {
+  const failedChecks = sender.checks.filter(check => check.exitCode !== 0 || check.timedOut).map(check => `Failed check \`${[check.command, ...check.args].join(' ')}\`:\n${checkTail(check).output}`)
+  return [failure, `Its full result:\n${sender.output || JSON.stringify(sender.result)}`, ...failedChecks, FIX_ROUND_NOTE].join('\n\n')
+}
 
 function commandsChanged(before: Pick<WorkflowRevision, 'nodes'>, after: Pick<WorkflowRevision, 'nodes'>): boolean {
   const commands = (node?: WorkflowNode) => JSON.stringify([node?.checks ?? [], node?.setup ?? [], node?.mcpServers ?? []])
@@ -495,7 +515,11 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
     }
     const latest = new Map(related.filter(attempt => attempt.result).map(attempt => [attempt.nodeId, attempt]))
     const lastFinished = related.filter(attempt => attempt.nodeId === node.id && attempt.status === 'settled' && attempt.result !== null && !attempt.interrupted).at(-1)
-    const inputs = [...latest.values()].map(attempt => ({ node: attempt.nodeId, outcome: attempt.result, output: attempt.output, checks: attempt.checks, workspace: attempt.workspace, ...(lastFinished && attempt.number < lastFinished.number ? { older: true } : {}) }))
+    const inputs = [...latest.values()].map(attempt => {
+      const older = !!lastFinished && attempt.number < lastFinished.number
+      if (older && kindOf(run, attempt) !== 'plan' && node.kind !== 'plan') return { node: attempt.nodeId, outcome: attempt.result, workspace: attempt.workspace, older: true }
+      return { node: attempt.nodeId, outcome: attempt.result, output: attempt.output, checks: attempt.checks.map(checkTail), workspace: attempt.workspace, ...(older ? { older: true } : {}) }
+    })
     const agent = run.agents[node.id]!
     if (agent.inSession && !sessionOf(run)) return block(run, sessionClosed(node.title))
     const policy = agent.inSession ? { ...run.policy, coreRules: sessionRules(mcUrl(), run.id, node.id) } : run.policy
@@ -503,12 +527,16 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
     if (restored) return block(run, restored)
     const repoRules = node.kind === 'plan' ? await shapeRulesFor(run.cwd) : ''
     const lastOwn = related.filter(attempt => attempt.nodeId === node.id && attempt.status === 'settled' && attempt.result !== null).at(-1)
-    const recheck: Record<string, string> = RECHECKED_KINDS.has(node.kind) && lastOwn?.result?.outcome === 'fail' ? { recheck: RECHECK_NOTE } : {}
+    const codeMoved = !!lastOwn && related.some(attempt => attempt.number > lastOwn.number && kindOf(run, attempt) === 'implement')
+    const recheck = recheckNotes(node.kind, lastOwn, codeMoved)
     const sender = token.from.length === 1 ? run.attempts[token.from[0]!] : undefined
-    const sentBack: Record<string, string> = sender?.result?.outcome === 'fail' && !sender.interrupted ? { sentBack: `Step "${run.workflow.nodes.find(step => step.id === sender.nodeId)?.title ?? sender.nodeId}" (id ${sender.nodeId}, attempt ${sender.number}) sent you back with this failure: ${sender.result.summary}. Fix this first; its full result is in upstreamEvidence. Results marked older came before your last finished visit; re-check them only if this fix touches them.` } : {}
-    const prompt = composeWorkflowPrompt(policy, run.workflow, node, run.request, inputs, run.skills[node.id], { ...shapeNotes(run.workflow, node, inputs.map(input => input.output), repoRules), ...recheck, ...sentBack })
+    const failedSender = sender?.result?.outcome === 'fail' && !sender.interrupted ? sender : undefined
+    const failure = failedSender ? `Step "${run.workflow.nodes.find(step => step.id === failedSender.nodeId)?.title ?? failedSender.nodeId}" (id ${failedSender.nodeId}, attempt ${failedSender.number}) sent you back with this failure: ${failedSender.result!.summary}.` : ''
+    const sentBack: Record<string, string> = failure ? { sentBack: `${failure} Fix this first; its full result is in upstreamEvidence. Results marked older came before your last finished visit; re-check them only if this fix touches them.` } : {}
+    const prompt = composeWorkflowPrompt(policy, run.workflow, node, run.request, inputs, run.skills[node.id], { ...shapeNotes(run.workflow, node, inputs.map(input => 'output' in input ? input.output : ''), repoRules), ...recheck, ...sentBack })
+    const resume = node.kind === 'implement' && failedSender && !agent.inSession ? resumableSession(related, node, agent, fixRoundPrompt(failure, failedSender)) : null
     const session = agent.inSession ? { inSession: true as const, sessionNotifiedAt: null, workspaceSnapshot: await workspaceSnapshot(token.workspace) } : {}
-    const attempt: WorkflowAttempt = { nodeId: node.id, number: run.attempts.length, jobId: null, status: agent.inSession ? 'running' : 'starting', prompt, startedAt: Date.now(), endedAt: null, result: null, checks: [], output: '', workspace: null, tokenId: token.id, pathId: token.pathId, from: token.from, ...session }
+    const attempt: WorkflowAttempt = { nodeId: node.id, number: run.attempts.length, jobId: null, status: agent.inSession ? 'running' : 'starting', prompt, startedAt: Date.now(), endedAt: null, result: null, checks: [], output: '', workspace: null, tokenId: token.id, pathId: token.pathId, from: token.from, ...session, ...(resume ? { resume } : {}) }
     if (prompt.length > 500000) return block(run, 'Combined task inputs exceed 500 KB; use artifact paths for large outputs')
     run.attempts.push(attempt)
     Object.assign(token, { state: 'working', attempt: attempt.number })
@@ -525,7 +553,9 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
     if (down) return recoverStep(run, node, attempt, token, down.reason)
     if (agent.sameFamily) attempt.sameFamily = true
     attempt.families = [...new Set([...attempt.families ?? [], agent.family])]
-    const result = await deps.manager.createJob(stepJob(run, node, attempt, token, attempt.prompt), deps.resolver)
+    const resumed = attempt.resume?.engine === agent.engine && attempt.resume.model === agent.model ? attempt.resume : undefined
+    const params = resumed ? { ...stepJob(run, node, attempt, token, resumed.prompt), resumeSessionId: resumed.sessionId } : stepJob(run, node, attempt, token, attempt.prompt)
+    const result = await deps.manager.createJob(params, deps.resolver)
     if (!result.ok) return recoverStep(run, node, attempt, token, result.error)
     Object.assign(attempt, { jobId: result.job.id, status: 'running' })
     await persist(run)
@@ -536,6 +566,7 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
     const agent = run.agents[node.id]!
     const down = await availability(agent)
     attempt.crashes = (attempt.crashes ?? 0) + 1
+    delete attempt.resume
     if (attempt.crashes < MAX_CRASHES && !down) return launch(run, node, attempt, token)
     const why = down?.reason ?? reason
     const tried = [...attempt.tried ?? [], agent.engine]
@@ -553,6 +584,13 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
     Object.assign(token, { state: 'ready', attempt: null })
     await unavailableBlock(run, agent.engine, why, down?.until ?? null)
     return null
+  }
+  function resumableSession(related: WorkflowAttempt[], node: WorkflowNode, agent: ResolvedAgent, prompt: string): WorkflowAttempt['resume'] | null {
+    const previous = related.filter(attempt => attempt.nodeId === node.id && attempt.status === 'settled' && attempt.result !== null && !attempt.interrupted).at(-1)
+    const job = previous?.jobId ? deps.manager.getJob(previous.jobId) : undefined
+    if (!job?.sessionId || job.resumeSupported === false || !NUDGEABLE_ENGINES.has(job.engine)) return null
+    if (job.engine !== agent.engine || (job.model ?? null) !== agent.model) return null
+    return { sessionId: job.sessionId, engine: job.engine, model: agent.model, prompt }
   }
   function stepJob(run: WorkflowRun, node: WorkflowNode, attempt: WorkflowAttempt, token: WorkflowToken, prompt: string): CreateJobParams {
     const agent = run.agents[node.id]!

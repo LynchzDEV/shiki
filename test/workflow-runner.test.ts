@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { createJobManager, type JobManager } from '../server/jobs'
 import type { EngineResolver } from '../server/jobs-engine-iface'
 import { createWorkflowStore, defaultWorkflow, draftRevision, type Workflow } from '../server/workflows'
-import { changeSize, covers, createWorkflowRunner, lineage, RunActionError, type ResolvedAgent, type WorkflowRun, type WorkflowRunner } from '../server/workflow-runner'
+import { changeSize, checkTail, covers, createWorkflowRunner, lineage, recheckNotes, RunActionError, type ResolvedAgent, type WorkflowAttempt, type WorkflowRun, type WorkflowRunner } from '../server/workflow-runner'
 import * as worktrees from '../server/job-worktrees'
 import { initScratchGitRepo } from './support/scratch-git-repo'
 import { classicWorkflow } from './support/classic-workflow'
@@ -232,6 +232,103 @@ test('a re-check after a fail carries the convergence note', async () => {
 })
 
 const assignmentOf = (prompt: string) => { const start = prompt.indexOf('{\n  "request"'); return JSON.parse(prompt.slice(start, prompt.indexOf('\n}', start) + 2)) }
+
+test('a re-visit after a pass is scoped to the changes since the commit it last checked', async () => {
+  const store = await build(scripted({ ui: ['fail'] }))
+  await store.save(checkedGraph())
+  const run = await runner.start({ workflowId: 'checked', cwd: repo, request: 'Build it', label: 'passed recheck' })
+  const done = await finished(run.id)
+  expect(done.status).toBe('done')
+  const accepts = done.attempts.filter(attempt => attempt.nodeId === 'accept')
+  expect(assignmentOf(accepts[0]!.prompt).recheck).toBeUndefined()
+  const passedNote = assignmentOf(accepts[1]!.prompt).recheck as string
+  expect(passedNote).toContain('You already passed this step')
+  expect(passedNote).toContain(`Your last visit checked ${accepts[0]!.workspace!.head}`)
+  const uis = done.attempts.filter(attempt => attempt.nodeId === 'ui')
+  const failedNote = assignmentOf(uis[1]!.prompt).recheck as string
+  expect(failedNote).toContain('This is a re-check after your earlier fail')
+  expect(failedNote).toContain(`Your last visit checked ${uis[0]!.workspace!.head}`)
+})
+
+test('only task steps after new implementation get the passed re-check note; plan checks, reviews and briefs after a pass run in full', () => {
+  const passed = { result: { outcome: 'pass', summary: 'ok', evidence: ['x'] }, workspace: { head: 'abc', diffHash: 'h' } } as WorkflowAttempt
+  expect(recheckNotes('task', passed, true).recheck).toContain('You already passed this step')
+  expect(recheckNotes('task', passed, false)).toEqual({})
+  expect(recheckNotes('verify-plan', passed, true)).toEqual({})
+  expect(recheckNotes('review', passed, true)).toEqual({})
+  expect(recheckNotes('implement', passed, true)).toEqual({})
+  expect(recheckNotes('review', { ...passed, result: { ...passed.result!, outcome: 'fail' } }, false).recheck).toContain('This is a re-check after your earlier fail')
+  expect(recheckNotes('task', undefined, true)).toEqual({})
+})
+
+test('a planner sent back by the plan check keeps the full output of the steps before it', async () => {
+  let checks = 0
+  const store = await build(({ prompt }) => ({ cmd: '/bin/echo', args: [report(prompt.includes('Verify the upstream plan') && checks++ === 0 ? 'fail' : 'pass')], env: {} }))
+  const graph = withoutSession()
+  await store.save({ ...graph, id: 'replan', entry: 'how', nodes: [stepOf('how', 'task'), ...graph.nodes] as Workflow['nodes'], edges: [{ source: 'how', target: 'plan', outcome: 'pass' }, ...graph.edges] })
+  const run = await runner.start({ workflowId: 'replan', cwd: repo, request: 'Build it', label: 'replan' })
+  const done = await finished(run.id)
+  const plans = done.attempts.filter(attempt => attempt.nodeId === 'plan')
+  expect(plans).toHaveLength(2)
+  const how = (evidenceOf(plans[1]!.prompt) as Array<{ node: string; output?: string; older?: true }>).find(input => input.node === 'how')!
+  expect(how.older).toBe(true)
+  expect(how.output).toBeDefined()
+})
+
+test('a fix round resumes the implement session with only the failure, and keeps the full assignment on record', async () => {
+  const calls: StepCall[] = []
+  let uiFails = 1
+  const store = await build(({ prompt, resumeSessionId }) => {
+    calls.push({ prompt, resumeSessionId })
+    const step = /STEP-(\w+)/.exec(prompt)?.[1] ?? ''
+    return lines(...(step === 'execute' ? [sessionLine] : []), report(step === 'ui' && uiFails-- > 0 ? 'fail' : 'pass'))
+  })
+  await store.save(checkedGraph())
+  const run = await runner.start({ workflowId: 'checked', cwd: repo, request: 'Build it', label: 'resumed fix' })
+  const done = await finished(run.id)
+  expect(done.status).toBe('done')
+  const resumed = calls.filter(call => call.resumeSessionId !== undefined)
+  expect(resumed).toHaveLength(1)
+  expect(resumed[0]!.resumeSessionId).toBe(STEP_SESSION)
+  const uiFail = done.attempts.find(attempt => attempt.nodeId === 'ui' && attempt.result?.outcome === 'fail')!
+  expect(resumed[0]!.prompt).toContain(`Step "ui" (id ui, attempt ${uiFail.number}) sent you back with this failure: Completed fixture.`)
+  expect(resumed[0]!.prompt).toContain('You are continuing your own implementation session')
+  expect(resumed[0]!.prompt).not.toContain('upstreamEvidence')
+  const fixRound = done.attempts.filter(attempt => attempt.nodeId === 'execute')[1]!
+  expect(fixRound.resume).toMatchObject({ sessionId: STEP_SESSION })
+  expect(assignmentOf(fixRound.prompt).sentBack).toContain('sent you back')
+})
+
+test('a fix round without a resumable session starts a fresh agent with the full assignment', async () => {
+  const calls: StepCall[] = []
+  const store = await build(({ prompt, resumeSessionId }) => {
+    calls.push({ prompt, resumeSessionId })
+    return { cmd: '/bin/echo', args: [report(/STEP-ui/.test(prompt) && calls.filter(call => /STEP-ui/.test(call.prompt)).length === 1 ? 'fail' : 'pass')], env: {} }
+  })
+  await store.save(checkedGraph())
+  const run = await runner.start({ workflowId: 'checked', cwd: repo, request: 'Build it', label: 'fresh fix' })
+  const done = await finished(run.id)
+  expect(done.status).toBe('done')
+  expect(calls.every(call => call.resumeSessionId === undefined)).toBe(true)
+  expect(done.attempts.filter(attempt => attempt.nodeId === 'execute').every(attempt => attempt.resume === undefined)).toBe(true)
+})
+
+test('older results keep only their outcome, except plans, and check logs are cut to their tail', async () => {
+  const longLog = `${'x'.repeat(20000)}TAIL`
+  const store = await build(scripted({ accept: ['fail'], ui: ['fail'] }))
+  await store.save(checkedGraph())
+  const run = await runner.start({ workflowId: 'checked', cwd: repo, request: 'Build it', label: 'trimmed' })
+  const done = await finished(run.id)
+  const executes = done.attempts.filter(attempt => attempt.nodeId === 'execute')
+  const inputs = evidenceOf(executes[2]!.prompt) as Array<{ node: string; older?: true; output?: string }>
+  expect(inputs.find(input => input.node === 'verify-plan')).toMatchObject({ older: true })
+  expect(inputs.find(input => input.node === 'verify-plan')!.output).toBeUndefined()
+  expect(inputs.find(input => input.node === 'plan')!.output).toBeDefined()
+  expect(inputs.find(input => input.node === 'ui')!.output).toBeDefined()
+  const check = { command: 'ci', args: [], exitCode: 1, output: longLog, timedOut: false }
+  expect(checkTail(check).output).toHaveLength(8000)
+  expect(checkTail(check).output.endsWith('TAIL')).toBe(true)
+})
 
 test('a step sent back by a failure names that failure and marks older results', async () => {
   const store = await build(scripted({ accept: ['fail'], ui: ['fail'] }))
