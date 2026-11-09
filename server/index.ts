@@ -259,7 +259,7 @@ export async function createApp(): Promise<Elysia> {
     map: statusMaps({ flow: id => workflowStore.get(id), setting: getSetting }),
     source: queueSource,
     onSynced: item => { void attention.resolve(attentionKey.queueSync(item.id)).catch(error => console.error('Status sync alert failed', error)) },
-    onFailed: (item, _status, error) => { void raiseSyncAlert(attention, item, error).catch(alertError => console.error('Status sync alert failed', alertError)) },
+    onFailed: (item, status, error) => { void raiseSyncAlert(attention, item, error).catch(alertError => console.error('Status sync alert failed', alertError)); notifyOn.syncFailed(item, status, error) },
   })
   queueStore.subscribe(syncStatus)
   const bootQueue = queueEngine

@@ -45,7 +45,7 @@ describe('queue events', () => {
 
   test('carries the item, run, node and the synced clickup status', () => {
     const { events, emitted } = setup([], [run({ currentNodeId: 'review' })])
-    events.queue({ ...item({ state: 'ready' }), syncedStatus: 'in progress' } as QueueItem, 'Run done')
+    events.queue(item({ state: 'ready', syncedStatus: 'in progress' }), 'Run done')
     expect(emitted[0]).toMatchObject({ queueItemId: 'item-1', runId: 'run-1', taskId: 'T1', taskUrl: 'https://app.clickup.com/t/T1', title: 'Card', node: 'review', itemState: 'ready', runStatus: 'running', clickupStatus: 'in progress', detail: 'Run done', fingerprintKey: 'item-1:queue' })
   })
 

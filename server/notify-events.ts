@@ -27,7 +27,7 @@ export function itemOfRun(items: QueueItem[], runId: string): QueueItem | undefi
   return items.find(item => item.currentRunId === runId || item.runIds.includes(runId) || item.recoverBuild?.recoveryRunId === runId || item.land?.recover?.runId === runId)
 }
 
-const clickupStatusOf = (item: QueueItem): string | null => (item as { syncedStatus?: string }).syncedStatus ?? null
+const clickupStatusOf = (item: QueueItem): string | null => item.syncedStatus ?? null
 
 function mockupsOf(item: QueueItem): ImageRef[] {
   if (item.pick === undefined || item.worktree === null) return []
