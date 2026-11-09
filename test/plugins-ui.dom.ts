@@ -214,7 +214,7 @@ test('the sidebar lists enabled plugins with a screen under a Plugins heading, b
   dispatchEvent(new Event('quiet:plugins-changed'))
   await flush()
   const list = byId('sidebar-list')
-  const headings = [...list.querySelectorAll('.sb-day')].map(day => day.textContent)
+  const headings = [...list.querySelectorAll('.sb-day')].map(day => day.firstChild?.textContent)
   expect(headings).toEqual(['Plugins', 'Today'])
   const rows = [...list.querySelectorAll('a.sb-row[data-kind="plugin"]')]
   expect(rows).toHaveLength(1)
