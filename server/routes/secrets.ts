@@ -85,16 +85,20 @@ export async function applyPatch(
   return { ok: true, view: await currentView() }
 }
 
-export const secretsRoutes = new Elysia()
-  .onBeforeHandle(requireLocal)
-  .get('/api/secrets', () => currentView())
-  .post('/api/secrets', async ({ body, set }) => {
-    const result = await applyPatch((body ?? {}) as SecretsPatch)
-    if (!result.ok) {
-      set.status = result.status
-      return { error: result.error }
-    }
-    return { ok: true, ...result.view }
-  })
-  .post('/api/secrets/api-token/reveal', async () => ({ apiToken: await readApiToken() }))
-  .post('/api/secrets/api-token/rotate', async () => ({ apiToken: await rotateApiToken() }))
+export function secretsRoutes(webhookCleared: () => Promise<void>): Elysia {
+  return new Elysia()
+    .onBeforeHandle(requireLocal)
+    .get('/api/secrets', () => currentView())
+    .post('/api/secrets', async ({ body, set }) => {
+      const patch = (body ?? {}) as SecretsPatch
+      const result = await applyPatch(patch)
+      if (!result.ok) {
+        set.status = result.status
+        return { error: result.error }
+      }
+      if (patch.notifyWebhookUrl === null) await webhookCleared()
+      return { ok: true, ...result.view }
+    })
+    .post('/api/secrets/api-token/reveal', async () => ({ apiToken: await readApiToken() }))
+    .post('/api/secrets/api-token/rotate', async () => ({ apiToken: await rotateApiToken() }))
+}

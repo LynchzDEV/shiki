@@ -14,6 +14,7 @@ import { jobCommands } from './commands/jobs'
 import { pluginCommands } from './commands/plugins'
 import { queueCommands } from './commands/queue'
 import { studioCommands } from './commands/studio'
+import { notifyCommands } from './commands/notify'
 import { systemCommands } from './commands/system'
 
 export const VERSION = '0.1.0'
@@ -30,7 +31,7 @@ export type MainDeps = {
   pollMs?: number
 }
 
-export const COMMANDS: Command[] = [...systemCommands, ...jobCommands, ...studioCommands, ...pluginCommands, ...clickupCommands, ...queueCommands, ...badAppleCommands]
+export const COMMANDS: Command[] = [...systemCommands, ...jobCommands, ...studioCommands, ...pluginCommands, ...clickupCommands, ...queueCommands, ...notifyCommands, ...badAppleCommands]
 
 const GLOBAL_OPTIONS: Record<string, OptionSpec> = {
   url: { type: 'string', description: `Shikidan URL (default: $SKD_URL, then ${DEFAULT_URL})`, placeholder: 'URL' },

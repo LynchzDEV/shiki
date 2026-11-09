@@ -50,6 +50,7 @@ import { createAttentionStore } from './attention'
 import { raiseQueueAlert, sweepQueueAlerts, watchQueueAlerts } from './queue-attention'
 import { createNotifier } from './notify'
 import { createNotifyEvents } from './notify-events'
+import { notifyRoutes } from './routes/notify'
 import type { QueueItem } from './queue-store'
 import { createOutcomeLedger, OUTCOME_RETENTION_MS } from './outcomes'
 import { createSessionResolver } from './outcome-session'
@@ -307,7 +308,8 @@ export async function createApp(): Promise<Elysia> {
     .use(outcomesRoutes(outcomeLedger))
     .use(attentionRoutes(attention))
     .use(studioRoutes(workflowStore, workflowRunner, workflowBuilder, runEvents, () => jobManager.listJobs()))
-    .use(secretsRoutes)
+    .use(secretsRoutes(() => notifier.clear()))
+    .use(notifyRoutes(notifier, () => queueStore.list()))
     .use(rolesRoutes)
     .use(flowApprovalRoutes)
     .use(modelsRoutes)

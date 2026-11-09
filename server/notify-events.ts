@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 
 import type { JobRecord } from './jobs'
-import type { ImageRef, Notifier, NotifyEventName, NotifyInput } from './notify'
+import type { ImageRef, Notifier, NotifyEventName, NotifyInput, NotifyMockup } from './notify'
 import type { QueueItem, QueueState } from './queue-store'
 import type { WorkflowRun } from './workflow-runner'
 
@@ -98,6 +98,16 @@ export function createNotifyEvents(deps: NotifyEventsDeps) {
       emit({ ...itemFields(item, undefined), event: 'sync-failed', fingerprintKey: `${item.id}:sync-failed`, detail: `ClickUp status sync to ${status} failed: ${error}` })
     },
   }
+}
+
+export const SAMPLE_BLOB_BYTES = 800 * 1024
+const SAMPLE_OPTIONS = ['A', 'B', 'C']
+
+export function sampleEvent(items: QueueItem[]): { input: NotifyInput; extra: NotifyMockup[] } {
+  const withPick = items.filter(item => item.pick !== undefined).sort((a, b) => b.updatedAt - a.updatedAt)[0]
+  if (withPick !== undefined) return { input: { ...queueInput({ ...withPick, state: 'waiting-pick' }, 'Test event from shiki notify test', undefined)!, fingerprintKey: 'test' }, extra: [] }
+  const extra = SAMPLE_OPTIONS.map((option, index): NotifyMockup => ({ option, name: `${option.toLowerCase()}.png`, mime: 'image/png', base64: Buffer.alloc(SAMPLE_BLOB_BYTES, index + 1).toString('base64') }))
+  return { input: { event: 'pick', fingerprintKey: 'test', title: 'Shikidan test event', itemState: 'waiting-pick', detail: 'Test event from shiki notify test', options: SAMPLE_OPTIONS, recommended: 'A' }, extra }
 }
 
 export type NotifyEvents = ReturnType<typeof createNotifyEvents>

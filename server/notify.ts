@@ -61,7 +61,7 @@ export type NotifyDeps = {
 
 export type Notifier = {
   emit(input: NotifyInput): Promise<void>
-  send(input: NotifyInput): Promise<SendResult>
+  send(input: NotifyInput, extra?: NotifyMockup[]): Promise<SendResult>
   pending(): number
   resume(): Promise<void>
   drain(): Promise<void>
@@ -126,18 +126,18 @@ export function createNotifier(deps: NotifyDeps): Notifier {
     return writing
   }
 
-  async function body(event: Omit<NotifyEvent, 'mockups'>, images: ImageRef[]): Promise<NotifyEvent> {
+  async function body(event: Omit<NotifyEvent, 'mockups'>, images: ImageRef[], extra: NotifyMockup[]): Promise<NotifyEvent> {
     const read = await Promise.all(images.map(async image => ({ image, bytes: await readImage(image.root, image.relative) })))
     const mockups = read.flatMap(({ image, bytes }): NotifyMockup[] => bytes === null ? [] : [{ option: image.option, name: basename(image.relative), mime: 'image/png', base64: bytes.toString('base64') }])
-    return { ...event, mockups }
+    return { ...event, mockups: [...mockups, ...extra] }
   }
 
-  async function post(event: Omit<NotifyEvent, 'mockups'>, images: ImageRef[]): Promise<SendResult> {
+  async function post(event: Omit<NotifyEvent, 'mockups'>, images: ImageRef[], extra: NotifyMockup[] = []): Promise<SendResult> {
     const { url, key } = await deps.config()
     if (url === null) return { ok: false, status: null, error: 'no webhook url configured' }
     const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(key === null ? {} : { Authorization: `Bearer ${key}`, 'X-Automation-Key': key }) }
     try {
-      const response = await send(url, { method: 'POST', headers, body: JSON.stringify(await body(event, images)), signal: AbortSignal.timeout(timeoutMs) })
+      const response = await send(url, { method: 'POST', headers, body: JSON.stringify(await body(event, images, extra)), signal: AbortSignal.timeout(timeoutMs) })
       return response.ok ? { ok: true, status: response.status } : { ok: false, status: response.status }
     } catch (error) {
       return { ok: false, status: null, error: error instanceof Error ? error.message : String(error) }
@@ -199,7 +199,7 @@ export function createNotifier(deps: NotifyDeps): Notifier {
 
   return {
     emit,
-    send: async input => post(build(input), input.mockups ?? []),
+    send: async (input, extra = []) => post(build(input), input.mockups ?? [], extra),
     pending: () => outbox.pending.length,
     resume: async () => { await Promise.all(outbox.pending.map(entry => start(entry.event.eventId))) },
     drain: async () => { await Promise.all([...inflight.values()]); await writing },

@@ -163,6 +163,32 @@ or
 .RB ( true " and " false
 also work).
 .TP
+.B shiki notify status
+The webhook url, whether a key is set, how many events still wait to be delivered,
+and how many were dropped because more than 200 were waiting (the oldest go first).
+.TP
+.B shiki notify test
+Send a sample event to the webhook now and print the HTTP status it answered.
+The sample carries real\-sized images (the renders of your latest queue item with a pick, or three 800 KB blobs), so a size limit on the receiving side shows up at once.
+.TP
+.BI "shiki notify set\-url " url
+Set the webhook url. It must be https.
+Shikidan POSTs a JSON event to it whenever a queue card needs a person
+(a pick, a question, a failure, a stage or a landing), a run is blocked, or a
+job asks for permission or runs slow.
+.TP
+.BI "shiki notify set\-key " key
+Set the shared key sent as
+.B Authorization: Bearer
+and
+.BR X\-Automation\-Key .
+Pass
+.B \-
+to read it from stdin and keep it out of shell history.
+.TP
+.B shiki notify clear
+Remove the url and key. Events still waiting to be delivered are dropped.
+.TP
 .B shiki policy
 The policy template every workflow step receives.
 .SH WAITING ON YOU
@@ -729,14 +755,19 @@ shiki clickup start 86d4ccpu2 \-\-board main
 .fi
 .RE
 .SH NOT COVERED
-Use the browser for: revealing, rotating or writing secrets; adding or deleting
-connections; workflow drafts, previews and editing; the Studio default
+Use the browser for: revealing or rotating the API token and writing the z.ai
+token; adding or deleting connections; workflow drafts, previews and editing; the Studio default
 workflow; chat home and file pickers; job images; terminal file drops; live
 event streams; attaching to a terminal interactively.
 .SH FILES
 .TP
 .B ~/.config/shikidan/secrets.json
-Holds the API token used for non\-local servers.
+Holds the API token used for non\-local servers, the z.ai token and the webhook url and key.
+.TP
+.B ~/.config/shikidan/notify\-outbox.json
+Webhook events not yet delivered, and the last event sent per queue item or job.
+Delivery retries after 10 s, 1 min, 5 min, then every 30 min with the same
+eventId until the receiver answers 2xx, and resumes after a restart.
 .SH SEE ALSO
 .BR shiki " \-\-help" ,
 the "Command line" section of the Shikidan README.
