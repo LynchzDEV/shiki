@@ -200,6 +200,15 @@ describe('shiki queue', () => {
     expect(bare.calls[0]!.body).toEqual({ option: 'A' })
   })
 
+  test('pick none sends the feedback and the help names --feedback', async () => {
+    const h = harness(() => Response.json({ item: { id: 'a1' } }))
+    expect(await main(['queue', 'pick', 'a1', 'none', '--feedback', 'overlay, not push'], h.deps)).toBe(0)
+    expect(h.calls[0]!.body).toEqual({ option: 'none', feedback: 'overlay, not push' })
+    const help = harness()
+    expect(await main(['queue', 'pick', '--help'], help.deps)).toBe(0)
+    expect(help.out()).toContain('--feedback <TEXT>')
+  })
+
   test('a refused requeue prints the server message and exits 1', async () => {
     const h = harness(() => Response.json({ error: 'It is building now' }, { status: 409 }))
     expect(await main(['queue', 'requeue', 'a1'], h.deps)).toBe(1)

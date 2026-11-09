@@ -176,10 +176,11 @@ export const queueCommands: Command[] = [
     options: {
       tester: { type: 'string', description: 'who to tag when the build is ready', placeholder: 'NAME' },
       note: { type: 'string', description: 'a note for the next run', placeholder: 'TEXT' },
+      feedback: { type: 'string', description: 'what should change, only with none', placeholder: 'TEXT' },
     },
     summary: 'Choose a design variant for an item waiting on a pick',
     run: async (ctx) => {
-      const body = { option: arg(ctx, 'option'), ...optionalText(ctx, 'tester'), ...optionalText(ctx, 'note') }
+      const body = { option: arg(ctx, 'option'), ...optionalText(ctx, 'tester'), ...optionalText(ctx, 'note'), ...optionalText(ctx, 'feedback') }
       emit(ctx, await ctx.client.post(itemPath(ctx, '/pick'), body), () => `Picked ${arg(ctx, 'option')}. Back in the queue.\n`)
     },
   },
