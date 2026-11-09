@@ -76,7 +76,7 @@ export function replyCheck(deps: QueueEngineDeps, fail: (item: QueueItem, reason
     }
   }
 
-  const fromOwner = (text: string): SourceReply[] => [{ id: 'owner', author: 'Owner', text, images: [] }]
+  const fromOwner = (text: string): SourceReply[] => [{ id: 'owner', author: 'Owner', authorId: '', text, images: [] }]
   const answer = (item: QueueItem, worktree: string, text: string): Promise<void> => resume(item, worktree, fromOwner(text), null)
   const keepAnswer = async (item: QueueItem, worktree: string, text: string): Promise<void> => { await store.update(item.id, await saved(item, worktree, fromOwner(text))) }
 

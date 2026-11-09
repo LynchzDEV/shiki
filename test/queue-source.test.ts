@@ -48,9 +48,42 @@ test('post passes a warning through and rejects an oversized one', async () => {
   await expect(pluginSource('clickup-board', big).post({ id: '1', kind: 'update', lines: ['x'] })).rejects.toThrow()
 })
 
-test('replies parses replies and images', async () => {
+test('replies parses replies and images, and an author id the plugin left out reads as empty', async () => {
   const { deps: d } = deps(() => ({ replies: [{ id: 'r1', author: 'Ploy', text: 'The login page', images: [{ name: 'shot.png', path: 'replies/shot.png' }] }], lastId: 'r1' }))
-  expect(await pluginSource('clickup-board', d).replies({ id: '1', sinceId: 'c9' })).toEqual({ replies: [{ id: 'r1', author: 'Ploy', text: 'The login page', images: [{ name: 'shot.png', path: 'replies/shot.png' }] }], lastId: 'r1' })
+  expect(await pluginSource('clickup-board', d).replies({ id: '1', sinceId: 'c9' })).toEqual({ replies: [{ id: 'r1', author: 'Ploy', authorId: '', text: 'The login page', images: [{ name: 'shot.png', path: 'replies/shot.png' }] }], lastId: 'r1' })
+})
+
+test('replies keep the author id the plugin sends', async () => {
+  const { deps: d } = deps(() => ({ replies: [{ id: 'r1', author: 'Kan', authorId: '4242', text: 'แบบ C', images: [] }], lastId: 'r1' }))
+  expect((await pluginSource('clickup-board', d).replies({ id: '1', sinceId: 'c9' })).replies[0]!.authorId).toBe('4242')
+})
+
+test('an ask with a tag and an assignee passes both and returns the comment ref', async () => {
+  const { deps: d, calls } = deps(() => ({ commentId: '1730000000000', ref: '90120000123' }))
+  const input = { id: '1', kind: 'ask' as const, lines: ['ช่วยเลือกหน่อยครับ'], mention: '4242', assignee: '4242' }
+  expect(await pluginSource('clickup-board', d).post(input)).toEqual({ commentId: '1730000000000', ref: '90120000123' })
+  expect(calls).toEqual([{ method: 'source.post', params: input }])
+})
+
+test('people calls source.people and parses the creator, the assignees and me', async () => {
+  const answer = { creator: { id: '11', username: 'Kan' }, assignees: [{ id: '12', username: 'Mac' }], me: { id: '99', username: 'Palm' } }
+  const { deps: d, calls } = deps(() => answer)
+  expect(await pluginSource('clickup-board', d).people({ id: '1' })).toEqual(answer)
+  expect(calls).toEqual([{ method: 'source.people', params: { id: '1' } }])
+  const { deps: noCreator } = deps(() => ({ ...answer, creator: null }))
+  expect((await pluginSource('clickup-board', noCreator).people({ id: '1' })).creator).toBeNull()
+  const { deps: numeric } = deps(() => ({ ...answer, me: { id: 99, username: 'Palm' } }))
+  await expect(pluginSource('clickup-board', numeric).people({ id: '1' })).rejects.toThrow('clickup-board returned an unexpected source.people result')
+  const { deps: noMe } = deps(() => ({ creator: null, assignees: [] }))
+  await expect(pluginSource('clickup-board', noMe).people({ id: '1' })).rejects.toThrow('unexpected source.people result')
+})
+
+test('resolve calls source.resolve with the comment ref and passes its failure on', async () => {
+  const { deps: d, calls } = deps(() => ({}))
+  await pluginSource('clickup-board', d).resolve({ id: '1', ref: '90120000123' })
+  expect(calls).toEqual([{ method: 'source.resolve', params: { id: '1', ref: '90120000123' } }])
+  const { deps: refused } = deps(() => new Error('Comment not found'))
+  await expect(pluginSource('clickup-board', refused).resolve({ id: '1', ref: 'x' })).rejects.toThrow('Comment not found')
 })
 
 test('a malformed plugin answer is rejected, not trusted', async () => {

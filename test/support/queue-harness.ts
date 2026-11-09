@@ -4,12 +4,14 @@ import { join } from 'node:path'
 
 import { createQueueEngine, type QueueEngineDeps, type QueueRunner } from '../../server/queue-engine'
 import type { RunView } from '../../server/queue-prompts'
+import type { CardPeople } from '../../server/queue-pick-reply'
 import type { QueueSource, SourceReplies } from '../../server/queue-source'
 import { createQueueStore, type QueueItem } from '../../server/queue-store'
 import type { WorkflowAttempt } from '../../server/workflow-runner'
 
 export const blockedWith = (evidence: string[], over: Partial<WorkflowAttempt> = {}): WorkflowAttempt => ({ nodeId: 'plan', number: 1, jobId: 'j', status: 'settled', prompt: '', startedAt: 1, endedAt: 2, result: { outcome: 'blocked', summary: 'Need info', evidence }, checks: [], output: '', workspace: null, tokenId: 't', pathId: 'main', from: [], ...over })
-export const reply = (id: string, text: string): SourceReplies => ({ replies: [{ id, author: 'Ploy', text, images: [] }], lastId: id })
+export const reply = (id: string, text: string, author = 'Ploy', authorId = ''): SourceReplies => ({ replies: [{ id, author, authorId, text, images: [] }], lastId: id })
+export const PEOPLE: CardPeople = { creator: { id: '11', username: 'Kan' }, assignees: [], me: { id: '99', username: 'Palm' } }
 export const noReplies: SourceReplies = { replies: [], lastId: null }
 
 export type Started = { cwd: string; request: string; label: string; workflowId?: string }
@@ -19,7 +21,8 @@ export function queueHarness(dir: string, over: Partial<QueueEngineDeps> = {}, s
   const store = createQueueStore(queueFile)
   const runs = new Map<string, RunView>()
   const started: Started[] = []
-  const posted: Array<{ id: string; kind: string; lines: string[] }> = []
+  const posted: Array<Parameters<QueueSource['post']>[0]> = []
+  const resolved: Array<{ id: string; ref: string }> = []
   const alerts: Array<{ title: string; reason: string; state: string }> = []
   const sinceIds: Array<string | null> = []
   let replies: () => Promise<SourceReplies> = async () => noReplies
@@ -30,9 +33,11 @@ export function queueHarness(dir: string, over: Partial<QueueEngineDeps> = {}, s
   }
   const source: QueueSource = {
     item: async ({ id }) => ({ title: `Task ${id}`, url: `https://x/t/${id}`, contextMarkdown: `# ${id}` }),
-    post: async input => { posted.push(input); return { commentId: 'c1' } },
+    post: async input => { posted.push(input); return { commentId: 'c1', ...(input.mention === undefined ? {} : { ref: `ref-${posted.length}` }) } },
     replies: async ({ sinceId }) => { sinceIds.push(sinceId); return replies() },
     status: async ({ status }) => ({ status }),
+    people: async () => PEOPLE,
+    resolve: async input => { resolved.push(input) },
     ...sourceOver,
   }
   const deps: QueueEngineDeps = {
@@ -56,7 +61,7 @@ export function queueHarness(dir: string, over: Partial<QueueEngineDeps> = {}, s
     return { store: reloaded, engine: createQueueEngine({ ...deps, store: reloaded, runner: { ...runner, ...runnerOver } }) }
   }
   return {
-    engine: createQueueEngine(deps), store, runs, started, posted, alerts, sinceIds, settle, restart, deps,
+    engine: createQueueEngine(deps), store, runs, started, posted, resolved, alerts, sinceIds, settle, restart, deps,
     answer: (next: () => Promise<SourceReplies>) => { replies = next },
   }
 }
