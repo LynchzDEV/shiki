@@ -34,7 +34,7 @@ export type QueueEngineDeps = {
   writeContext(pluginId: string, context: TaskContext, cwd: string): Promise<string>
   pluginFiles(pluginId: string): string
   backupDir(itemId: string): string
-  needsYou(item: QueueItem, reason: string): void
+  needsYou(item: QueueItem, reason: string, options?: { webhook?: boolean }): void
   autoPick?(pluginId: string): Promise<boolean>
   pickIn?(pluginId: string | undefined): Promise<PickIn>
   publish?(item: QueueItem): Promise<Published>

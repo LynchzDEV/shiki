@@ -8,6 +8,8 @@ import type { PickAsk, QueueItem, QueuePick } from './queue-store'
 export type PickIn = 'clickup' | 'shikidan'
 export type PickReplyEvent = { event: 'picked'; replyId: string; option: string; by: string } | { event: 'pick-unclear'; replyId: string; text: string; by: string }
 
+const MAX_REASON_LINE = 200
+const firstLineOf = (text: string): string => (text.split('\n').find(line => line.trim() !== '') ?? '').trim().slice(0, MAX_REASON_LINE)
 const RECOMMENDED = ' (แนะนำ)'
 const OPTIONS_HEADING = /^##\s+options\s*:?\s*$/i
 const HEADING = /^##\s/
@@ -51,7 +53,7 @@ export type PickAsker = {
   ask(item: QueueItem): Promise<void>
   askUnasked(): Promise<void>
   close(item: QueueItem, choice?: PickChoice): Promise<void>
-  apply(item: QueueItem, worktree: string, result: SourceReplies): Promise<boolean>
+  apply(item: QueueItem, worktree: string, result: SourceReplies, options?: { keepOthers?: boolean }): Promise<boolean>
 }
 
 export type PickAskerSteps = {
@@ -133,20 +135,26 @@ export function pickAsker(deps: QueueEngineDeps, steps: PickAskerSteps): PickAsk
     }
   }
 
-  async function apply(item: QueueItem, worktree: string, result: SourceReplies): Promise<boolean> {
+  async function apply(item: QueueItem, worktree: string, result: SourceReplies, { keepOthers = true }: { keepOthers?: boolean } = {}): Promise<boolean> {
     const asked = item.pick!.ask!
     const judged = (reply: SourceReply): boolean => reply.authorId !== '' && (reply.authorId === asked.ownerId || reply.authorId === asked.meId)
     const others = result.replies.filter(reply => !judged(reply))
-    if (others.length > 0) await steps.keep(item, worktree, others).catch(error => console.error(`Queue item ${item.id} replies not saved`, error))
+    if (keepOthers && others.length > 0) await steps.keep(item, worktree, others).catch(error => console.error(`Queue item ${item.id} replies not saved`, error))
     const extraPhrases = await deps.pickNonePhrases?.() ?? []
     let decided: { reply: SourceReply; choice: PickChoice } | undefined
-    for (const reply of result.replies.filter(judged)) {
+    const unclear: SourceReply[] = []
+    for (const reply of result.replies.filter(judged).reverse()) {
       const verdict = parsePickReply(reply.text, item.pick!.options, extraPhrases)
       if (verdict.kind !== 'unclear') { decided = { reply, choice: choiceOf(verdict) }; break }
-      deps.notify?.(item, { event: 'pick-unclear', replyId: reply.id, text: reply.text, by: reply.author })
+      unclear.unshift(reply)
     }
+    for (const reply of unclear) deps.notify?.(item, { event: 'pick-unclear', replyId: reply.id, text: reply.text, by: reply.author })
     if (result.lastId !== null) await store.update(item.id, { lastSeenId: result.lastId })
-    if (decided === undefined) return false
+    if (decided === undefined) {
+      const latest = unclear.at(-1)
+      if (latest !== undefined) deps.needsYou(store.get(item.id) ?? item, `ClickUp reply not understood: "${firstLineOf(latest.text)}"`, { webhook: false })
+      return false
+    }
     try {
       await steps.pickNow(item.id, decided.choice)
     } catch (error) {

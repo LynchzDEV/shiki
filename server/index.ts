@@ -47,7 +47,7 @@ import { terminalsRoutes } from './routes/terminals'
 import { outcomesRoutes } from './routes/outcomes'
 import { attentionRoutes } from './routes/attention'
 import { attentionKey, createAttentionStore } from './attention'
-import { raiseQueueAlert, raiseSyncAlert, sweepQueueAlerts, watchQueueAlerts } from './queue-attention'
+import { queueNeedsYou, raiseSyncAlert, sweepQueueAlerts, watchQueueAlerts } from './queue-attention'
 import { automateOn, statusMaps } from './queue-status'
 import { createStatusSync, type StatusSync } from './queue-status-sync'
 import { createNotifier } from './notify'
@@ -249,7 +249,7 @@ export async function createApp(): Promise<Elysia> {
     writeContext: (pluginId, context, cwd) => writeQueueContext(pluginId, context, cwd),
     pluginFiles: pluginId => join(configDir(), 'plugin-data', pluginId, 'files'),
     backupDir: itemId => join(configDir(), 'queue-files', itemId),
-    needsYou: (item, reason) => { void raiseQueueAlert(attention, item, reason).catch(error => console.error('Queue alert failed', error)); notifyOn.queue(item, reason) },
+    needsYou: queueNeedsYou(attention, notifyOn.queue),
     autoPick: async id => (await getSetting(id, 'autoPick')) === 'true',
     pickIn: async id => (await automateOn(getSetting, id) ? 'clickup' : 'shikidan'),
     publish: async item => publish(item, { dir: publishDir(), domain: publishDomain(), cardImages: item.worktree === null ? [] : await cardImageFiles(item.worktree, item.source) }),

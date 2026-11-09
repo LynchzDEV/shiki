@@ -654,6 +654,15 @@ When the flow's plugin has its
 setting on, the queue takes the recommended variant itself, alerts
 .RI "Auto-picked " option
 and keeps building; a pick with no recommended variant still waits for you.
+A ClickUp reply that is not understood is never dropped silently: the item
+shows up in
+.B shiki attention
+with the reply text and one
+.B pick\-unclear
+webhook event is sent, so an operator can answer with
+.B shiki queue say
+and decide with
+.B shiki queue pick.
 The plugin's
 .B automate
 setting is one switch. Off, the default (legacy), keeps the pick in

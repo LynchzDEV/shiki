@@ -7,6 +7,15 @@ export function raiseQueueAlert(attention: AttentionStore, item: QueueItem, reas
   return attention.raise({ key: attentionKey.queue(item.id), kind: 'queue', title: item.title, detail: reason, command: null, chatId: null, jobId: null, requestId: null })
 }
 
+export type QueueNeedsYou = (item: QueueItem, reason: string, options?: { webhook?: boolean }) => void
+
+export function queueNeedsYou(attention: AttentionStore, notifyQueue: (item: QueueItem, reason: string) => void): QueueNeedsYou {
+  return (item, reason, options) => {
+    void raiseQueueAlert(attention, item, reason).catch(error => console.error('Queue alert failed', error))
+    if (options?.webhook !== false) notifyQueue(item, reason)
+  }
+}
+
 export function raiseSyncAlert(attention: AttentionStore, item: QueueItem, error: unknown): Promise<void> {
   const reason = error instanceof Error ? error.message : String(error)
   return attention.raise({ key: attentionKey.queueSync(item.id), kind: 'queue', title: item.title, detail: `ClickUp status sync failed: ${reason}`, command: null, chatId: null, jobId: null, requestId: null })

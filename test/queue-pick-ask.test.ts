@@ -7,6 +7,10 @@ import { QueueRefusal, SourceFailure, type QueueEngineDeps } from '../server/que
 import { askLines, type PickReplyEvent } from '../server/queue-pick-ask'
 import type { QueueSource, SourceReplies } from '../server/queue-source'
 import type { QueueItem } from '../server/queue-store'
+import { createAttentionStore } from '../server/attention'
+import { createNotifyEvents } from '../server/notify-events'
+import { queueNeedsYou } from '../server/queue-attention'
+import type { NotifyInput } from '../server/notify'
 import { add, blockedWith, noReplies, queueHarness, refusal, reply } from './support/queue-harness'
 
 let dir: string
@@ -46,14 +50,14 @@ type Setup = { deps?: Partial<QueueEngineDeps>; source?: Partial<QueueSource> }
 function harness({ deps = {}, source = {} }: Setup = {}) {
   const published: Array<QueueItem['published']> = []
   const notices: PickReplyEvent[] = []
-  const needs: Array<{ item: QueueItem; reason: string }> = []
+  const needs: Array<{ item: QueueItem; reason: string; options?: { webhook?: boolean } }> = []
   const replies = new Map<string, () => Promise<SourceReplies>>()
   let comments = 0
   const h = queueHarness(dir, {
     pickIn: async () => 'clickup',
     publish: async item => { published.push(item.published); return { sub: '1-ab12cd34', host: HOST, at: 7 } },
     notify: (_item, event) => { notices.push(event) },
-    needsYou: (item, reason) => { needs.push({ item, reason }) },
+    needsYou: (item, reason, options) => { needs.push({ item, reason, options }) },
     ...deps,
   }, {
     post: async input => { h.posted.push(input); comments += 1; return { commentId: `c${comments}`, ...(input.mention === undefined ? {} : { ref: `ref-${comments}` }) } },
@@ -174,15 +178,15 @@ test('A หรือ C ดี: still waiting, pick-unclear is sent, and the next
   expect(await pickFile(h.store.get(h.id)!)).toContain('Option: A\n')
 })
 
-test('in one batch, other people are kept, an unclear owner reply is reported, and the first clear one picks', async () => {
+test('in one batch, other people are kept and the owner\'s newest clear reply wins over older ones', async () => {
   const h = await parked()
   h.replies.set('1', async () => ({
     replies: [...h.from(MAC, 'c5', 'ผมว่า A').replies, ...h.from(KAN, 'c6', 'A หรือ C ดี').replies, ...h.from(KAN, 'c7', 'C').replies, ...h.from(KAN, 'c8', 'B').replies],
     lastId: 'c8',
   }))
   await h.engine.checkReplies()
-  expect(await pickFile(h.store.get(h.id)!)).toContain('Option: C\n')
-  expect(h.notices.map(notice => notice.event)).toEqual(['pick-unclear', 'picked'])
+  expect(await pickFile(h.store.get(h.id)!)).toContain('Option: B\n')
+  expect(h.notices.map(notice => notice.event)).toEqual(['picked'])
   expect(h.store.get(h.id)!.answerPaths.some(path => path.includes('answers-1'))).toBe(true)
 })
 
@@ -531,4 +535,126 @@ test('the real stuck reply picks none with its feedback', async () => {
   h.replies.set('1', async () => h.from(KAN, 'c9', 'ไม่เอาซักช้อยส์เลย มันควรแสดงผลทับเว็บไปเลย ไม่ใช่ดันออกมา'))
   await h.engine.checkReplies()
   expect(await pickFile(h.store.get(h.id)!)).toContain('> มันควรแสดงผลทับเว็บไปเลย ไม่ใช่ดันออกมา')
+})
+
+const withoutSince = async (h: Awaited<ReturnType<typeof parked>>, postedAt: number) => {
+  const { since: _since, ...older } = h.store.get(h.id)!.pick!.ask!
+  await h.store.update(h.id, { pick: { ...h.store.get(h.id)!.pick!, ask: { ...older, postedAt } } })
+}
+
+test('the stuck card: an unclear reply needs you, reread reads again from the ask, and pick none --feedback finishes it', async () => {
+  const h = await parked({ deps: { now: () => 5_000_000 } })
+  await withoutSince(h, 5_000_000)
+  h.replies.set('1', async () => h.from(KAN, 'c9', 'ผมงงครับ asdf'))
+  await h.engine.checkReplies()
+  expect(h.store.get(h.id)).toMatchObject({ state: 'waiting-pick', lastSeenId: 'c9' })
+  const unclear = h.needs.filter(need => need.reason.startsWith('ClickUp reply not understood'))
+  expect(unclear).toHaveLength(1)
+  expect(unclear[0]).toMatchObject({ reason: 'ClickUp reply not understood: "ผมงงครับ asdf"', options: { webhook: false } })
+  expect(h.notices).toEqual([{ event: 'pick-unclear', replyId: 'c9', text: 'ผมงงครับ asdf', by: 'Kan' }])
+
+  const reread = await h.engine.reread(h.id)
+  expect(h.sinceIds.at(-1)).toBe('4940000')
+  expect(reread.state).toBe('waiting-pick')
+
+  await h.engine.pick(h.id, { option: 'none', feedback: 'overlay, not push' })
+  const rebuilt = h.store.get(h.id)!
+  expect(await pickFile(rebuilt)).toContain('Option: none\n')
+  expect(await pickFile(rebuilt)).toContain('> overlay, not push')
+  expect(h.posted.filter(post => post.kind === 'update')).toEqual([{ id: '1', kind: 'update', lines: ['ได้ครับ จะทำแบบใหม่ตามนี้ครับ'] }])
+  expect(h.resolved).toEqual([{ id: '1', ref: 'ref-1' }])
+})
+
+test('one unclear reply yields one attention entry and exactly one webhook event, the pick-unclear one', async () => {
+  const events: NotifyInput[] = []
+  const attention = createAttentionStore(join(dir, 'attention.json'))
+  let h: Awaited<ReturnType<typeof parked>>
+  const notifyOn = createNotifyEvents({ notifier: { emit: async input => { events.push(input); return [] } }, items: () => h.store.list(), run: () => undefined })
+  h = await parked({ deps: { needsYou: queueNeedsYou(attention, notifyOn.queue), notify: (item, event) => notifyOn.pickReply(item, event) } })
+  await Bun.sleep(20)
+  expect(events.map(event => event.event)).toEqual(['pick'])
+  events.length = 0
+  h.replies.set('1', async () => h.from(KAN, 'c9', 'asdf'))
+  await h.engine.checkReplies()
+  await Bun.sleep(20)
+  expect(events.map(event => event.event)).toEqual(['pick-unclear'])
+  expect(attention.list().filter(alert => alert.kind === 'queue')).toEqual([expect.objectContaining({ key: `queue:${h.id}`, detail: 'ClickUp reply not understood: "asdf"' })])
+})
+
+test('an unclear reply with several lines or a very long first line is cut to its first line, 200 characters', async () => {
+  const h = await parked()
+  h.replies.set('1', async () => h.from(KAN, 'c9', `\n${'ก'.repeat(300)}\nsecond line`))
+  await h.engine.checkReplies()
+  expect(h.needs.at(-1)!.reason).toBe(`ClickUp reply not understood: "${'ก'.repeat(200)}"`)
+})
+
+test('an unclear reply followed by a clear one in the same batch picks and raises no not-understood alert', async () => {
+  const h = await parked()
+  h.replies.set('1', async () => ({ replies: [...h.from(KAN, 'c6', 'asdf').replies, ...h.from(KAN, 'c7', 'C').replies], lastId: 'c7' }))
+  await h.engine.checkReplies()
+  expect(h.needs.some(need => need.reason.startsWith('ClickUp reply not understood'))).toBe(false)
+})
+
+const batch = (h: Awaited<ReturnType<typeof parked>>, ...texts: string[]) => h.replies.set('1', async () => ({
+  replies: texts.flatMap((text, index) => h.from(KAN, `c${5 + index}`, text).replies),
+  lastId: `c${4 + texts.length}`,
+}))
+
+test('the owner\'s latest word wins: a later A beats an earlier none, with no alert', async () => {
+  const h = await parked()
+  batch(h, 'ไม่เอาเลย ขอใหม่', 'A')
+  await h.engine.checkReplies()
+  expect(await pickFile(h.store.get(h.id)!)).toContain('Option: A\n')
+  expect(h.needs.some(need => need.reason.startsWith('ClickUp reply not understood'))).toBe(false)
+})
+
+test('a clear reply older than an unclear one still picks, announces only the newer one, and raises no alert', async () => {
+  const h = await parked()
+  batch(h, 'A', 'asdf')
+  await h.engine.checkReplies()
+  expect(await pickFile(h.store.get(h.id)!)).toContain('Option: A\n')
+  expect(h.notices.map(notice => notice.event)).toEqual(['pick-unclear', 'picked'])
+  expect(h.notices[0]).toMatchObject({ replyId: 'c6' })
+  expect(h.needs.some(need => need.reason.startsWith('ClickUp reply not understood'))).toBe(false)
+})
+
+test('only unclear replies newer than the decisive one are announced', async () => {
+  const h = await parked()
+  batch(h, 'asdf', 'B')
+  await h.engine.checkReplies()
+  expect(await pickFile(h.store.get(h.id)!)).toContain('Option: B\n')
+  expect(h.notices.map(notice => notice.event)).toEqual(['picked'])
+})
+
+test('reread twice with one non-owner reply keeps the context once', async () => {
+  const h = await parked()
+  h.replies.set('1', async () => h.from(MAC, 'c9', 'ผมว่า A'))
+  await h.engine.checkReplies()
+  const kept = h.store.get(h.id)!.answerPaths
+  await h.engine.reread(h.id)
+  await h.engine.reread(h.id)
+  expect(h.store.get(h.id)!.answerPaths).toEqual(kept)
+  expect(h.store.get(h.id)!.state).toBe('waiting-pick')
+})
+
+test('a failed read in reread leaves lastSeenId alone and surfaces a SourceFailure', async () => {
+  let fail = false
+  const h = await parked({ source: { replies: async () => { if (fail) throw new Error('ClickUp is down'); return noReplies } } })
+  fail = true
+  const error = await refusal(h.engine.reread(h.id))
+  expect(error).toBeInstanceOf(SourceFailure)
+  expect(h.store.get(h.id)!.lastSeenId).toBe('c1')
+})
+
+test('reread of the real stuck reply goes straight to a rebuild with its feedback and closes the ask', async () => {
+  const h = await parked({ deps: { now: () => 5_000_000 } })
+  await withoutSince(h, 5_000_000)
+  h.replies.set('1', async () => h.from(KAN, 'c9', 'ไม่เอาซักช้อยส์เลย มันควรแสดงผลทับเว็บไปเลย ไม่ใช่ดันออกมา'))
+  await h.engine.reread(h.id)
+  expect(h.sinceIds.at(-1)).toBe('4940000')
+  const rebuilt = h.store.get(h.id)!
+  expect(await pickFile(rebuilt)).toContain('Option: none\n')
+  expect(await pickFile(rebuilt)).toContain('> มันควรแสดงผลทับเว็บไปเลย ไม่ใช่ดันออกมา')
+  expect(h.posted.filter(post => post.kind === 'update')).toEqual([{ id: '1', kind: 'update', lines: ['ได้ครับ จะทำแบบใหม่ตามนี้ครับ'] }])
+  expect(h.resolved).toEqual([{ id: '1', ref: 'ref-1' }])
 })
