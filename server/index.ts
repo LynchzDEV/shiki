@@ -51,7 +51,7 @@ import { raiseQueueAlert, raiseSyncAlert, sweepQueueAlerts, watchQueueAlerts } f
 import { statusMaps } from './queue-status'
 import { createStatusSync, type StatusSync } from './queue-status-sync'
 import { createNotifier } from './notify'
-import { publish, publishDir, publishDomain } from './publish'
+import { publish, publishDir, publishDomain, removeLeftovers, unpublish } from './publish'
 import { createNotifyEvents } from './notify-events'
 import { notifyRoutes } from './routes/notify'
 import type { QueueItem } from './queue-store'
@@ -254,6 +254,9 @@ export async function createApp(): Promise<Elysia> {
     pickIn: async id => (id !== undefined && (await getSetting(id, 'pickIn'))?.trim().toLowerCase() === 'shikidan' ? 'shikidan' : 'clickup'),
     publish: async item => publish(item, { dir: publishDir(), domain: publishDomain(), cardImages: item.worktree === null ? [] : await cardImageFiles(item.worktree, item.source) }),
     notify: (item, event) => notifyOn.pickReply(item, event),
+    unpublish: async item => { if (item.published !== undefined) await unpublish(item.published.sub, publishDir()) },
+    publishKeepDays: async () => (await readConfig()).publishKeepDays,
+    sweepPublished: () => removeLeftovers(publishDir()),
     parallel: async () => (await readConfig()).queueParallel,
   })
   watchQueueAlerts(queueStore, attention)
@@ -271,6 +274,7 @@ export async function createApp(): Promise<Elysia> {
     () => {
       void sweepQueueAlerts(queueStore, attention).catch(error => console.error('Queue alert sweep failed', error))
       syncStatus()
+      void bootQueue.retirePublished().catch(error => console.error('Published link sweep failed', error))
       return bootQueue.checkReplies().catch(error => console.error('Queue reply check failed', error))
     },
     error => console.error('Queue recover failed', error),
@@ -285,6 +289,7 @@ export async function createApp(): Promise<Elysia> {
     replySweep.unref()
   }
   sweepRepliesEvery((await readConfig()).replyPollMinutes)
+  setInterval(() => { void queueEngine?.retirePublished().catch(error => console.error('Published link sweep failed', error)) }, 60 * 60_000).unref()
   await workflowBuilder.recover()
   await attention.prune(jobId => jobManager.getJob(jobId)?.status === 'running')
   void chatFlusher.recoverAll().catch(error => console.error('Chat catch-up failed', error))

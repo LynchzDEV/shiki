@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { PLACEHOLDER_SHOT, publish, publishDomain, unpublish, type PublishItem } from '../server/publish'
+import { PLACEHOLDER_SHOT, publish, publishDomain, removeLeftovers, unpublish, type PublishItem } from '../server/publish'
 
 let dir: string
 let worktree: string
@@ -168,4 +168,14 @@ test('the publish domain is SKD_PUBLISH_DOMAIN, or shikidan.com when it is not s
     if (saved === undefined) delete process.env.SKD_PUBLISH_DOMAIN
     else process.env.SKD_PUBLISH_DOMAIN = saved
   }
+})
+
+test('removeLeftovers deletes interrupted .tmp- and .gone- folders and keeps the published ones', async () => {
+  const published = await run()
+  await mkdir(join(out, `${published.sub}.tmp-ab12cd34`, 'assets'), { recursive: true })
+  await mkdir(join(out, `${published.sub}.gone-zz99yy88`))
+  await writeFile(join(out, `${published.sub}.tmp-ab12cd34`, 'assets', 'a.png'), 'half copied')
+  await removeLeftovers(out)
+  expect(await readdir(out)).toEqual([published.sub])
+  await removeLeftovers(join(dir, 'never-made'))
 })

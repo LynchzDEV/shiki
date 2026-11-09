@@ -14,7 +14,7 @@ import { eventStreamResponse, type RunEvents } from '../run-events'
 import { MAX_PUBLISH_KEEP_DAYS, MAX_QUEUE_PARALLEL, MAX_REPLY_POLL_MINUTES, readConfig, writeConfig, type AppConfig } from '../secrets'
 
 type Status = { status?: number | string }
-type QueueEngineRoutes = Pick<QueueEngine, 'add' | 'requeue' | 'pick' | 'checkReplies' | 'answer' | 'remove' | 'stop' | 'move' | 'checkedAt' | 'subscribeChecks' | 'startStage' | 'refreshPreflight' | 'retryStage' | 'markDone' | 'landLog' | 'report'> & Partial<Pick<QueueEngine, 'preparing' | 'paused' | 'kick'>>
+type QueueEngineRoutes = Pick<QueueEngine, 'add' | 'requeue' | 'pick' | 'unpublish' | 'checkReplies' | 'answer' | 'remove' | 'stop' | 'move' | 'checkedAt' | 'subscribeChecks' | 'startStage' | 'refreshPreflight' | 'retryStage' | 'markDone' | 'landLog' | 'report'> & Partial<Pick<QueueEngine, 'preparing' | 'paused' | 'kick'>>
 export type QueueRunLookup = { get(id: string): QueueStepRun | undefined; subscribe(listener: () => void): () => void }
 const NO_RUNS: QueueRunLookup = { get: () => undefined, subscribe: () => () => {} }
 
@@ -159,6 +159,7 @@ export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: 
       if (option !== NO_PICK && feedback !== undefined) { set.status = 400; return { error: 'Feedback is only for none of these' } }
       return refusing(set, async () => ({ item: cleaned(await engine.pick(params.id, parsed.data)) }))
     })
+    .post('/api/queue/:id/unpublish', ({ params, set }) => refusing(set, async () => ({ item: cleaned(await engine.unpublish(params.id)) }), conflictOrMissing))
     .post('/api/queue/:id/answer', ({ params, body, set }) => {
       const parsed = answerSchema.safeParse(body)
       if (!parsed.success) { set.status = 400; return { error: 'Write an answer of 1 to 8000 characters' } }

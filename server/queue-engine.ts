@@ -39,6 +39,9 @@ export type QueueEngineDeps = {
   pickIn?(pluginId: string | undefined): Promise<PickIn>
   publish?(item: QueueItem): Promise<Published>
   notify?(item: QueueItem, event: PickReplyEvent): void
+  unpublish?(item: QueueItem): Promise<void>
+  publishKeepDays?(): Promise<number>
+  sweepPublished?(): Promise<void>
   parallel?(): Promise<number>
   now?: () => number
 }
@@ -59,6 +62,8 @@ export type QueueEngine = {
   requeue(id: string, options?: RequeueOptions): Promise<QueueItem>
   pick(id: string, choice: PickChoice): Promise<QueueItem>
   remove(id: string): Promise<void>
+  unpublish(id: string): Promise<QueueItem>
+  retirePublished(): Promise<void>
   stop(id: string): Promise<QueueItem>
   move(id: string, to: number): Promise<void>
   checkReplies(): Promise<{ checked: number; resumed: number }>
@@ -80,6 +85,8 @@ export type QueuePause = { reason: string; until: number }
 
 const MAX_RUN_LABEL = 120
 const MAX_AUTO_PICKS = 2
+const DAY_MS = 24 * 60 * 60_000
+const DEFAULT_KEEP_DAYS = 14
 const PAUSE_BACKOFF_MS = [5, 15, 60].map(minutes => minutes * 60_000)
 const MAX_TIMER_MS = 2 ** 31 - 1
 const REQUEUEABLE: ReadonlySet<QueueItem['state']> = new Set(['failed', 'ready', 'waiting-info', 'waiting-pick'])
@@ -513,9 +520,33 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
     if (item.state === 'building') await stopRun(item)
     if (item.state === 'landing') { await stopRun(item); land.halt(id) }
     await asker!.close(item)
+    if (item.published !== undefined) await deps.unpublish?.(item).catch(error => console.error(`Queue item ${id} published folder not removed`, error))
     await store.remove(id)
     await dropAnswerBackups(deps.backupDir(id)).catch(error => console.error('queue answer backups not removed', error))
   })
+
+  async function takeDown(item: QueueItem): Promise<QueueItem> {
+    await deps.unpublish?.(item)
+    return store.update(item.id, { published: undefined }, { touch: false })
+  }
+
+  const unpublish = (id: string): Promise<QueueItem> => serial(async () => {
+    const item = found(store, id)
+    if (item.published === undefined) throw new QueueRefusal('It has no published link', 409)
+    return takeDown(item)
+  })
+
+  const landedWithLink = (item: QueueItem): boolean => item.published !== undefined && item.state === 'landed'
+  const retirePublished = (): Promise<void> => serial(async () => {
+    const keepMs = (await deps.publishKeepDays?.() ?? DEFAULT_KEEP_DAYS) * DAY_MS
+    const at = (deps.now ?? Date.now)()
+    const expired = (entry: QueueItem): boolean => entry.published !== undefined && at - entry.published.at > keepMs && !isAsked(entry)
+    for (const item of store.list().filter(entry => landedWithLink(entry) || expired(entry))) {
+      await takeDown(item).catch(error => console.error(`Queue item ${item.id} published folder not removed`, error))
+    }
+    await deps.sweepPublished?.()
+  })
+  store.subscribe(() => { if (store.list().some(landedWithLink)) retirePublished().catch(error => console.error('Published link sweep failed', error)) })
 
   const move = (id: string, to: number): Promise<void> => serial(async () => {
     const item = found(store, id)
@@ -599,6 +630,8 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
     requeue,
     pick,
     remove,
+    unpublish,
+    retirePublished,
     stop,
     move,
     recover,

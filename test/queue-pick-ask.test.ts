@@ -352,3 +352,88 @@ test('closing the ask when the card leaves another way is best effort: failures 
   } finally { console.error = quiet }
   expect(h.store.get(h.id)).toBeUndefined()
 })
+
+const DAY = 24 * 60 * 60 * 1000
+
+function tearing(clock = { now: 1_000 * DAY }) {
+  const removed: string[] = []
+  let sweeps = 0
+  const h = harness({ deps: { now: () => clock.now, publishKeepDays: async () => 14, unpublish: async item => { removed.push(item.published!.sub) }, sweepPublished: async () => { sweeps += 1 } } })
+  return { ...h, removed, clock, sweeps: () => sweeps }
+}
+
+async function publishedCard(h: ReturnType<typeof tearing>, at: number) {
+  const item = await h.engine.add(add)
+  await h.block('run-1')
+  return h.store.update(item.id, { published: { sub: '1-ab12cd34', host: HOST, at } })
+}
+
+test('a card that reaches landed is unpublished by itself', async () => {
+  const h = tearing()
+  const item = await publishedCard(h, h.clock.now)
+  await h.store.update(item.id, { state: 'landed', pick: undefined })
+  await h.engine.kick()
+  expect(h.removed).toEqual(['1-ab12cd34'])
+  expect(h.store.get(item.id)!.published).toBeUndefined()
+})
+
+test('removing a published card removes its folder', async () => {
+  const h = tearing()
+  const item = await publishedCard(h, h.clock.now)
+  await h.engine.remove(item.id)
+  expect(h.removed).toEqual(['1-ab12cd34'])
+})
+
+test('a link older than publishKeepDays is taken down by the sweep, a younger one stays', async () => {
+  const h = tearing()
+  const parked = await publishedCard(h, h.clock.now - 14 * DAY + 1)
+  const item = await h.store.update(parked.id, { pick: { ...parked.pick!, ask: { ...parked.pick!.ask!, error: 'ClickUp down' } } })
+  await h.engine.retirePublished()
+  expect(h.removed).toEqual([])
+  h.clock.now += 2
+  await h.engine.retirePublished()
+  expect(h.removed).toEqual(['1-ab12cd34'])
+  expect(h.store.get(item.id)!.published).toBeUndefined()
+  expect(h.store.get(item.id)!.state).toBe('waiting-pick')
+})
+
+test('the age sweep keeps the folder of a card whose ClickUp ask is still open', async () => {
+  const h = tearing()
+  const item = await publishedCard(h, h.clock.now - 30 * DAY)
+  await h.engine.retirePublished()
+  expect(h.removed).toEqual([])
+  expect(h.store.get(item.id)!.published).toEqual({ sub: '1-ab12cd34', host: HOST, at: h.clock.now - 30 * DAY })
+  await h.engine.pick(item.id, { option: 'B' })
+  await h.engine.retirePublished()
+  expect(h.removed).toEqual(['1-ab12cd34'])
+})
+
+test('every sweep also clears leftover folders in the publish dir', async () => {
+  const h = tearing()
+  await h.engine.retirePublished()
+  await h.engine.retirePublished()
+  expect(h.sweeps()).toBe(2)
+})
+
+test('unpublish on request takes the link down, and refuses a card with nothing published', async () => {
+  const h = tearing()
+  const item = await publishedCard(h, h.clock.now)
+  expect((await h.engine.unpublish(item.id)).published).toBeUndefined()
+  expect(h.removed).toEqual(['1-ab12cd34'])
+  const refused = await h.engine.unpublish(item.id).catch((error: unknown) => error)
+  expect(refused).toMatchObject({ message: 'It has no published link', status: 409 })
+  await expect(h.engine.unpublish('nope')).rejects.toMatchObject({ status: 404 })
+})
+
+test('a folder that cannot be removed keeps the link on the card for the next sweep', async () => {
+  const h = harness({ deps: { publishKeepDays: async () => 14, unpublish: async () => { throw new Error('EBUSY') } } })
+  const item = await h.engine.add(add)
+  await h.block('run-1')
+  const quiet = console.error
+  console.error = () => {}
+  try {
+    await h.store.update(item.id, { state: 'landed', pick: undefined, published: { sub: 's', host: HOST, at: 1 } })
+    await h.engine.retirePublished()
+  } finally { console.error = quiet }
+  expect(h.store.get(item.id)!.published).toEqual({ sub: 's', host: HOST, at: 1 })
+})

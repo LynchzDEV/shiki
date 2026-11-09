@@ -588,6 +588,26 @@ test('PUT /api/queue/settings refuses bad values with the rule, and an empty bod
   expect(await put({})).toEqual([400, 'Send parallel, replyPollMinutes or publishKeepDays'])
 })
 
+test('POST /api/queue/:id/unpublish goes through the engine and maps its refusals', async () => {
+  const items = store()
+  const a = await items.add({ ...newItem, externalId: '1' }, 'end')
+  await items.update(a.id, { published: { sub: 's-1', host: 's-1.shikidan.com', at: 1 } })
+  const app = new Elysia().use(queueRoutes(items, engine(items, {
+    unpublish: async id => {
+      const item = items.get(id)
+      if (item === undefined) throw new QueueRefusal(`No queue item ${id}`, 404)
+      if (item.published === undefined) throw new QueueRefusal('It has no published link', 409)
+      return items.update(id, { published: undefined })
+    },
+  })))
+  const done = await call(app, `/api/queue/${a.id}/unpublish`, { method: 'POST' })
+  expect(done.status).toBe(200)
+  expect((await done.json()).item.published).toBeUndefined()
+  const again = await call(app, `/api/queue/${a.id}/unpublish`, { method: 'POST' })
+  expect([again.status, (await again.json()).error]).toEqual([409, 'It has no published link'])
+  expect((await call(app, '/api/queue/nope/unpublish', { method: 'POST' })).status).toBe(404)
+})
+
 test('PUT /api/queue/settings refuses anything but a whole number from 1 to 4', async () => {
   const items = store()
   const app = new Elysia().use(queueRoutes(items, engine(items)))

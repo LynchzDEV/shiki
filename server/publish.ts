@@ -10,6 +10,7 @@ export type PublishOptions = { dir: string; domain: string; cardImages: readonly
 
 export const PLACEHOLDER_SHOT = resolve(import.meta.dir, '..', 'static-host', 'shot-unpublished.png')
 export const SUB_PATTERN = /^[a-z0-9-]{1,80}$/
+const LEFTOVER = /\.(?:tmp|gone)-[a-z0-9]+$/
 const SHOTS = 'shots'
 const NEVER_PUBLISHED = new Set(['renders', 'verify'])
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp'])
@@ -90,4 +91,9 @@ export async function publish(item: PublishItem, options: PublishOptions): Promi
 export async function unpublish(sub: string, dir: string): Promise<void> {
   if (!SUB_PATTERN.test(sub)) throw new Error(`Not a published folder: ${sub}`)
   await rm(join(dir, sub), { recursive: true, force: true })
+}
+
+export async function removeLeftovers(dir: string): Promise<void> {
+  const names = await readdir(dir).catch((error: unknown) => { if (missing(error)) return []; throw error })
+  for (const name of names.filter(entry => LEFTOVER.test(entry))) await rm(join(dir, name), { recursive: true, force: true })
 }
