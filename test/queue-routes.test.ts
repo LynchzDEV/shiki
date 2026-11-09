@@ -35,7 +35,7 @@ afterAll(async () => {
   await rm(plain, { recursive: true, force: true })
 })
 
-type Engine = Pick<QueueEngine, 'add' | 'requeue' | 'pick' | 'checkReplies' | 'remove' | 'stop' | 'move' | 'checkedAt' | 'subscribeChecks'>
+type Engine = Pick<QueueEngine, 'add' | 'requeue' | 'pick' | 'say' | 'reread' | 'checkReplies' | 'remove' | 'stop' | 'move' | 'checkedAt' | 'subscribeChecks'>
 type RunLookup = NonNullable<Parameters<typeof queueRoutes>[3]>
 
 function engine(items: ReturnType<typeof store>, over: Partial<QueueEngine> = {}): Engine {
@@ -44,6 +44,8 @@ function engine(items: ReturnType<typeof store>, over: Partial<QueueEngine> = {}
     add: async input => items.add({ ...newItem, externalId: input.externalId, repo: input.repo, flowId: input.flowId ?? null }, input.position ?? 'end'),
     requeue: async id => items.update(id, { state: 'queued' }),
     pick: async (id, choice) => { if (found(id).state !== 'waiting-pick') throw new QueueRefusal('It is queued now', 409); return items.update(id, { state: 'queued', questions: [choice.option, choice.tester ?? '', choice.note ?? ''] }) },
+    say: async id => found(id),
+    reread: async id => { if (found(id).state !== 'waiting-pick') throw new QueueRefusal('It is not waiting on a ClickUp pick', 409); return found(id) },
     checkReplies: async () => ({ checked: 2, resumed: 1 }),
     remove: async id => { found(id); await items.remove(id) },
     stop: async id => {
@@ -616,4 +618,42 @@ test('PUT /api/queue/settings refuses anything but a whole number from 1 to 4', 
     expect(refused.status).toBe(400)
     expect(await refused.json()).toEqual({ error: 'parallel must be a whole number from 1 to 4' })
   }
+})
+
+test('POST say trims the text, goes through the engine, and answers 400, 404, 409 and 502', async () => {
+  const items = store()
+  const a = await items.add({ ...newItem, externalId: '1' }, 'end')
+  const said: string[] = []
+  const app = new Elysia().use(queueRoutes(items, engine(items, {
+    say: async (id, text) => {
+      const item = items.get(id)
+      if (item === undefined) throw new QueueRefusal(`No queue item ${id}`, 404)
+      if (text === 'no card') throw new QueueRefusal('It has no source card to write to', 409)
+      if (text === 'down') throw new SourceFailure('ClickUp is down')
+      said.push(text)
+      return item
+    },
+  })))
+  const url = `/api/queue/${a.id}/say`
+  expect((await post(app, url, { text: '  hello  ' })).status).toBe(200)
+  expect(said).toEqual(['hello'])
+  for (const body of [{}, { text: '' }, { text: '   ' }, { text: 'x'.repeat(4001) }, { text: 5 }]) expect((await post(app, url, body)).status).toBe(400)
+  expect((await post(app, '/api/queue/nope/say', { text: 'hi' })).status).toBe(404)
+  const noCard = await post(app, url, { text: 'no card' })
+  expect([noCard.status, (await noCard.json()).error]).toEqual([409, 'It has no source card to write to'])
+  const down = await post(app, url, { text: 'down' })
+  expect([down.status, (await down.json()).error]).toEqual([502, 'ClickUp is down'])
+})
+
+test('POST reread returns the item and maps the engine refusals', async () => {
+  const items = store()
+  const a = await items.add({ ...newItem, externalId: '1' }, 'end')
+  const app = new Elysia().use(queueRoutes(items, engine(items)))
+  const idle = await post(app, `/api/queue/${a.id}/reread`)
+  expect([idle.status, (await idle.json()).error]).toEqual([409, 'It is not waiting on a ClickUp pick'])
+  await items.update(a.id, { state: 'waiting-pick' })
+  const ok = await post(app, `/api/queue/${a.id}/reread`)
+  expect(ok.status).toBe(200)
+  expect((await ok.json()).item.id).toBe(a.id)
+  expect((await post(app, '/api/queue/nope/reread')).status).toBe(404)
 })

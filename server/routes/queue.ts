@@ -14,7 +14,7 @@ import { eventStreamResponse, type RunEvents } from '../run-events'
 import { MAX_PUBLISH_KEEP_DAYS, MAX_QUEUE_PARALLEL, MAX_REPLY_POLL_MINUTES, readConfig, writeConfig, type AppConfig } from '../secrets'
 
 type Status = { status?: number | string }
-type QueueEngineRoutes = Pick<QueueEngine, 'add' | 'requeue' | 'pick' | 'unpublish' | 'checkReplies' | 'answer' | 'remove' | 'stop' | 'move' | 'checkedAt' | 'subscribeChecks' | 'startStage' | 'refreshPreflight' | 'retryStage' | 'markDone' | 'landLog' | 'report'> & Partial<Pick<QueueEngine, 'preparing' | 'paused' | 'kick'>>
+type QueueEngineRoutes = Pick<QueueEngine, 'add' | 'requeue' | 'pick' | 'unpublish' | 'checkReplies' | 'answer' | 'say' | 'reread' | 'remove' | 'stop' | 'move' | 'checkedAt' | 'subscribeChecks' | 'startStage' | 'refreshPreflight' | 'retryStage' | 'markDone' | 'landLog' | 'report'> & Partial<Pick<QueueEngine, 'preparing' | 'paused' | 'kick'>>
 export type QueueRunLookup = { get(id: string): QueueStepRun | undefined; subscribe(listener: () => void): () => void }
 const NO_RUNS: QueueRunLookup = { get: () => undefined, subscribe: () => () => {} }
 
@@ -32,6 +32,7 @@ const pickAnswerSchema = z.object({ id: oneLineText(16).pipe(z.string().min(1)),
 const pickSchema = z.object({ option: z.string().min(1).max(16), tester: oneLineText(200).optional(), note: z.string().max(4000).optional(), answers: z.array(pickAnswerSchema).max(20).optional(), feedback: z.string().max(4000).optional() })
 const confirmSchema = z.object({ confirm: z.literal(true) })
 const answerSchema = z.object({ text: z.string().trim().min(1).max(8000) })
+const saySchema = z.object({ text: z.string().trim().min(1).max(4000) })
 const moveSchema = z.object({ to: z.number().int().min(0) })
 const whole = (max: number, rule: string) => z.number({ error: rule }).int({ error: rule }).min(1, { error: rule }).max(max, { error: rule }).optional()
 const settingsSchema = z.object({
@@ -165,6 +166,18 @@ export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: 
       if (!parsed.success) { set.status = 400; return { error: 'Write an answer of 1 to 8000 characters' } }
       return refusing(set, async () => ({ item: cleaned(await engine.answer(params.id, parsed.data.text)) }))
     })
+    .post('/api/queue/:id/say', async ({ params, body, set }) => {
+      const parsed = saySchema.safeParse(body)
+      if (!parsed.success) { set.status = 400; return { error: 'Write a message of 1 to 4000 characters' } }
+      try {
+        return await refusing(set, async () => ({ item: cleaned(await engine.say(params.id, parsed.data.text)) }))
+      } catch (error) {
+        if (!(error instanceof SourceFailure)) throw error
+        set.status = 502
+        return { error: error.message }
+      }
+    })
+    .post('/api/queue/:id/reread', ({ params, set }) => refusing(set, async () => ({ item: cleaned(await engine.reread(params.id)) })))
     .get('/queue/:id/files/*', ({ params }) => mockupResponse(store.get(params.id)?.worktree ?? null, params['*']))
     .post('/api/queue/:id/land/retry', ({ params, set }) => refusing(set, async () => ({ item: cleaned(await engine.retryStage(params.id)) }), explainMissing))
     .post('/api/queue/:id/land/done', ({ params, set }) => refusing(set, async () => ({ item: cleaned(await engine.markDone(params.id)) }), explainMissing))

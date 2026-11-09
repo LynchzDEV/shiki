@@ -678,6 +678,16 @@ is resolved, also when the pick is made here, or the card is requeued or
 removed. When publishing or tagging fails, or Shikidan restarted while the
 question was being posted, the card waits for a pick here.
 .TP
+.BI "shiki queue say " "id text"
+Write a message for the card's ClickUp owner. While a design pick is open it
+goes inside the ask's thread; otherwise it is an update on the card. The
+reply cursor does not move, so the message is never read back as a reply.
+.TP
+.BI "shiki queue reread " id
+For an item waiting on a ClickUp pick: read the replies again from the ask
+(not from where the last check stopped) and judge them now. Use it after a
+reply was read as unclear and you changed what counts as one.
+.TP
 .BI "shiki queue remove " id
 Remove an item that is not building.
 .TP

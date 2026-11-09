@@ -86,6 +86,14 @@ test('resolve calls source.resolve with the comment ref and passes its failure o
   await expect(pluginSource('clickup-board', refused).resolve({ id: '1', ref: 'x' })).rejects.toThrow('Comment not found')
 })
 
+test('reply calls source.reply with the ask ref and returns the comment id', async () => {
+  const { deps: d, calls } = deps(() => ({ commentId: 'c77' }))
+  expect(await pluginSource('clickup-board', d).reply({ id: '1', ref: '9012', lines: ['a', 'b'] })).toEqual({ commentId: 'c77' })
+  expect(calls).toEqual([{ method: 'source.reply', params: { id: '1', ref: '9012', lines: ['a', 'b'] } }])
+  const { deps: empty } = deps(() => ({ commentId: '' }))
+  await expect(pluginSource('clickup-board', empty).reply({ id: '1', ref: 'x', lines: ['a'] })).rejects.toThrow('unexpected source.reply result')
+})
+
 test('a malformed plugin answer is rejected, not trusted', async () => {
   const { deps: d } = deps(() => ({ title: 3 }))
   await expect(pluginSource('clickup-board', d).item({ id: '1' })).rejects.toThrow('clickup-board returned an unexpected source.item result')

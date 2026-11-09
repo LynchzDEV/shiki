@@ -16,6 +16,7 @@ export type QueueSource = {
   status(input: { id: string; status: string }): Promise<{ status: string }>
   people(input: { id: string }): Promise<CardPeople>
   resolve(input: { id: string; ref: string }): Promise<void>
+  reply(input: { id: string; ref: string; lines: string[] }): Promise<{ commentId: string }>
 }
 
 export type SourceDeps = {
@@ -25,6 +26,7 @@ export type SourceDeps = {
 
 const text = z.string().max(64000)
 const postSchema = z.object({ commentId: z.string().min(1).max(200), ref: z.string().min(1).max(200).optional(), status: z.string().max(200).optional(), warning: z.string().max(2000).optional() })
+const replySchema = z.object({ commentId: z.string().min(1).max(200) })
 const statusSchema = z.object({ status: z.string().min(1).max(200) })
 const imageSchema = z.object({ name: z.string().min(1).max(200), path: z.string().min(1).max(1024) })
 const itemSchema = z.object({ title: z.string().min(1).max(500), url: z.string().max(2048), contextMarkdown: z.string().max(524288), images: z.array(imageSchema).max(30).optional() })
@@ -59,6 +61,7 @@ export function pluginSource(pluginId: string, deps: SourceDeps): QueueSource {
     replies: input => call('source.replies', input, repliesSchema),
     status: input => call('source.status', input, statusSchema),
     people: input => call('source.people', input, peopleSchema),
+    reply: input => call('source.reply', input, replySchema),
     resolve: async input => { await call('source.resolve', input, z.unknown()) },
   }
 }

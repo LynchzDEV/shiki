@@ -3,11 +3,11 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import type { QueueEngineDeps } from '../server/queue-engine'
+import { QueueRefusal, SourceFailure, type QueueEngineDeps } from '../server/queue-engine'
 import { askLines, type PickReplyEvent } from '../server/queue-pick-ask'
 import type { QueueSource, SourceReplies } from '../server/queue-source'
 import type { QueueItem } from '../server/queue-store'
-import { add, blockedWith, noReplies, queueHarness, reply } from './support/queue-harness'
+import { add, blockedWith, noReplies, queueHarness, refusal, reply } from './support/queue-harness'
 
 let dir: string
 beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'skd-pick-ask-')) })
@@ -82,7 +82,7 @@ test('a pick parks, publishes, tags the owner with the link and the options, the
   expect(h.posted).toEqual([{ id: '1', kind: 'ask', lines: ASK_LINES, mention: '11', assignee: '11' }])
   const item = h.store.get(h.id)!
   expect(item).toMatchObject({ state: 'waiting-pick', lastSeenId: 'c1', published: { sub: '1-ab12cd34', host: HOST, at: 7 } })
-  expect(item.pick!.ask).toEqual({ ref: 'ref-1', ownerId: '11', ownerName: 'Kan', meId: '99', host: HOST, postedAt: expect.any(Number) })
+  expect(item.pick!.ask).toEqual({ ref: 'ref-1', ownerId: '11', ownerName: 'Kan', meId: '99', host: HOST, postedAt: expect.any(Number), since: 'c1' })
   expect(h.needs.map(need => need.reason)).toEqual(['Pick a design variant'])
   expect(h.needs[0]!.item.pick!.ask!.host).toBe(HOST)
 })
@@ -436,4 +436,60 @@ test('a folder that cannot be removed keeps the link on the card for the next sw
     await h.engine.retirePublished()
   } finally { console.error = quiet }
   expect(h.store.get(item.id)!.published).toEqual({ sub: 's', host: HOST, at: 1 })
+})
+
+const refusalOf = async (work: Promise<unknown>) => { const error = await refusal(work); return error instanceof QueueRefusal ? [error.status, error.message] : error }
+
+test('say writes into the ask thread while the pick is open, and leaves lastSeenId alone', async () => {
+  const h = await parked()
+  const said = await h.engine.say(h.id, 'ขอถามก่อนครับ\nแบบไหนดีครับ')
+  expect(h.replied).toEqual([{ id: '1', ref: 'ref-1', lines: ['ขอถามก่อนครับ', 'แบบไหนดีครับ'] }])
+  expect(h.posted.filter(post => post.kind === 'update')).toEqual([])
+  expect(said.lastSeenId).toBe('c1')
+  expect(h.store.get(h.id)!.state).toBe('waiting-pick')
+})
+
+test('say posts on the card when no pick is open', async () => {
+  const h = harness()
+  const item = await h.engine.add(add)
+  await h.engine.say(item.id, 'กำลังทำอยู่ครับ')
+  expect(h.replied).toEqual([])
+  expect(h.posted).toEqual([{ id: '1', kind: 'update', lines: ['กำลังทำอยู่ครับ'] }])
+})
+
+test('say refuses an unknown item with 404 and an item with no source card with 409', async () => {
+  const h = harness()
+  expect(await refusalOf(h.engine.say('nope', 'hi'))).toEqual([404, 'No queue item nope'])
+  const item = await h.engine.add(add)
+  await h.store.update(item.id, { externalId: '' })
+  expect(await refusalOf(h.engine.say(item.id, 'hi'))).toEqual([409, 'It has no source card to write to'])
+})
+
+test('say surfaces a failing source as a SourceFailure', async () => {
+  const h = harness({ source: { post: async () => { throw new Error('ClickUp is down') } } })
+  const item = await h.engine.add(add)
+  const error = await refusal(h.engine.say(item.id, 'hi'))
+  expect(error).toBeInstanceOf(SourceFailure)
+  expect((error as Error).message).toBe('ClickUp is down')
+})
+
+test('reread goes back to the ask cursor and judges the replies again', async () => {
+  const h = await parked()
+  h.replies.set('1', async () => h.from(KAN, 'c2', 'แบบ B'))
+  await h.store.update(h.id, { lastSeenId: 'c99' })
+  const item = await h.engine.reread(h.id)
+  expect(h.sinceIds.at(-1)).toBe('c1')
+  expect(await pickFile(item)).toContain('Option: B\n')
+})
+
+test('reread falls back to a minute before the ask when it has no cursor, and refuses an item that is not asked', async () => {
+  const h = await parked()
+  const ask = h.store.get(h.id)!.pick!.ask!
+  const { since: _since, ...older } = ask
+  await h.store.update(h.id, { pick: { ...h.store.get(h.id)!.pick!, ask: { ...older, postedAt: 5_000_000 } } })
+  await h.engine.reread(h.id)
+  expect(h.sinceIds.at(-1)).toBe('4940000')
+  const idle = await h.engine.add({ ...add, externalId: '2' })
+  expect(await refusalOf(h.engine.reread(idle.id))).toEqual([409, 'It is not waiting on a ClickUp pick'])
+  expect(await refusalOf(h.engine.reread('nope'))).toEqual([404, 'No queue item nope'])
 })

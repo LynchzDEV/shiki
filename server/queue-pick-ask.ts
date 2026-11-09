@@ -88,7 +88,7 @@ export function pickAsker(deps: QueueEngineDeps, steps: PickAskerSteps): PickAsk
       await store.update(item.id, { pick: { ...item.pick!, ask: { ...draft, posting: true } } })
       const post = await source.post({ id: item.externalId, kind: 'ask', lines: askLines(item.pick!, host), mention: owner.id, assignee: owner.id })
       if (post.ref === undefined) throw new Error(`${item.source} did not say which comment it posted`)
-      return { ask: { ...draft, ref: post.ref, postedAt: now() }, lastSeenId: post.commentId }
+      return { ask: { ...draft, ref: post.ref, postedAt: now(), since: post.commentId }, lastSeenId: post.commentId }
     } catch (error) {
       return { ask: { ref: '', ownerId: '', ownerName: '', meId: '', host, postedAt: now(), error: message(error) }, lastSeenId: item.lastSeenId }
     }

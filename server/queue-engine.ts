@@ -68,6 +68,8 @@ export type QueueEngine = {
   move(id: string, to: number): Promise<void>
   checkReplies(): Promise<{ checked: number; resumed: number }>
   answer(id: string, text: string): Promise<QueueItem>
+  say(id: string, text: string): Promise<QueueItem>
+  reread(id: string): Promise<QueueItem>
   startStage(id: string, stage: string): Promise<QueueItem>
   refreshPreflight(id: string, stage: string): Promise<QueueItem>
   retryStage(id: string): Promise<QueueItem>
@@ -86,6 +88,7 @@ export type QueuePause = { reason: string; until: number }
 const MAX_RUN_LABEL = 120
 const MAX_AUTO_PICKS = 2
 const DAY_MS = 24 * 60 * 60_000
+const ASK_LOOKBACK_MS = 60_000
 const DEFAULT_KEEP_DAYS = 14
 const PAUSE_BACKOFF_MS = [5, 15, 60].map(minutes => minutes * 60_000)
 const MAX_TIMER_MS = 2 ** 31 - 1
@@ -610,6 +613,28 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
     return found(store, id)
   })
 
+  async function say(id: string, text: string): Promise<QueueItem> {
+    const item = found(store, id)
+    if (item.source === '' || item.externalId === '') throw new QueueRefusal('It has no source card to write to', 409)
+    const source = deps.source(item.source)
+    const lines = text.split('\n')
+    await fromSource(() => (isAsked(item) ? source.reply({ id: item.externalId, ref: item.pick!.ask!.ref, lines }) : source.post({ id: item.externalId, kind: 'update', lines })))
+    return found(store, id)
+  }
+
+  const reread = (id: string): Promise<QueueItem> => serial(async () => {
+    const item = found(store, id)
+    if (!isAsked(item)) throw new QueueRefusal('It is not waiting on a ClickUp pick', 409)
+    if (item.worktree === null) throw new QueueRefusal('It has no workspace', 409)
+    if (runningInStudio(item)) throw new QueueRefusal('It is running in Studio now', 409)
+    const ask = item.pick!.ask!
+    const sinceId = ask.since ?? String(ask.postedAt - ASK_LOOKBACK_MS)
+    const result = await fromSource(() => deps.source(item.source).replies({ id: item.externalId, sinceId }))
+    await asker!.apply(item, item.worktree, result, { keepOthers: false })
+    await startNext()
+    return found(store, id)
+  })
+
   async function recover(): Promise<void> {
     await serial(async () => {
       await land.recover()
@@ -646,6 +671,8 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
     onRunSettled,
     checkReplies,
     answer,
+    say,
+    reread,
     checkedAt: () => lastCheckedAt,
     preparing: () => preparingId,
     paused,

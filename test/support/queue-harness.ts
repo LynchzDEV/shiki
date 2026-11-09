@@ -23,6 +23,7 @@ export function queueHarness(dir: string, over: Partial<QueueEngineDeps> = {}, s
   const started: Started[] = []
   const posted: Array<Parameters<QueueSource['post']>[0]> = []
   const resolved: Array<{ id: string; ref: string }> = []
+  const replied: Array<Parameters<QueueSource['reply']>[0]> = []
   const alerts: Array<{ title: string; reason: string; state: string }> = []
   const sinceIds: Array<string | null> = []
   let replies: () => Promise<SourceReplies> = async () => noReplies
@@ -38,6 +39,7 @@ export function queueHarness(dir: string, over: Partial<QueueEngineDeps> = {}, s
     status: async ({ status }) => ({ status }),
     people: async () => PEOPLE,
     resolve: async input => { resolved.push(input) },
+    reply: async input => { replied.push(input); return { commentId: `r${replied.length}` } },
     ...sourceOver,
   }
   const deps: QueueEngineDeps = {
@@ -61,7 +63,7 @@ export function queueHarness(dir: string, over: Partial<QueueEngineDeps> = {}, s
     return { store: reloaded, engine: createQueueEngine({ ...deps, store: reloaded, runner: { ...runner, ...runnerOver } }) }
   }
   return {
-    engine: createQueueEngine(deps), store, runs, started, posted, resolved, alerts, sinceIds, settle, restart, deps,
+    engine: createQueueEngine(deps), store, runs, started, posted, resolved, replied, alerts, sinceIds, settle, restart, deps,
     answer: (next: () => Promise<SourceReplies>) => { replies = next },
   }
 }

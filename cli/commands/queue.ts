@@ -68,6 +68,13 @@ function wholeArg(ctx: Context, name: string, max: number): number {
   return value
 }
 
+function sayText(value: unknown): string {
+  const item = field(value, 'item')
+  const ask = field(field(item, 'pick'), 'ask')
+  const open = field(item, 'state') === 'waiting-pick' && field(ask, 'ref') !== '' && field(ask, 'error') === undefined
+  return open ? 'Said in the ClickUp thread.\n' : 'Said on the ClickUp card.\n'
+}
+
 const putSettings = async (ctx: Context, body: Json, text: (value: unknown) => string): Promise<void> => emit(ctx, await ctx.client.put('/api/queue/settings', body), text)
 
 const parallelText = (value: unknown): string => {
@@ -183,6 +190,18 @@ export const queueCommands: Command[] = [
       const body = { option: arg(ctx, 'option'), ...optionalText(ctx, 'tester'), ...optionalText(ctx, 'note'), ...optionalText(ctx, 'feedback') }
       emit(ctx, await ctx.client.post(itemPath(ctx, '/pick'), body), () => `Picked ${arg(ctx, 'option')}. Back in the queue.\n`)
     },
+  },
+  {
+    path: ['queue', 'say'],
+    args: ['id', 'text'],
+    summary: 'Write a message in the ClickUp pick thread, or on the card when no pick is open',
+    run: async (ctx) => emit(ctx, await ctx.client.post(itemPath(ctx, '/say'), { text: arg(ctx, 'text') }), sayText),
+  },
+  {
+    path: ['queue', 'reread'],
+    args: ['id'],
+    summary: 'Read the ClickUp replies to the open pick again from the ask',
+    run: async (ctx) => emit(ctx, await ctx.client.post(itemPath(ctx, '/reread'), {}), (value) => `Re-read from the ask. It is ${cell(field(field(value, 'item'), 'state'))}.\n`),
   },
   {
     path: ['queue', 'remove'],

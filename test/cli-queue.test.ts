@@ -209,6 +209,28 @@ describe('shiki queue', () => {
     expect(help.out()).toContain('--feedback <TEXT>')
   })
 
+  test('say sends the text and tells whether it landed in the thread or on the card', async () => {
+    const thread = harness(() => Response.json({ item: { id: 'a1', state: 'waiting-pick', pick: { ask: { ref: 'r1' } } } }))
+    expect(await main(['queue', 'say', 'a1', 'ขอถามก่อนครับ'], thread.deps)).toBe(0)
+    expect(thread.calls).toEqual([{ method: 'POST', path: '/api/queue/a1/say', body: { text: 'ขอถามก่อนครับ' } }])
+    expect(thread.out()).toBe('Said in the ClickUp thread.\n')
+    const card = harness(() => Response.json({ item: { id: 'a1', state: 'queued' } }))
+    expect(await main(['queue', 'say', 'a1', 'hi'], card.deps)).toBe(0)
+    expect(card.out()).toBe('Said on the ClickUp card.\n')
+    const missing = harness(() => Response.json({ error: 'No queue item nope' }, { status: 404 }))
+    expect(await main(['queue', 'say', 'nope', 'hi'], missing.deps)).toBe(1)
+    expect(missing.err()).toContain('No queue item nope')
+  })
+
+  test('reread posts to the item and prints its state', async () => {
+    const h = harness(() => Response.json({ item: { id: 'a1', state: 'waiting-pick' } }))
+    expect(await main(['queue', 'reread', 'a1'], h.deps)).toBe(0)
+    expect(routesOf(h.calls)).toEqual(['POST /api/queue/a1/reread'])
+    expect(h.out()).toBe('Re-read from the ask. It is waiting-pick.\n')
+    const refused = harness(() => Response.json({ error: 'It is not waiting on a ClickUp pick' }, { status: 409 }))
+    expect(await main(['queue', 'reread', 'a1'], refused.deps)).toBe(1)
+  })
+
   test('a refused requeue prints the server message and exits 1', async () => {
     const h = harness(() => Response.json({ error: 'It is building now' }, { status: 409 }))
     expect(await main(['queue', 'requeue', 'a1'], h.deps)).toBe(1)
