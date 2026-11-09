@@ -633,10 +633,18 @@ When the flow's plugin has its
 setting on, the queue takes the recommended variant itself, alerts
 .RI "Auto-picked " option
 and keeps building; a pick with no recommended variant still waits for you.
-Unless the flow's plugin sets
-.B pickIn
-to
-.BR shikidan ,
+The plugin's
+.B automate
+setting is one switch. Off, the default (legacy), keeps the pick in
+Shikidan and leaves the ClickUp status alone until the UAT stage posts it.
+On (full automate) also moves the ClickUp status at every step, from the
+flow's
+.B sourceStatus
+map.
+When the flow's plugin has its
+.B automate
+setting on (full automate,
+.IR "shiki plugin set fixstack automate true" ),
 the card's mockups are published at
 .IB card \- random . domain
 (the domain is

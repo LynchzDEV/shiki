@@ -1,6 +1,6 @@
 import { expect, spyOn, test } from 'bun:test'
 
-import { desiredStatus, statusMaps, type SourceStatusMap, type StatusFlow, type StatusRun } from '../server/queue-status'
+import { automateOn, desiredStatus, statusMaps, type SourceStatusMap, type StatusFlow, type StatusRun } from '../server/queue-status'
 import type { QueueItem, QueueState } from '../server/queue-store'
 
 const map: SourceStatusMap = {
@@ -46,14 +46,30 @@ function maps(flows: Record<string, StatusFlow>, settings: Record<string, string
 
 const flowMap: SourceStatusMap = { states: { queued: 'Open' }, nodes: { implement: 'in progress' } }
 
+const automate = { 'fixstack:automate': 'true' }
+
+test('a plugin flow has no status map unless its plugin turns full automate on', async () => {
+  for (const value of [undefined, 'false', '', 'yes']) {
+    const { lookup } = maps({ 'fixstack--fixstack': { plugin: 'fixstack', sourceStatus: flowMap } }, value === undefined ? {} : { 'fixstack:automate': value })
+    expect(await lookup('fixstack--fixstack')).toEqual({})
+  }
+})
+
+test('automateOn is true only for a plugin whose automate setting is true', async () => {
+  const setting = async (plugin: string, key: string) => (plugin === 'fixstack' && key === 'automate' ? 'true' : null)
+  expect(await automateOn(setting, 'fixstack')).toBe(true)
+  expect(await automateOn(setting, 'other')).toBe(false)
+  expect(await automateOn(setting, undefined)).toBe(false)
+})
+
 test('the flow map is used when its plugin sets no statusMap, and a flow outside a plugin uses its own map', async () => {
-  const { lookup } = maps({ 'fixstack--fixstack': { plugin: 'fixstack', sourceStatus: flowMap }, mine: { sourceStatus: flowMap } })
+  const { lookup } = maps({ 'fixstack--fixstack': { plugin: 'fixstack', sourceStatus: flowMap }, mine: { sourceStatus: flowMap } }, automate)
   expect(await lookup('fixstack--fixstack')).toEqual(flowMap)
   expect(await lookup('mine')).toEqual(flowMap)
 })
 
 test('a statusMap setting replaces the flow map wholesale', async () => {
-  const { lookup } = maps({ 'fixstack--fixstack': { plugin: 'fixstack', sourceStatus: flowMap } }, { 'fixstack:statusMap': JSON.stringify({ states: { landed: 'done' } }) })
+  const { lookup } = maps({ 'fixstack--fixstack': { plugin: 'fixstack', sourceStatus: flowMap } }, { ...automate, 'fixstack:statusMap': JSON.stringify({ states: { landed: 'done' } }) })
   expect(await lookup('fixstack--fixstack')).toEqual({ states: { landed: 'done' } })
 })
 
@@ -61,7 +77,7 @@ test('a statusMap that does not parse falls back to the flow map and logs once',
   const errors = spyOn(console, 'error').mockImplementation(() => {})
   try {
     for (const bad of ['{not json', JSON.stringify({ states: { flying: 'x' } })]) {
-      const { lookup } = maps({ 'fixstack--fixstack': { plugin: 'fixstack', sourceStatus: flowMap } }, { 'fixstack:statusMap': bad })
+      const { lookup } = maps({ 'fixstack--fixstack': { plugin: 'fixstack', sourceStatus: flowMap } }, { ...automate, 'fixstack:statusMap': bad })
       expect(await lookup('fixstack--fixstack')).toEqual(flowMap)
       expect(await lookup('fixstack--fixstack')).toEqual(flowMap)
     }

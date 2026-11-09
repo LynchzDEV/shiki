@@ -48,7 +48,7 @@ import { outcomesRoutes } from './routes/outcomes'
 import { attentionRoutes } from './routes/attention'
 import { attentionKey, createAttentionStore } from './attention'
 import { raiseQueueAlert, raiseSyncAlert, sweepQueueAlerts, watchQueueAlerts } from './queue-attention'
-import { statusMaps } from './queue-status'
+import { automateOn, statusMaps } from './queue-status'
 import { createStatusSync, type StatusSync } from './queue-status-sync'
 import { createNotifier } from './notify'
 import { publish, publishDir, publishDomain, removeLeftovers, unpublish } from './publish'
@@ -251,7 +251,7 @@ export async function createApp(): Promise<Elysia> {
     backupDir: itemId => join(configDir(), 'queue-files', itemId),
     needsYou: (item, reason) => { void raiseQueueAlert(attention, item, reason).catch(error => console.error('Queue alert failed', error)); notifyOn.queue(item, reason) },
     autoPick: async id => (await getSetting(id, 'autoPick')) === 'true',
-    pickIn: async id => (id !== undefined && (await getSetting(id, 'pickIn'))?.trim().toLowerCase() === 'shikidan' ? 'shikidan' : 'clickup'),
+    pickIn: async id => (await automateOn(getSetting, id) ? 'clickup' : 'shikidan'),
     publish: async item => publish(item, { dir: publishDir(), domain: publishDomain(), cardImages: item.worktree === null ? [] : await cardImageFiles(item.worktree, item.source) }),
     notify: (item, event) => notifyOn.pickReply(item, event),
     unpublish: async item => { if (item.published !== undefined) await unpublish(item.published.sub, publishDir()) },

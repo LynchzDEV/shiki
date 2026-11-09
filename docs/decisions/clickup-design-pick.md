@@ -51,7 +51,7 @@ The pure function `pickOwner({ creator, assignees, me })` returns a `Person`:
 
 The auto-pick path is unchanged.
 
-When the flow plugin's `pickIn` setting is `clickup` (empty means `clickup`), the steps run in this order. Parking comes first, so a restart in the middle can never post a second ask:
+When the flow plugin's `automate` setting is `true` (full automate), the steps run in this order. Parking comes first, so a restart in the middle can never post a second ask:
 
 1. Park in `waiting-pick` with a new `pick` that has no `ask`, exactly as today, but do not call `needsYou` yet.
 2. Publish the mockups.
@@ -62,11 +62,11 @@ When the flow plugin's `pickIn` setting is `clickup` (empty means `clickup`), th
 
 On any failure in steps 2 to 4, `pick.ask` is stored with `error` set, and `needsYou` is called with a reason that names the error. The pick can still be made in Shikidan.
 
-Recovery: when `checkReplies` or `recover()` finds a `waiting-pick` card with `pickIn` `clickup` and no `pick.ask`, it runs steps 2 to 6 once. A card that already has `pick.ask.ref` is never posted to again in the same round. A new round replaces `pick`, which clears `ask`.
+Recovery: when `checkReplies` or `recover()` finds a `waiting-pick` card with full automate on and no `pick.ask`, it runs steps 2 to 6 once. A card that already has `pick.ask.ref` is never posted to again in the same round. A new round replaces `pick`, which clears `ask`.
 
 `queueInput` in notify-events.ts returns `publish-failed` when `item.state === 'waiting-pick' && item.pick?.ask?.error !== undefined`, and `pick` otherwise.
 
-When `pickIn` is `shikidan`, today's behavior is unchanged.
+With full automate off, the default, today's behavior is unchanged.
 
 Every new round, including the one after `Option: none`, publishes again to the same subdomain and posts a new ask comment.
 
@@ -177,7 +177,7 @@ This is its own Bun process, separate from Shikidan. It never imports server cod
 
 ## fixstack plugin (v0.1.21)
 
-New setting `pickIn`, type `text`, with this help text: `Where the design pick is asked: clickup (tag the card owner in ClickUp, default) or shikidan.`
+One toggle, `automate` ("Full automate"), default off. Off is legacy: the design pick waits in Shikidan, and the ClickUp status changes only when the UAT stage posts it. On asks the pick in ClickUp and moves the status at every step. It replaces the short-lived `pickIn` setting, and it also gates status sync: `statusMaps` returns `{}` for a plugin flow unless `automate` is `true`. Flows outside a plugin keep their own map.
 
 ## Operations (main session, with the operator)
 

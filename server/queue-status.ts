@@ -10,6 +10,9 @@ export type StatusMapDeps = {
   setting(plugin: string, key: string): Promise<string | null>
 }
 
+export const automateOn = async (setting: StatusMapDeps['setting'], plugin: string | undefined): Promise<boolean> =>
+  plugin !== undefined && (await setting(plugin, 'automate')) === 'true'
+
 export function desiredStatus(item: QueueItem, run: StatusRun | undefined, map: SourceStatusMap): string | null {
   if (item.state !== 'building') return map.states?.[item.state] ?? null
   if (run === undefined || run.id !== item.currentRunId || run.workflow.plugin === undefined || run.status === 'blocked') return null
@@ -45,6 +48,7 @@ export function statusMaps(deps: StatusMapDeps): (flowId: string | null) => Prom
       if (message !== 'Workflow not found') warnOnce(`${flowId}\0${message}`, `Status map for flow ${flowId} unavailable: ${message}`)
       return {}
     }
+    if (flow.plugin !== undefined && !(await automateOn(deps.setting, flow.plugin))) return {}
     const fromSetting = flow.plugin === undefined ? null : await settingMap(flow.plugin)
     return fromSetting ?? flow.sourceStatus ?? {}
   }
