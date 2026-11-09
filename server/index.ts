@@ -275,8 +275,16 @@ export async function createApp(): Promise<Elysia> {
     },
     error => console.error('Queue recover failed', error),
   )
-  const REPLY_SWEEP_MS = 15 * 60_000
-  setInterval(() => { void queueEngine?.checkReplies().catch(error => console.error('Queue reply check failed', error)) }, REPLY_SWEEP_MS).unref()
+  let replySweep: ReturnType<typeof setInterval> | undefined
+  let replySweepMinutes = 0
+  const sweepRepliesEvery = (minutes: number): void => {
+    if (minutes === replySweepMinutes) return
+    replySweepMinutes = minutes
+    clearInterval(replySweep)
+    replySweep = setInterval(() => { void queueEngine?.checkReplies().catch(error => console.error('Queue reply check failed', error)) }, minutes * 60_000)
+    replySweep.unref()
+  }
+  sweepRepliesEvery((await readConfig()).replyPollMinutes)
   await workflowBuilder.recover()
   await attention.prune(jobId => jobManager.getJob(jobId)?.status === 'running')
   void chatFlusher.recoverAll().catch(error => console.error('Chat catch-up failed', error))
@@ -334,7 +342,7 @@ export async function createApp(): Promise<Elysia> {
     .use(modelsRoutes)
     .use(providersRoutes)
     .use(pluginsRoutes())
-    .use(queueRoutes(queueStore, queueEngine, () => queueTree(queueStore.list()), { get: id => workflowRunner.get(id), subscribe: runEvents.subscribe }))
+    .use(queueRoutes(queueStore, queueEngine, () => queueTree(queueStore.list()), { get: id => workflowRunner.get(id), subscribe: runEvents.subscribe }, settings => sweepRepliesEvery(settings.replyPollMinutes)))
 
   await defaultRuntimes()
 

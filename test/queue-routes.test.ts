@@ -239,9 +239,9 @@ test('GET says when replies were last checked, or null before the first check', 
   const items = store()
   let checkedAt: number | null = null
   const app = new Elysia().use(queueRoutes(items, engine(items, { checkedAt: () => checkedAt })))
-  expect(await (await call(app, '/api/queue')).json()).toEqual({ items: [], checkedAt: null, paused: null, parallel: 1 })
+  expect(await (await call(app, '/api/queue')).json()).toEqual({ items: [], checkedAt: null, paused: null, parallel: 1, replyPollMinutes: 2, publishKeepDays: 14 })
   checkedAt = 1_700_000_000_000
-  expect(await (await call(app, '/api/queue')).json()).toEqual({ items: [], checkedAt: 1_700_000_000_000, paused: null, parallel: 1 })
+  expect(await (await call(app, '/api/queue')).json()).toEqual({ items: [], checkedAt: 1_700_000_000_000, paused: null, parallel: 1, replyPollMinutes: 2, publishKeepDays: 14 })
 })
 
 test('GET says when the queue is paused on an unavailable AI', async () => {
@@ -263,10 +263,10 @@ test('the stream sends checkedAt and sends again when a check finishes with no i
   const response = await app.handle(new Request('http://127.0.0.1:7777/api/queue/stream', { headers: { host: '127.0.0.1:7777' }, signal: aborting.signal }))
   const reader = response.body!.getReader()
   const nextData = async (): Promise<unknown> => JSON.parse(new TextDecoder().decode((await reader.read()).value).replace(/^data: /, '').trim())
-  expect(await nextData()).toEqual({ items: [], checkedAt: null, paused: null, parallel: 1 })
+  expect(await nextData()).toEqual({ items: [], checkedAt: null, paused: null, parallel: 1, replyPollMinutes: 2, publishKeepDays: 14 })
   checkedAt = 42
   for (const listener of listeners) listener()
-  expect(await nextData()).toEqual({ items: [], checkedAt: 42, paused: null, parallel: 1 })
+  expect(await nextData()).toEqual({ items: [], checkedAt: 42, paused: null, parallel: 1, replyPollMinutes: 2, publishKeepDays: 14 })
   aborting.abort()
   await reader.cancel()
   expect(listeners.size).toBe(0)
@@ -557,12 +557,35 @@ test('PUT /api/queue/settings stores how many cards build at once, kicks the que
   expect((await (await call(app, '/api/queue')).json()).parallel).toBe(1)
   const saved = await call(app, '/api/queue/settings', { method: 'PUT', body: JSON.stringify({ parallel: 3 }) })
   expect(saved.status).toBe(200)
-  expect(await saved.json()).toEqual({ parallel: 3 })
+  expect(await saved.json()).toEqual({ parallel: 3, replyPollMinutes: 2, publishKeepDays: 14 })
   expect(kicks).toBe(1)
   expect((await (await call(app, '/api/queue')).json()).parallel).toBe(3)
   const crossSite = await app.handle(new Request('http://127.0.0.1:7777/api/queue/settings', { method: 'PUT', body: JSON.stringify({ parallel: 2 }), headers: { host: '127.0.0.1:7777', 'content-type': 'application/json', 'sec-fetch-site': 'cross-site' } }))
   expect(crossSite.status).toBe(403)
   expect((await (await call(app, '/api/queue')).json()).parallel).toBe(3)
+})
+
+test('PUT /api/queue/settings sets the reply poll and keep days one at a time, tells the listener, and GET shows them', async () => {
+  const items = store()
+  const heard: unknown[] = []
+  const app = new Elysia().use(queueRoutes(items, engine(items), undefined, undefined, settings => { heard.push(settings) }))
+  const put = (body: unknown) => call(app, '/api/queue/settings', { method: 'PUT', body: JSON.stringify(body) })
+  expect(await (await put({ replyPollMinutes: 5 })).json()).toMatchObject({ replyPollMinutes: 5, publishKeepDays: 14 })
+  expect(await (await put({ publishKeepDays: 30 })).json()).toMatchObject({ replyPollMinutes: 5, publishKeepDays: 30 })
+  expect(heard).toHaveLength(2)
+  expect(heard.at(-1)).not.toHaveProperty('publishDomain')
+  expect(heard.at(-1)).toMatchObject({ replyPollMinutes: 5, publishKeepDays: 30 })
+  expect(await (await call(app, '/api/queue')).json()).toMatchObject({ replyPollMinutes: 5, publishKeepDays: 30 })
+})
+
+test('PUT /api/queue/settings refuses bad values with the rule, and an empty body', async () => {
+  const items = store()
+  const app = new Elysia().use(queueRoutes(items, engine(items)))
+  const put = async (body: unknown) => { const response = await call(app, '/api/queue/settings', { method: 'PUT', body: JSON.stringify(body) }); return [response.status, (await response.json()).error] }
+  for (const replyPollMinutes of [0, 16, 1.5]) expect(await put({ replyPollMinutes })).toEqual([400, 'replyPollMinutes must be a whole number from 1 to 15'])
+  for (const publishKeepDays of [0, 91, '7']) expect(await put({ publishKeepDays })).toEqual([400, 'publishKeepDays must be a whole number from 1 to 90'])
+  expect(await put({ publishDomain: 'mockups.example.com' })).toEqual([400, 'Send parallel, replyPollMinutes or publishKeepDays'])
+  expect(await put({})).toEqual([400, 'Send parallel, replyPollMinutes or publishKeepDays'])
 })
 
 test('PUT /api/queue/settings refuses anything but a whole number from 1 to 4', async () => {

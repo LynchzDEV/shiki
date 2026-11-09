@@ -11,7 +11,7 @@ import { queueStep, type QueueStep, type QueueStepRun } from '../queue-step'
 import { listFolderRepos, resolveQueueFolder } from '../queue-folder'
 import { queueTree, type QueueTree } from '../queue-tree'
 import { eventStreamResponse, type RunEvents } from '../run-events'
-import { MAX_QUEUE_PARALLEL, readConfig, writeConfig } from '../secrets'
+import { MAX_PUBLISH_KEEP_DAYS, MAX_QUEUE_PARALLEL, MAX_REPLY_POLL_MINUTES, readConfig, writeConfig, type AppConfig } from '../secrets'
 
 type Status = { status?: number | string }
 type QueueEngineRoutes = Pick<QueueEngine, 'add' | 'requeue' | 'pick' | 'checkReplies' | 'answer' | 'remove' | 'stop' | 'move' | 'checkedAt' | 'subscribeChecks' | 'startStage' | 'refreshPreflight' | 'retryStage' | 'markDone' | 'landLog' | 'report'> & Partial<Pick<QueueEngine, 'preparing' | 'paused' | 'kick'>>
@@ -33,7 +33,14 @@ const pickSchema = z.object({ option: z.string().min(1).max(16), tester: oneLine
 const confirmSchema = z.object({ confirm: z.literal(true) })
 const answerSchema = z.object({ text: z.string().trim().min(1).max(8000) })
 const moveSchema = z.object({ to: z.number().int().min(0) })
-const settingsSchema = z.object({ parallel: z.number().int().min(1).max(MAX_QUEUE_PARALLEL) })
+const whole = (max: number, rule: string) => z.number({ error: rule }).int({ error: rule }).min(1, { error: rule }).max(max, { error: rule }).optional()
+const settingsSchema = z.object({
+  parallel: whole(MAX_QUEUE_PARALLEL, `parallel must be a whole number from 1 to ${MAX_QUEUE_PARALLEL}`),
+  replyPollMinutes: whole(MAX_REPLY_POLL_MINUTES, `replyPollMinutes must be a whole number from 1 to ${MAX_REPLY_POLL_MINUTES}`),
+  publishKeepDays: whole(MAX_PUBLISH_KEEP_DAYS, `publishKeepDays must be a whole number from 1 to ${MAX_PUBLISH_KEEP_DAYS}`),
+}).refine(body => Object.values(body).some(value => value !== undefined), { error: 'Send parallel, replyPollMinutes or publishKeepDays' })
+export type QueueSettings = Pick<AppConfig, 'replyPollMinutes' | 'publishKeepDays'> & { parallel: number }
+const settingsOf = (config: AppConfig): QueueSettings => ({ parallel: config.queueParallel, replyPollMinutes: config.replyPollMinutes, publishKeepDays: config.publishKeepDays })
 const NO_ITEM = 'No such queue item'
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
@@ -114,23 +121,25 @@ async function requireLocalExceptMockupAssets(context: GuardContext): Promise<vo
   return requireLocal(context)
 }
 
-export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: () => Promise<QueueTree> = () => queueTree(store.list()), runs: QueueRunLookup = NO_RUNS) {
-  let parallel = 1
+export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: () => Promise<QueueTree> = () => queueTree(store.list()), runs: QueueRunLookup = NO_RUNS, onSettings: (settings: QueueSettings) => void = () => {}) {
+  let settings: QueueSettings = { parallel: 1, replyPollMinutes: 2, publishKeepDays: 14 }
   const settingsListeners = new Set<() => void>()
-  const readParallel = async (): Promise<number> => { parallel = (await readConfig()).queueParallel; return parallel }
-  void readParallel().catch(() => {})
-  const snapshot = () => ({ items: store.list().map(item => withStep(cleaned(item), runs, engine.preparing?.() ?? null)), checkedAt: engine.checkedAt(), paused: engine.paused?.() ?? null, parallel })
+  const readSettings = async (): Promise<QueueSettings> => { settings = settingsOf(await readConfig()); return settings }
+  void readSettings().catch(() => {})
+  const snapshot = () => ({ items: store.list().map(item => withStep(cleaned(item), runs, engine.preparing?.() ?? null)), checkedAt: engine.checkedAt(), paused: engine.paused?.() ?? null, ...settings })
   return new Elysia()
     .onBeforeHandle(requireLocalExceptMockupAssets)
-    .get('/api/queue', async () => { await readParallel(); return snapshot() })
+    .get('/api/queue', async () => { await readSettings(); return snapshot() })
     .put('/api/queue/settings', async ({ body, set }) => {
       const parsed = settingsSchema.safeParse(body)
-      if (!parsed.success) { set.status = 400; return { error: `parallel must be a whole number from 1 to ${MAX_QUEUE_PARALLEL}` } }
-      const { queueParallel } = await writeConfig({ queueParallel: parsed.data.parallel })
-      parallel = queueParallel
+      if (!parsed.success) { set.status = 400; return { error: parsed.error.issues[0]!.message } }
+      const { parallel, ...rest } = parsed.data
+      const patch = Object.fromEntries(Object.entries({ queueParallel: parallel, ...rest }).filter(([, value]) => value !== undefined))
+      settings = settingsOf(await writeConfig(patch))
       for (const listener of settingsListeners) listener()
+      onSettings(settings)
       await engine.kick?.()
-      return { parallel: queueParallel }
+      return settings
     })
     .get('/api/queue/tree', () => tree())
     .get('/api/queue/folder', ({ query, set }) => folderRepos(query.path, set))

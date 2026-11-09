@@ -44,7 +44,7 @@ async function modeOf(path: string): Promise<number> {
 describe('defaults', () => {
   test('missing files fall back to documented defaults', async () => {
     expect(await readSecrets()).toEqual({ zaiAuthToken: null, zaiBaseUrl: DEFAULT_ZAI_BASE_URL, apiToken: null, notifyWebhookUrl: null, notifyWebhookKey: null })
-    expect(await readConfig()).toEqual({ roles: DEFAULT_ROLES, fallback: DEFAULT_FALLBACK, autoReview: false, chatHome: null, flowApproval: true, marketplaces: [], queueParallel: 1 })
+    expect(await readConfig()).toEqual({ roles: DEFAULT_ROLES, fallback: DEFAULT_FALLBACK, autoReview: false, chatHome: null, flowApproval: true, marketplaces: [], queueParallel: 1, replyPollMinutes: 2, publishKeepDays: 14 })
   })
 
   test('corrupt json falls back instead of throwing', async () => {
@@ -142,6 +142,30 @@ describe('round trip', () => {
     expect((await readConfig()).queueParallel).toBe(1)
     await writeConfig({ queueParallel: 3 })
     expect((await readConfig()).queueParallel).toBe(3)
+  })
+
+  test('replyPollMinutes reads 2 when missing and clamps whole numbers to 1..15', async () => {
+    await ensureConfigDir()
+    for (const [raw, read] of [[30, 15], [0, 1], [1.5, 2], ['5', 2], [7, 7]] as const) {
+      await Bun.write(configPath(CONFIG_FILE), JSON.stringify({ replyPollMinutes: raw }))
+      expect((await readConfig()).replyPollMinutes).toBe(read)
+    }
+  })
+
+  test('publishKeepDays reads 14 when missing and clamps whole numbers to 1..90', async () => {
+    await ensureConfigDir()
+    for (const [raw, read] of [[365, 90], [0, 1], [2.5, 14], [30, 30]] as const) {
+      await Bun.write(configPath(CONFIG_FILE), JSON.stringify({ publishKeepDays: raw }))
+      expect((await readConfig()).publishKeepDays).toBe(read)
+    }
+  })
+
+  test('publishDomain is not a config setting: an old value on disk is dropped on the next write', async () => {
+    await ensureConfigDir()
+    await Bun.write(configPath(CONFIG_FILE), JSON.stringify({ publishDomain: 'old.example.com' }))
+    expect(await readConfig()).not.toHaveProperty('publishDomain')
+    await writeConfig({ queueParallel: 2 })
+    expect(JSON.parse(await Bun.file(configPath(CONFIG_FILE)).text())).not.toHaveProperty('publishDomain')
   })
 
   test('legacy string roles on disk load with a null model', async () => {

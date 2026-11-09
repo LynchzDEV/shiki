@@ -52,6 +52,8 @@ export type AppConfig = {
   flowApproval: boolean
   marketplaces: MarketplaceRef[]
   queueParallel: number
+  replyPollMinutes: number
+  publishKeepDays: number
 }
 
 export type PublicSecretsView = {
@@ -200,7 +202,11 @@ function readMarketplaces(raw: unknown): MarketplaceRef[] {
 
 export const MAX_QUEUE_PARALLEL = 4
 
-const readQueueParallel = (raw: unknown): number => (Number.isInteger(raw) ? Math.min(Math.max(raw as number, 1), MAX_QUEUE_PARALLEL) : 1)
+export const MAX_REPLY_POLL_MINUTES = 15
+export const MAX_PUBLISH_KEEP_DAYS = 90
+
+const wholeIn = (raw: unknown, max: number, fallback: number): number => (Number.isInteger(raw) ? Math.min(Math.max(raw as number, 1), max) : fallback)
+const readQueueParallel = (raw: unknown): number => wholeIn(raw, MAX_QUEUE_PARALLEL, 1)
 
 export async function readConfig(): Promise<AppConfig> {
   const raw = await readJsonFile(CONFIG_FILE)
@@ -212,6 +218,8 @@ export async function readConfig(): Promise<AppConfig> {
     flowApproval: raw.flowApproval !== false,
     marketplaces: readMarketplaces(raw.marketplaces),
     queueParallel: readQueueParallel(raw.queueParallel),
+    replyPollMinutes: wholeIn(raw.replyPollMinutes, MAX_REPLY_POLL_MINUTES, 2),
+    publishKeepDays: wholeIn(raw.publishKeepDays, MAX_PUBLISH_KEEP_DAYS, 14),
   }
 }
 
