@@ -44,6 +44,36 @@ function GlmSettings({ report, onError }: { report: (text: string) => void; onEr
   </form>
 }
 
+type NotifyView = { notifyWebhookUrl: string | null; notifyWebhookKeyConfigured: boolean }
+
+function NotifySettings({ report, onError }: { report: (text: string) => void; onError: (text: string) => void }) {
+  const [view, setView] = useState<NotifyView | null>(null)
+  const [url, setUrl] = useState('')
+  const [key, setKey] = useState('')
+  const [busy, setBusy] = useState(false)
+  const apply = (data: NotifyView) => { setView(data); setUrl(data.notifyWebhookUrl ?? '') }
+  useEffect(() => { void fetch('/api/secrets').then(response => response.json() as Promise<NotifyView>).then(apply).catch(error => onError((error as Error).message)) }, [])
+  const send = async (patch: Record<string, unknown>, done: string) => {
+    setBusy(true)
+    try {
+      const response = await fetch('/api/secrets', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch) })
+      const data = await response.json() as NotifyView & { error?: string }
+      if (!response.ok) throw new Error(data.error ?? 'Could not save')
+      apply(data); setKey(''); report(done)
+    } catch (error) { onError((error as Error).message) } finally { setBusy(false) }
+  }
+  const save = (event: React.FormEvent) => { event.preventDefault(); void send({ ...(url.trim() ? { notifyWebhookUrl: url } : {}), ...(key.trim() ? { notifyWebhookKey: key } : {}) }, 'Webhook settings saved.') }
+  return <section className="connection-settings" aria-labelledby="notify-title">
+    <header><h2 id="notify-title">Webhook</h2><p className="muted connection-small">Tell a bot on another machine whenever a queue card needs a person.</p></header>
+    <form className="field-stack" onSubmit={save}>
+      <label>Webhook URL<input type="url" pattern="https://.*" value={url} placeholder="https://bot.example.com/hook" onChange={event => setUrl(event.target.value)} /></label>
+      <label>Webhook key<input type="password" autoComplete="off" value={key} placeholder={view?.notifyWebhookKeyConfigured ? 'Configured · type to replace' : 'Shared key the bot checks'} onChange={event => setKey(event.target.value)} /></label>
+      <p className="muted connection-small">Sent as a Bearer token and X-Automation-Key. The key stays on this machine and is never shown again.</p>
+      <div className="connection-foot"><button className="connection-button primary" type="submit" disabled={busy || !view}>Save</button><button type="button" className="connection-button" disabled={busy || !view} onClick={() => void send({ notifyWebhookUrl: null, notifyWebhookKey: null }, 'Webhook cleared.')}>Clear</button></div>
+    </form>
+  </section>
+}
+
 const ENGINE_TINTS: Record<string, string> = { claude: '#d4a091', glm: '#91b0dc', codex: '#bfd38b' }
 const LOGOS = new Set(['claude', 'glm', 'codex', 'qwen', 'grok'])
 type Details = { usage: Record<string, unknown>; roles: Record<string, unknown>; models: Record<string, string[]>; glmConfigured: boolean }
@@ -194,6 +224,7 @@ export function Connections({ list, refresh, report, onError, onConnect }: { lis
 
   return <section className="studio-view connections-view">
     <RolesSettings read={details.roles} ais={ais} models={{ ...details.models, ...list.models }} onSaved={saved => { setDetails(current => ({ ...current, roles: saved })); void refresh() }} />
+    <NotifySettings report={report} onError={onError} />
     <aside className="connection-list" aria-label="AI connections">
       <h2>AIs <span className="muted">{list.builtins.length + list.connections.length} connected</span></h2>
       {list.builtins.map(id => <button key={id} type="button" className="connection-choice" aria-pressed={current(item => item.kind === 'builtin' && item.id === id)} onClick={() => pick({ kind: 'builtin', id })}><Logo id={id} size={28} /><span><strong>{BUILTIN[id]?.name ?? id}</strong><small>{BUILTIN[id]?.line ?? 'Built in'}</small></span><i className="connection-dot" /></button>)}

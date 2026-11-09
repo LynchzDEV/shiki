@@ -18,6 +18,8 @@ export type Secrets = {
   zaiAuthToken: string | null
   zaiBaseUrl: string
   apiToken: string | null
+  notifyWebhookUrl: string | null
+  notifyWebhookKey: string | null
 }
 
 export type RoleAssignment = { engine: string; model: string | null }
@@ -56,6 +58,8 @@ export type PublicSecretsView = {
   zaiBaseUrl: string
   zaiAuthTokenConfigured: boolean
   apiTokenConfigured: boolean
+  notifyWebhookUrl: string | null
+  notifyWebhookKeyConfigured: boolean
 }
 
 export type BindTarget = { hostname: '127.0.0.1'; port: number }
@@ -130,6 +134,8 @@ export async function readSecrets(): Promise<Secrets> {
     zaiAuthToken: asString(raw.zaiAuthToken),
     zaiBaseUrl: asString(raw.zaiBaseUrl) ?? DEFAULT_ZAI_BASE_URL,
     apiToken: asString(raw.apiToken),
+    notifyWebhookUrl: asString(raw.notifyWebhookUrl),
+    notifyWebhookKey: asString(raw.notifyWebhookKey),
   }
 }
 
@@ -220,5 +226,7 @@ export function publicView(secrets: Secrets): PublicSecretsView {
     zaiBaseUrl: secrets.zaiBaseUrl,
     zaiAuthTokenConfigured: typeof secrets.zaiAuthToken === 'string' && secrets.zaiAuthToken !== '',
     apiTokenConfigured: typeof secrets.apiToken === 'string' && secrets.apiToken !== '',
+    notifyWebhookUrl: asString(secrets.notifyWebhookUrl),
+    notifyWebhookKeyConfigured: asString(secrets.notifyWebhookKey) !== null,
   }
 }

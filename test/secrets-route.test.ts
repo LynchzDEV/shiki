@@ -53,6 +53,8 @@ describe('GET /api/secrets', () => {
       zaiBaseUrl: 'https://api.z.ai/api/anthropic',
       zaiAuthTokenConfigured: false,
       apiTokenConfigured: true,
+      notifyWebhookUrl: null,
+      notifyWebhookKeyConfigured: false,
     })
   })
 })
@@ -115,6 +117,8 @@ describe('POST /api/secrets', () => {
       zaiBaseUrl: 'https://api.z.ai/api/anthropic',
       zaiAuthTokenConfigured: true,
       apiTokenConfigured: true,
+      notifyWebhookUrl: null,
+      notifyWebhookKeyConfigured: false,
     })
 
     const stored: unknown = JSON.parse(await readFile(configPath('secrets.json'), 'utf8'))
@@ -159,6 +163,29 @@ describe('POST /api/secrets', () => {
     const response = await app.handle(post({ zaiBaseUrl: 'file:///etc/passwd' }))
     expect(response.status).toBe(400)
     expect(await response.json()).toEqual({ error: 'zaiBaseUrl must be an http(s) url' })
+  })
+
+  test('stores the webhook url and key, shows the url, never echoes the key', async () => {
+    const key = 'whk-must-never-be-echoed'
+    const response = await app.handle(post({ notifyWebhookUrl: 'https://bot.example/hook', notifyWebhookKey: key }))
+    expect(response.status).toBe(200)
+    const text = await response.text()
+    expect(text).not.toContain(key)
+    expect(JSON.parse(text)).toMatchObject({ notifyWebhookUrl: 'https://bot.example/hook', notifyWebhookKeyConfigured: true })
+    expect(await (await app.handle(get())).text()).not.toContain(key)
+  })
+
+  test('rejects an http webhook url', async () => {
+    const response = await app.handle(post({ notifyWebhookUrl: 'http://bot.example/hook' }))
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({ error: 'notifyWebhookUrl must be an https url' })
+  })
+
+  test('null clears the webhook url and key, a blank key is refused', async () => {
+    await app.handle(post({ notifyWebhookUrl: 'https://bot.example/hook', notifyWebhookKey: 'k' }))
+    expect((await app.handle(post({ notifyWebhookKey: '  ' }))).status).toBe(400)
+    const cleared = await app.handle(post({ notifyWebhookUrl: null, notifyWebhookKey: null }))
+    expect(await cleared.json()).toMatchObject({ notifyWebhookUrl: null, notifyWebhookKeyConfigured: false })
   })
 
   test('a bind address is not a setting any more', async () => {

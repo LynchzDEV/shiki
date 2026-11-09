@@ -8,7 +8,7 @@ const REDACTED = '[REDACTED]'
 
 export async function logSecrets(): Promise<Array<string | null>> {
   const secrets = await readSecrets()
-  return [secrets.zaiAuthToken, secrets.apiToken]
+  return [secrets.zaiAuthToken, secrets.apiToken, secrets.notifyWebhookKey]
 }
 
 export function createSecretsRedactor(secrets: ReadonlyArray<string | null>): LogRedactor {

@@ -43,14 +43,14 @@ async function modeOf(path: string): Promise<number> {
 
 describe('defaults', () => {
   test('missing files fall back to documented defaults', async () => {
-    expect(await readSecrets()).toEqual({ zaiAuthToken: null, zaiBaseUrl: DEFAULT_ZAI_BASE_URL, apiToken: null })
+    expect(await readSecrets()).toEqual({ zaiAuthToken: null, zaiBaseUrl: DEFAULT_ZAI_BASE_URL, apiToken: null, notifyWebhookUrl: null, notifyWebhookKey: null })
     expect(await readConfig()).toEqual({ roles: DEFAULT_ROLES, fallback: DEFAULT_FALLBACK, autoReview: false, chatHome: null, flowApproval: true, marketplaces: [], queueParallel: 1 })
   })
 
   test('corrupt json falls back instead of throwing', async () => {
     await ensureConfigDir()
     await Bun.write(configPath(SECRETS_FILE), '{ not json')
-    expect(await readSecrets()).toEqual({ zaiAuthToken: null, zaiBaseUrl: DEFAULT_ZAI_BASE_URL, apiToken: null })
+    expect(await readSecrets()).toEqual({ zaiAuthToken: null, zaiBaseUrl: DEFAULT_ZAI_BASE_URL, apiToken: null, notifyWebhookUrl: null, notifyWebhookKey: null })
   })
 })
 
@@ -61,6 +61,8 @@ describe('round trip', () => {
       zaiAuthToken: TOKEN,
       zaiBaseUrl: 'https://example.test/anthropic',
       apiToken: null,
+      notifyWebhookUrl: null,
+      notifyWebhookKey: null,
     })
   })
 
@@ -190,19 +192,32 @@ describe('publicView', () => {
       zaiBaseUrl: DEFAULT_ZAI_BASE_URL,
       zaiAuthTokenConfigured: true,
       apiTokenConfigured: false,
+      notifyWebhookUrl: null,
+      notifyWebhookKeyConfigured: false,
     })
   })
 
+  test('shows the webhook url but never the webhook key', () => {
+    const view = publicView({ zaiAuthToken: null, zaiBaseUrl: DEFAULT_ZAI_BASE_URL, apiToken: null, notifyWebhookUrl: 'https://bot.example/hook', notifyWebhookKey: 'whk-secret' })
+    expect(view.notifyWebhookUrl).toBe('https://bot.example/hook')
+    expect(view.notifyWebhookKeyConfigured).toBe(true)
+    expect(JSON.stringify(view)).not.toContain('whk-secret')
+  })
+
   test('reports unconfigured for missing or empty token', () => {
-    expect(publicView({ zaiAuthToken: null, zaiBaseUrl: DEFAULT_ZAI_BASE_URL, apiToken: null })).toEqual({
+    expect(publicView({ zaiAuthToken: null, zaiBaseUrl: DEFAULT_ZAI_BASE_URL, apiToken: null, notifyWebhookUrl: null, notifyWebhookKey: null })).toEqual({
       zaiBaseUrl: DEFAULT_ZAI_BASE_URL,
       zaiAuthTokenConfigured: false,
       apiTokenConfigured: false,
+      notifyWebhookUrl: null,
+      notifyWebhookKeyConfigured: false,
     })
-    expect(publicView({ zaiAuthToken: '', zaiBaseUrl: DEFAULT_ZAI_BASE_URL, apiToken: '' })).toEqual({
+    expect(publicView({ zaiAuthToken: '', zaiBaseUrl: DEFAULT_ZAI_BASE_URL, apiToken: '', notifyWebhookUrl: '', notifyWebhookKey: '' })).toEqual({
       zaiBaseUrl: DEFAULT_ZAI_BASE_URL,
       zaiAuthTokenConfigured: false,
       apiTokenConfigured: false,
+      notifyWebhookUrl: null,
+      notifyWebhookKeyConfigured: false,
     })
   })
 

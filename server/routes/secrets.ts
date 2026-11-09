@@ -13,6 +13,8 @@ import {
 export type SecretsPatch = {
   zaiAuthToken?: unknown
   zaiBaseUrl?: unknown
+  notifyWebhookUrl?: unknown
+  notifyWebhookKey?: unknown
 }
 
 export type SecretsResponse = PublicSecretsView
@@ -32,6 +34,22 @@ function validUrl(value: string): boolean {
   }
 }
 
+function validHttpsUrl(value: string): boolean {
+  try {
+    return new URL(value).protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+type Field = { present: boolean; value: string | null }
+
+function field(patch: SecretsPatch, key: 'notifyWebhookUrl' | 'notifyWebhookKey'): Field {
+  if (patch[key] === null) return { present: true, value: null }
+  const value = cleanString(patch[key])
+  return { present: value !== null, value }
+}
+
 export async function currentView(): Promise<SecretsResponse> {
   const [secrets, apiToken] = await Promise.all([readSecrets(), readApiToken()])
   return publicView({ ...secrets, apiToken })
@@ -43,14 +61,23 @@ export async function applyPatch(
   const token = cleanString(patch.zaiAuthToken)
   const baseUrl = cleanString(patch.zaiBaseUrl)
 
-  if (token === null && baseUrl === null) {
+  const notifyUrl = field(patch, 'notifyWebhookUrl')
+  const notifyKey = field(patch, 'notifyWebhookKey')
+
+  if (token === null && baseUrl === null && !notifyUrl.present && !notifyKey.present) {
     return { ok: false, status: 400, error: 'nothing to update' }
   }
   if (baseUrl !== null && !validUrl(baseUrl)) {
     return { ok: false, status: 400, error: 'zaiBaseUrl must be an http(s) url' }
   }
 
+  if (notifyUrl.value !== null && !validHttpsUrl(notifyUrl.value)) {
+    return { ok: false, status: 400, error: 'notifyWebhookUrl must be an https url' }
+  }
+
   await writeSecrets({
+    ...(notifyUrl.present ? { notifyWebhookUrl: notifyUrl.value } : {}),
+    ...(notifyKey.present ? { notifyWebhookKey: notifyKey.value } : {}),
     ...(token === null ? {} : { zaiAuthToken: token }),
     ...(baseUrl === null ? {} : { zaiBaseUrl: baseUrl }),
   })
