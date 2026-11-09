@@ -9,7 +9,7 @@ import { modelsCache } from './models'
 import { composeWorkflowPrompt, identifier, type WorkflowStore } from '../workflows'
 import type { WorkflowBuilder } from '../workflow-builder'
 import { RunActionError, type ApprovalContext, type WorkflowRun, type WorkflowRunner } from '../workflow-runner'
-import { readConfig } from '../secrets'
+import { type AppConfig, readConfig } from '../secrets'
 import { eventStreamResponse, type RunEvents } from '../run-events'
 import { scopeSnapshot, versionView } from '../run-view'
 import type { JobRecord } from '../jobs'
@@ -36,6 +36,10 @@ async function workflowExists(store: WorkflowStore, id: string): Promise<boolean
 }
 
 const PROBE_TIMEOUT_MS = 35_000
+
+function rolesUsing(id: string, config: AppConfig): string[] {
+  return [...Object.entries(config.roles).filter(([, role]) => role.engine === id).map(([name]) => name), ...(config.fallback?.engine === id ? ['fallback'] : [])]
+}
 
 async function saveConnection(connections: ReturnType<typeof createConnectionStore>, discovery: ModelDiscovery, body: unknown): Promise<AgentConnection> {
   const parsed = connectionSchema.safeParse(body)
@@ -93,7 +97,14 @@ export function studioRoutes(store: WorkflowStore, runner: WorkflowRunner, build
       return { builtins: BUILTIN_AGENTS, connections: saved, presets: CONNECTION_PRESETS, models, roles: (await readConfig()).roles, discovery: Object.fromEntries(discovered) }
     })
     .post('/api/studio/connections', async ({ body }) => { const saved = await saveConnection(connections, discovery, body); modelsCache.invalidate(); return saved })
-    .delete('/api/studio/connections/:id', async ({ params }) => { await connections.remove(params.id); await discovery.forget(params.id); modelsCache.invalidate(); return { ok: true } })
+    .delete('/api/studio/connections/:id', async ({ params, set }) => {
+      const users = BUILTIN_AGENTS.includes(params.id as typeof BUILTIN_AGENTS[number]) ? [] : rolesUsing(params.id, await readConfig())
+      if (users.length) { set.status = 409; return { error: `Connection "${params.id}" is in use by: ${users.join(', ')}. Give those to another AI first (shiki roles set <role> <ai>).` } }
+      await connections.remove(params.id)
+      await discovery.forget(params.id)
+      modelsCache.invalidate()
+      return { ok: true }
+    })
     .post('/api/studio/connections/:id/models/refresh', async ({ params }) => {
       const connection = await connections.get(params.id)
       if (connection.adapter === 'cli') throw new Error("This connection can't report its models; list them in its settings.")

@@ -556,7 +556,7 @@ at all (never returns anything secret).
 | POST | `/api/studio/preview` | `{id, revision, nodeId, request}` | `{prompt}` | no |
 | GET | `/api/studio/connections` | — | `{builtins, connections, presets, models, roles}` | no |
 | POST | `/api/studio/connections` | `AgentConnection` | saved connection | no |
-| DELETE | `/api/studio/connections/:id` | — | `{ok:true}` | no |
+| DELETE | `/api/studio/connections/:id` | — | `{ok:true}`, or `409` while a role or the fallback uses it | no |
 | POST | `/api/studio/connections/:id/probe` | — | `skd_capabilities` event or `400` | no |
 | GET | `/api/studio/runs` | — | `{runs: summary[]}` | yes |
 | POST | `/api/studio/runs` | `{terminalId?, workflowId?, revision?, cwd, request, label, chat?, chatTurn?, engine?, model?}` | `WorkflowRun` | yes |

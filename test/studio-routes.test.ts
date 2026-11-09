@@ -105,6 +105,21 @@ test('a saved connection can be removed while built-ins stay', async () => {
   expect((await remove('/connections/qwen', 'http://rebind.example')).status).toBe(403)
 })
 
+test('a connection that a role or the fallback uses cannot be removed', async () => {
+  const { writeConfig } = await import('../server/secrets')
+  expect((await request('/connections', { id: 'grok', name: 'Grok', adapter: 'acp', command: 'grok', args: ['agent', 'stdio'], family: 'grok' })).status).toBe(200)
+  await writeConfig({ roles: { plan: { engine: 'claude', model: null }, execute: { engine: 'claude', model: null }, review: { engine: 'grok', model: 'grok-4.6' }, tester: { engine: 'grok', model: null } }, fallback: { engine: 'grok', model: null } })
+  const refused = await remove('/connections/grok')
+  expect(refused.status).toBe(409)
+  const { error } = await refused.json()
+  expect(error).toStartWith('Connection "grok" is in use by: ')
+  expect(error).toEndWith('fallback. Give those to another AI first (shiki roles set <role> <ai>).')
+  for (const role of ['review', 'tester']) expect(error).toContain(role)
+  expect((await (await request('/connections')).json()).connections.map((connection: { id: string }) => connection.id)).toEqual(['grok'])
+  await writeConfig({ roles: { plan: { engine: 'claude', model: null }, execute: { engine: 'claude', model: null }, review: { engine: 'codex', model: null } }, fallback: null })
+  expect((await remove('/connections/grok')).status).toBe(200)
+})
+
 test('starting a run for a chat that does not exist is refused', async () => {
   const response = await request('/runs', { cwd: dir, request: 'Ship it', label: 'ship', chat: 'no-such-chat', chatTurn: 'no-such-turn', engine: 'claude' })
   expect(response.status).toBe(400)
