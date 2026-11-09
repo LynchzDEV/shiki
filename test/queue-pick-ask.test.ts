@@ -493,3 +493,42 @@ test('reread falls back to a minute before the ask when it has no cursor, and re
   expect(await refusalOf(h.engine.reread(idle.id))).toEqual([409, 'It is not waiting on a ClickUp pick'])
   expect(await refusalOf(h.engine.reread('nope'))).toEqual([404, 'No queue item nope'])
 })
+
+const ownerCases: Array<[string, string | null, { mention: string; ownerName: string }]> = [
+  ['a user the card does not know', '12', { mention: '12', ownerName: '' }],
+  ['the card creator, by id', '11', { mention: '11', ownerName: 'Kan' }],
+  ['nobody set: the usual card owner', null, { mention: '11', ownerName: 'Kan' }],
+]
+for (const [name, to, expected] of ownerCases) {
+  test(`pickAskTo ${name}: tagged, assigned and saved as the owner`, async () => {
+    const h = await parked({ deps: { pickAskTo: async () => to } })
+    expect(h.posted[0]).toMatchObject({ kind: 'ask', mention: expected.mention, assignee: expected.mention })
+    expect(h.store.get(h.id)!.pick!.ask).toMatchObject({ ownerId: expected.mention, ownerName: expected.ownerName })
+  })
+}
+
+test('with pickAskTo set, that user\'s reply decides the pick and the card owner\'s does not', async () => {
+  const h = await parked({ deps: { pickAskTo: async () => '12' } })
+  h.replies.set('1', async () => h.from(KAN, 'c9', 'A'))
+  await h.engine.checkReplies()
+  expect(h.store.get(h.id)!.state).toBe('waiting-pick')
+  h.replies.set('1', async () => h.from(MAC, 'c10', 'แบบ B'))
+  await h.engine.checkReplies()
+  expect(await pickFile(h.store.get(h.id)!)).toContain('Option: B\n')
+})
+
+test('extra none phrases from the settings turn a reply into none with the rest as feedback', async () => {
+  const h = await parked({ deps: { pickNonePhrases: async () => ['ขอใหม่ทั้งหมด'] } })
+  h.replies.set('1', async () => h.from(KAN, 'c9', 'ขอใหม่ทั้งหมด ทับเว็บเลย'))
+  await h.engine.checkReplies()
+  const rebuilt = h.store.get(h.id)!
+  expect(await pickFile(rebuilt)).toContain('Option: none\n')
+  expect(await pickFile(rebuilt)).toContain('> ทับเว็บเลย')
+})
+
+test('the real stuck reply picks none with its feedback', async () => {
+  const h = await parked()
+  h.replies.set('1', async () => h.from(KAN, 'c9', 'ไม่เอาซักช้อยส์เลย มันควรแสดงผลทับเว็บไปเลย ไม่ใช่ดันออกมา'))
+  await h.engine.checkReplies()
+  expect(await pickFile(h.store.get(h.id)!)).toContain('> มันควรแสดงผลทับเว็บไปเลย ไม่ใช่ดันออกมา')
+})

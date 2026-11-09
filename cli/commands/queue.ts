@@ -75,6 +75,38 @@ function sayText(value: unknown): string {
   return open ? 'Said in the ClickUp thread.\n' : 'Said on the ClickUp card.\n'
 }
 
+const MAX_NONE_PHRASES = 30
+const MAX_NONE_PHRASE_LENGTH = 60
+const MIN_NONE_PHRASE_LENGTH = 3
+
+const askToText = (value: unknown): string => {
+  const id = field(value, 'pickAskTo')
+  return typeof id === 'string' ? `Design picks are asked to ClickUp user ${id}.\n` : "Design picks are asked to the card's owner (default).\n"
+}
+
+const nonePhrasesText = (value: unknown): string => {
+  const phrases = field(value, 'pickNonePhrases')
+  return Array.isArray(phrases) && phrases.length > 0 ? `Extra "none of these" phrases: ${phrases.map(String).join(', ')}.\n` : 'No extra "none of these" phrases.\n'
+}
+
+async function askTo(ctx: Context): Promise<void> {
+  const id = ctx.args.userId
+  const clear = flag(ctx, 'clear')
+  if (id !== undefined && clear) throw new UsageError('give a user id or --clear, not both')
+  if (id === undefined && !clear) return emit(ctx, await ctx.client.get('/api/queue'), askToText)
+  if (id !== undefined && !/^\d{1,30}$/.test(id)) throw new UsageError('userId must be a ClickUp user id of 1 to 30 digits')
+  await putSettings(ctx, { pickAskTo: id ?? null }, askToText)
+}
+
+async function nonePhrases(ctx: Context): Promise<void> {
+  const clear = flag(ctx, 'clear')
+  if (ctx.rest.length > 0 && clear) throw new UsageError('give phrases or --clear, not both')
+  if (ctx.rest.length === 0 && !clear) return emit(ctx, await ctx.client.get('/api/queue'), nonePhrasesText)
+  const phrases = ctx.rest.map(phrase => phrase.trim())
+  if (phrases.length > MAX_NONE_PHRASES || phrases.some(phrase => phrase.length < MIN_NONE_PHRASE_LENGTH || phrase.length > MAX_NONE_PHRASE_LENGTH)) throw new UsageError(`give at most ${MAX_NONE_PHRASES} phrases of ${MIN_NONE_PHRASE_LENGTH} to ${MAX_NONE_PHRASE_LENGTH} characters`)
+  await putSettings(ctx, { pickNonePhrases: phrases }, nonePhrasesText)
+}
+
 const putSettings = async (ctx: Context, body: Json, text: (value: unknown) => string): Promise<void> => emit(ctx, await ctx.client.put('/api/queue/settings', body), text)
 
 const parallelText = (value: unknown): string => {
@@ -163,6 +195,20 @@ export const queueCommands: Command[] = [
     args: ['days'],
     summary: 'Set how many days published mockups stay up, 1 to 90 (default 14)',
     run: async (ctx) => putSettings(ctx, { publishKeepDays: wholeArg(ctx, 'days', 90) }, value => `Published mockups come down after ${cell(field(value, 'publishKeepDays'))} days, or when the card lands or is removed.\n`),
+  },
+  {
+    path: ['queue', 'ask-to'],
+    args: ['userId?'],
+    options: { clear: { type: 'boolean', description: 'ask the card\'s owner again (the default)' } },
+    summary: 'Ask design picks to one ClickUp user instead of the card\'s owner; with no argument, show who',
+    run: askTo,
+  },
+  {
+    path: ['queue', 'none-phrases'],
+    args: ['phrase...'],
+    options: { clear: { type: 'boolean', description: 'remove all extra phrases' } },
+    summary: 'Replace the extra phrases that mean "none of these" in a ClickUp reply; with no argument, show them',
+    run: nonePhrases,
   },
   {
     path: ['queue', 'unpublish'],

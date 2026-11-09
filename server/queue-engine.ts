@@ -41,6 +41,8 @@ export type QueueEngineDeps = {
   notify?(item: QueueItem, event: PickReplyEvent): void
   unpublish?(item: QueueItem): Promise<void>
   publishKeepDays?(): Promise<number>
+  pickAskTo?(): Promise<string | null>
+  pickNonePhrases?(): Promise<string[]>
   sweepPublished?(): Promise<void>
   parallel?(): Promise<number>
   now?: () => number

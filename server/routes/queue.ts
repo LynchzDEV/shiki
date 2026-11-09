@@ -11,7 +11,7 @@ import { queueStep, type QueueStep, type QueueStepRun } from '../queue-step'
 import { listFolderRepos, resolveQueueFolder } from '../queue-folder'
 import { queueTree, type QueueTree } from '../queue-tree'
 import { eventStreamResponse, type RunEvents } from '../run-events'
-import { MAX_PUBLISH_KEEP_DAYS, MAX_QUEUE_PARALLEL, MAX_REPLY_POLL_MINUTES, readConfig, writeConfig, type AppConfig } from '../secrets'
+import { MAX_NONE_PHRASE_LENGTH, MAX_NONE_PHRASES, MIN_NONE_PHRASE_LENGTH, MAX_PUBLISH_KEEP_DAYS, MAX_QUEUE_PARALLEL, MAX_REPLY_POLL_MINUTES, MAX_USER_ID_LENGTH, readConfig, writeConfig, type AppConfig } from '../secrets'
 
 type Status = { status?: number | string }
 type QueueEngineRoutes = Pick<QueueEngine, 'add' | 'requeue' | 'pick' | 'unpublish' | 'checkReplies' | 'answer' | 'say' | 'reread' | 'remove' | 'stop' | 'move' | 'checkedAt' | 'subscribeChecks' | 'startStage' | 'refreshPreflight' | 'retryStage' | 'markDone' | 'landLog' | 'report'> & Partial<Pick<QueueEngine, 'preparing' | 'paused' | 'kick'>>
@@ -35,13 +35,17 @@ const answerSchema = z.object({ text: z.string().trim().min(1).max(8000) })
 const saySchema = z.object({ text: z.string().trim().min(1).max(4000) })
 const moveSchema = z.object({ to: z.number().int().min(0) })
 const whole = (max: number, rule: string) => z.number({ error: rule }).int({ error: rule }).min(1, { error: rule }).max(max, { error: rule }).optional()
+const USER_ID_RULE = `pickAskTo must be a ClickUp user id of 1 to ${MAX_USER_ID_LENGTH} digits, or null`
+const PHRASES_RULE = `pickNonePhrases must be at most ${MAX_NONE_PHRASES} phrases of ${MIN_NONE_PHRASE_LENGTH} to ${MAX_NONE_PHRASE_LENGTH} characters`
 const settingsSchema = z.object({
   parallel: whole(MAX_QUEUE_PARALLEL, `parallel must be a whole number from 1 to ${MAX_QUEUE_PARALLEL}`),
   replyPollMinutes: whole(MAX_REPLY_POLL_MINUTES, `replyPollMinutes must be a whole number from 1 to ${MAX_REPLY_POLL_MINUTES}`),
   publishKeepDays: whole(MAX_PUBLISH_KEEP_DAYS, `publishKeepDays must be a whole number from 1 to ${MAX_PUBLISH_KEEP_DAYS}`),
-}).refine(body => Object.values(body).some(value => value !== undefined), { error: 'Send parallel, replyPollMinutes or publishKeepDays' })
-export type QueueSettings = Pick<AppConfig, 'replyPollMinutes' | 'publishKeepDays'> & { parallel: number }
-const settingsOf = (config: AppConfig): QueueSettings => ({ parallel: config.queueParallel, replyPollMinutes: config.replyPollMinutes, publishKeepDays: config.publishKeepDays })
+  pickAskTo: z.string({ error: USER_ID_RULE }).regex(new RegExp(`^\\d{1,${MAX_USER_ID_LENGTH}}$`), { error: USER_ID_RULE }).nullable().optional(),
+  pickNonePhrases: z.array(z.string({ error: PHRASES_RULE }).trim().min(MIN_NONE_PHRASE_LENGTH, { error: PHRASES_RULE }).max(MAX_NONE_PHRASE_LENGTH, { error: PHRASES_RULE }), { error: PHRASES_RULE }).max(MAX_NONE_PHRASES, { error: PHRASES_RULE }).optional(),
+}).refine(body => Object.values(body).some(value => value !== undefined), { error: 'Send parallel, replyPollMinutes, publishKeepDays, pickAskTo or pickNonePhrases' })
+export type QueueSettings = Pick<AppConfig, 'replyPollMinutes' | 'publishKeepDays' | 'pickAskTo' | 'pickNonePhrases'> & { parallel: number }
+const settingsOf = (config: AppConfig): QueueSettings => ({ parallel: config.queueParallel, replyPollMinutes: config.replyPollMinutes, publishKeepDays: config.publishKeepDays, pickAskTo: config.pickAskTo, pickNonePhrases: config.pickNonePhrases })
 const NO_ITEM = 'No such queue item'
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
@@ -123,7 +127,7 @@ async function requireLocalExceptMockupAssets(context: GuardContext): Promise<vo
 }
 
 export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: () => Promise<QueueTree> = () => queueTree(store.list()), runs: QueueRunLookup = NO_RUNS, onSettings: (settings: QueueSettings) => void = () => {}) {
-  let settings: QueueSettings = { parallel: 1, replyPollMinutes: 2, publishKeepDays: 14 }
+  let settings: QueueSettings = { parallel: 1, replyPollMinutes: 2, publishKeepDays: 14, pickAskTo: null, pickNonePhrases: [] }
   const settingsListeners = new Set<() => void>()
   const readSettings = async (): Promise<QueueSettings> => { settings = settingsOf(await readConfig()); return settings }
   void readSettings().catch(() => {})

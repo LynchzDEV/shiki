@@ -54,6 +54,8 @@ export type AppConfig = {
   queueParallel: number
   replyPollMinutes: number
   publishKeepDays: number
+  pickAskTo: string | null
+  pickNonePhrases: string[]
 }
 
 export type PublicSecretsView = {
@@ -204,8 +206,16 @@ export const MAX_QUEUE_PARALLEL = 4
 
 export const MAX_REPLY_POLL_MINUTES = 15
 export const MAX_PUBLISH_KEEP_DAYS = 90
+export const MAX_NONE_PHRASES = 30
+export const MAX_NONE_PHRASE_LENGTH = 60
+export const MIN_NONE_PHRASE_LENGTH = 3
+export const MAX_USER_ID_LENGTH = 30
 
 const wholeIn = (raw: unknown, max: number, fallback: number): number => (Number.isInteger(raw) ? Math.min(Math.max(raw as number, 1), max) : fallback)
+const readUserId = (raw: unknown): string | null => (typeof raw === 'string' && new RegExp(`^\\d{1,${MAX_USER_ID_LENGTH}}$`).test(raw) ? raw : null)
+const readNonePhrases = (raw: unknown): string[] => (Array.isArray(raw)
+  ? raw.filter((entry): entry is string => typeof entry === 'string').map(entry => entry.trim()).filter(entry => entry.length >= MIN_NONE_PHRASE_LENGTH && entry.length <= MAX_NONE_PHRASE_LENGTH).slice(0, MAX_NONE_PHRASES)
+  : [])
 const readQueueParallel = (raw: unknown): number => wholeIn(raw, MAX_QUEUE_PARALLEL, 1)
 
 export async function readConfig(): Promise<AppConfig> {
@@ -220,6 +230,8 @@ export async function readConfig(): Promise<AppConfig> {
     queueParallel: readQueueParallel(raw.queueParallel),
     replyPollMinutes: wholeIn(raw.replyPollMinutes, MAX_REPLY_POLL_MINUTES, 2),
     publishKeepDays: wholeIn(raw.publishKeepDays, MAX_PUBLISH_KEEP_DAYS, 14),
+    pickAskTo: readUserId(raw.pickAskTo),
+    pickNonePhrases: readNonePhrases(raw.pickNonePhrases),
   }
 }
 

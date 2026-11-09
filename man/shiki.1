@@ -613,6 +613,22 @@ Take published mockups down after
 days, 1 to 90 (default 14). They also come down when the card lands or is
 removed.
 .TP
+.BI "shiki queue ask\-to " "\fR[\fIuserId\fR | \fB\-\-clear\fR]"
+Ask design picks to the ClickUp user with this id (digits, up to 30) instead
+of the card's owner: they are tagged and assigned, and their replies decide
+the pick. With
+.B \-\-clear
+the card's owner is asked again (the default); with no argument it prints the
+current setting. It applies to asks posted from now on.
+.TP
+.BI "shiki queue none\-phrases " "\fR[\fIphrase\fR...] [\fB\-\-clear\fR]"
+Replace the extra phrases that read as "none of these" in a ClickUp pick reply
+(up to 30 phrases of 3 to 60 characters). They are matched like the built-in
+ones: case-insensitive, on the first non-empty line, and the rest of the reply
+becomes the feedback. With
+.B \-\-clear
+the list is emptied; with no argument it prints the list.
+.TP
 .BI "shiki queue unpublish " id
 Take down an item's published mockups now.
 .TP

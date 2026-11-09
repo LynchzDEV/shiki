@@ -27,6 +27,34 @@ const table: Array<[string, ReturnType<typeof parsePickReply>]> = [
   ['ไม่ชอบเลย อยากได้แบบเดิม', { kind: 'none', feedback: 'อยากได้แบบเดิม' }],
 ]
 
+const none = (feedback: string): ReturnType<typeof parsePickReply> => ({ kind: 'none', feedback })
+table.push(
+  ['ไม่เอาสักแบบ', none('ไม่เอาสักแบบ')],
+  ['ไม่เอาซักแบบ ขอใหม่', none('ขอใหม่')],
+  ['ไม่เอาซักช้อยส์ ขอใหม่', none('ขอใหม่')],
+  ['ไม่เอาสักช้อยส์\nขอใหม่', none('ขอใหม่')],
+  ['ไม่เอาเลย ขอใหม่', none('ขอใหม่')],
+  ['ไม่ชอบสักแบบ ขอใหม่', none('ขอใหม่')],
+  ['ไม่เอาซักช้อยส์เลย มันควรแสดงผลทับเว็บไปเลย ไม่ใช่ดันออกมา', none('มันควรแสดงผลทับเว็บไปเลย ไม่ใช่ดันออกมา')],
+  ['Neither, thanks', none('thanks')],
+  ['NONE', none('NONE')],
+  ['no', none('no')],
+  ['No.', none('No.')],
+  ['  No!  \nmake it an overlay', none('make it an overlay')],
+  ['no, A is fine', { kind: 'unclear' }],
+  ['know', { kind: 'unclear' }],
+  ['not sure, no idea', { kind: 'unclear' }],
+  ['A\nno', { kind: 'pick', option: 'A', note: 'no' }],
+  ['neithers', { kind: 'unclear' }],
+  ['A ครับ ส่วน B ไม่เอาเลย', { kind: 'unclear' }],
+  ['A, neither B nor C', { kind: 'unclear' }],
+  ['แบบ A ครับ B ไม่ชอบเลย', { kind: 'unclear' }],
+  ['ไม่เอาเลย์เอาต์นี้ครับ', { kind: 'unclear' }],
+  ['none\nmake it like none of the old ones', none('make it like none of the old ones')],
+  ['ไม่เอาซักช้อยส์เลย ขอ none ใหม่', none('ขอ none ใหม่')],
+  ['I think none', { kind: 'unclear' }],
+)
+
 for (const [reply, expected] of table) {
   test(`${JSON.stringify(reply)} reads as ${expected.kind}`, () => {
     expect(parsePickReply(reply, OPTIONS)).toEqual(expected)
@@ -56,12 +84,24 @@ test('two letters, extra words, or no letter at all are unclear', () => {
 
 test('none on the first line wins and keeps the rest as feedback, or the whole text when nothing is left', () => {
   expect(parsePickReply('None, make it blue', OPTIONS)).toEqual({ kind: 'none', feedback: 'make it blue' })
-  expect(parsePickReply('ไม่เอาสักแบบ ทั้ง A และ B', OPTIONS)).toEqual({ kind: 'none', feedback: 'ทั้ง A และ B' })
+  expect(parsePickReply('ไม่เอาสักแบบ ทั้ง A และ B', OPTIONS)).toEqual({ kind: 'unclear' })
+  expect(parsePickReply('ไม่เอาสักแบบ ทั้งหมดเลย', OPTIONS)).toEqual({ kind: 'none', feedback: 'ทั้งหมดเลย' })
   expect(parsePickReply('ไม่ชอบเลย\nอยากได้ปุ่มใหญ่', OPTIONS)).toEqual({ kind: 'none', feedback: 'อยากได้ปุ่มใหญ่' })
   expect(parsePickReply('ไม่ชอบเลย', OPTIONS)).toEqual({ kind: 'none', feedback: 'ไม่ชอบเลย' })
   expect(parsePickReply('none', OPTIONS)).toEqual({ kind: 'none', feedback: 'none' })
   expect(parsePickReply('nonetheless C', OPTIONS)).toEqual({ kind: 'unclear' })
   expect(parsePickReply('C\nnone of the others', OPTIONS)).toEqual({ kind: 'pick', option: 'C', note: 'none of the others' })
+})
+
+test('extra phrases from the third argument match like the built-ins: escaped, case-insensitive, first line only', () => {
+  const extra = ['ขอใหม่ทั้งหมด', 'Start Over?']
+  expect(parsePickReply('ขอใหม่ทั้งหมด ทับเว็บเลย', OPTIONS, extra)).toEqual({ kind: 'none', feedback: 'ทับเว็บเลย' })
+  expect(parsePickReply('start over? overlay please', OPTIONS, extra)).toEqual({ kind: 'none', feedback: 'overlay please' })
+  expect(parsePickReply('start over now', OPTIONS, extra)).toEqual({ kind: 'unclear' })
+  expect(parsePickReply('C\nขอใหม่ทั้งหมด', OPTIONS, extra)).toEqual({ kind: 'pick', option: 'C', note: 'ขอใหม่ทั้งหมด' })
+  expect(parsePickReply('ขอใหม่ทั้งหมด', OPTIONS)).toEqual({ kind: 'unclear' })
+  expect(parsePickReply('x.y', OPTIONS, ['x.y'])).toEqual({ kind: 'none', feedback: 'x.y' })
+  expect(parsePickReply('xzy', OPTIONS, ['x.y'])).toEqual({ kind: 'unclear' })
 })
 
 test('longer option ids match whole and come back in their own case', () => {

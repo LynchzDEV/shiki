@@ -56,7 +56,7 @@ function toParseOptions(specs: Record<string, OptionSpec>): ParseOptions {
 const ALL_OPTIONS: Record<string, OptionSpec> = Object.assign({}, GLOBAL_OPTIONS, ...COMMANDS.map((command) => command.options ?? {}))
 
 function usageLine(command: Command): string {
-  const args = (command.args ?? []).map((name) => `<${name}>`)
+  const args = (command.args ?? []).map((name) => (name.endsWith('...') ? `[${name}]` : name.endsWith('?') ? `[${name.slice(0, -1)}]` : `<${name}>`))
   const options = Object.keys(command.options ?? {}).length > 0 ? ['[options]'] : []
   return ['shiki', ...command.path, ...args, ...options].join(' ')
 }
@@ -142,11 +142,15 @@ function preParse(argv: string[]): { positionals: string[]; values: OptionValues
   return { positionals, values: values as OptionValues }
 }
 
+const argName = (name: string): string => name.replace(/(\?|\.\.\.)$/, '')
+
 function bindArgs(command: Command, rest: readonly string[]): Record<string, string | undefined> {
   const names = command.args ?? []
-  if (rest.length > names.length) throw new UsageError(`unexpected argument: ${rest[names.length]}`, command.path[0])
-  if (rest.length < names.length) throw new UsageError(`missing <${names[rest.length]}>`, command.path[0])
-  return Object.fromEntries(names.map((name, index) => [name, rest[index]]))
+  const variadic = names.at(-1)?.endsWith('...') === true
+  const required = names.filter((name) => !name.endsWith('?') && !name.endsWith('...'))
+  if (!variadic && rest.length > names.length) throw new UsageError(`unexpected argument: ${rest[names.length]}`, command.path[0])
+  if (rest.length < required.length) throw new UsageError(`missing <${required[rest.length]}>`, command.path[0])
+  return Object.fromEntries(names.map((name, index) => [argName(name), rest[index]]))
 }
 
 function showHelp(deps: MainDeps, text: string, requested: boolean): number {
@@ -193,6 +197,7 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
   const ctx: Context = {
     client,
     args,
+    rest: parsed.positionals.slice(command.path.length),
     values: parsed.values,
     json: parsed.values.json === true,
     cwd: deps.cwd ?? process.cwd(),

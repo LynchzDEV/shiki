@@ -241,9 +241,9 @@ test('GET says when replies were last checked, or null before the first check', 
   const items = store()
   let checkedAt: number | null = null
   const app = new Elysia().use(queueRoutes(items, engine(items, { checkedAt: () => checkedAt })))
-  expect(await (await call(app, '/api/queue')).json()).toEqual({ items: [], checkedAt: null, paused: null, parallel: 1, replyPollMinutes: 2, publishKeepDays: 14 })
+  expect(await (await call(app, '/api/queue')).json()).toEqual({ items: [], checkedAt: null, paused: null, parallel: 1, replyPollMinutes: 2, publishKeepDays: 14, pickAskTo: null, pickNonePhrases: [] })
   checkedAt = 1_700_000_000_000
-  expect(await (await call(app, '/api/queue')).json()).toEqual({ items: [], checkedAt: 1_700_000_000_000, paused: null, parallel: 1, replyPollMinutes: 2, publishKeepDays: 14 })
+  expect(await (await call(app, '/api/queue')).json()).toEqual({ items: [], checkedAt: 1_700_000_000_000, paused: null, parallel: 1, replyPollMinutes: 2, publishKeepDays: 14, pickAskTo: null, pickNonePhrases: [] })
 })
 
 test('GET says when the queue is paused on an unavailable AI', async () => {
@@ -265,10 +265,10 @@ test('the stream sends checkedAt and sends again when a check finishes with no i
   const response = await app.handle(new Request('http://127.0.0.1:7777/api/queue/stream', { headers: { host: '127.0.0.1:7777' }, signal: aborting.signal }))
   const reader = response.body!.getReader()
   const nextData = async (): Promise<unknown> => JSON.parse(new TextDecoder().decode((await reader.read()).value).replace(/^data: /, '').trim())
-  expect(await nextData()).toEqual({ items: [], checkedAt: null, paused: null, parallel: 1, replyPollMinutes: 2, publishKeepDays: 14 })
+  expect(await nextData()).toEqual({ items: [], checkedAt: null, paused: null, parallel: 1, replyPollMinutes: 2, publishKeepDays: 14, pickAskTo: null, pickNonePhrases: [] })
   checkedAt = 42
   for (const listener of listeners) listener()
-  expect(await nextData()).toEqual({ items: [], checkedAt: 42, paused: null, parallel: 1, replyPollMinutes: 2, publishKeepDays: 14 })
+  expect(await nextData()).toEqual({ items: [], checkedAt: 42, paused: null, parallel: 1, replyPollMinutes: 2, publishKeepDays: 14, pickAskTo: null, pickNonePhrases: [] })
   aborting.abort()
   await reader.cancel()
   expect(listeners.size).toBe(0)
@@ -559,7 +559,7 @@ test('PUT /api/queue/settings stores how many cards build at once, kicks the que
   expect((await (await call(app, '/api/queue')).json()).parallel).toBe(1)
   const saved = await call(app, '/api/queue/settings', { method: 'PUT', body: JSON.stringify({ parallel: 3 }) })
   expect(saved.status).toBe(200)
-  expect(await saved.json()).toEqual({ parallel: 3, replyPollMinutes: 2, publishKeepDays: 14 })
+  expect(await saved.json()).toEqual({ parallel: 3, replyPollMinutes: 2, publishKeepDays: 14, pickAskTo: null, pickNonePhrases: [] })
   expect(kicks).toBe(1)
   expect((await (await call(app, '/api/queue')).json()).parallel).toBe(3)
   const crossSite = await app.handle(new Request('http://127.0.0.1:7777/api/queue/settings', { method: 'PUT', body: JSON.stringify({ parallel: 2 }), headers: { host: '127.0.0.1:7777', 'content-type': 'application/json', 'sec-fetch-site': 'cross-site' } }))
@@ -586,8 +586,8 @@ test('PUT /api/queue/settings refuses bad values with the rule, and an empty bod
   const put = async (body: unknown) => { const response = await call(app, '/api/queue/settings', { method: 'PUT', body: JSON.stringify(body) }); return [response.status, (await response.json()).error] }
   for (const replyPollMinutes of [0, 16, 1.5]) expect(await put({ replyPollMinutes })).toEqual([400, 'replyPollMinutes must be a whole number from 1 to 15'])
   for (const publishKeepDays of [0, 91, '7']) expect(await put({ publishKeepDays })).toEqual([400, 'publishKeepDays must be a whole number from 1 to 90'])
-  expect(await put({ publishDomain: 'mockups.example.com' })).toEqual([400, 'Send parallel, replyPollMinutes or publishKeepDays'])
-  expect(await put({})).toEqual([400, 'Send parallel, replyPollMinutes or publishKeepDays'])
+  expect(await put({ publishDomain: 'mockups.example.com' })).toEqual([400, 'Send parallel, replyPollMinutes, publishKeepDays, pickAskTo or pickNonePhrases'])
+  expect(await put({})).toEqual([400, 'Send parallel, replyPollMinutes, publishKeepDays, pickAskTo or pickNonePhrases'])
 })
 
 test('POST /api/queue/:id/unpublish goes through the engine and maps its refusals', async () => {
@@ -656,4 +656,23 @@ test('POST reread returns the item and maps the engine refusals', async () => {
   expect(ok.status).toBe(200)
   expect((await ok.json()).item.id).toBe(a.id)
   expect((await post(app, '/api/queue/nope/reread')).status).toBe(404)
+})
+
+test('PUT /api/queue/settings stores pickAskTo and the none phrases, trims them, clears with null or [], and GET shows them', async () => {
+  const items = store()
+  const app = new Elysia().use(queueRoutes(items, engine(items)))
+  const put = (body: unknown) => call(app, '/api/queue/settings', { method: 'PUT', body: JSON.stringify(body) })
+  expect(await (await put({ pickAskTo: '101078127', pickNonePhrases: ['  ไม่เอาเลย  ', 'nope'] })).json()).toMatchObject({ pickAskTo: '101078127', pickNonePhrases: ['ไม่เอาเลย', 'nope'] })
+  expect(await (await call(app, '/api/queue')).json()).toMatchObject({ pickAskTo: '101078127', pickNonePhrases: ['ไม่เอาเลย', 'nope'] })
+  expect(await (await put({ pickAskTo: null })).json()).toMatchObject({ pickAskTo: null, pickNonePhrases: ['ไม่เอาเลย', 'nope'] })
+  expect(await (await put({ pickNonePhrases: [] })).json()).toMatchObject({ pickAskTo: null, pickNonePhrases: [] })
+})
+
+test('PUT /api/queue/settings refuses a pickAskTo that is not digits and none phrases that are too many, empty or too long', async () => {
+  const items = store()
+  const app = new Elysia().use(queueRoutes(items, engine(items)))
+  const put = async (body: unknown) => { const response = await call(app, '/api/queue/settings', { method: 'PUT', body: JSON.stringify(body) }); return [response.status, (await response.json()).error] }
+  for (const pickAskTo of ['12a', '', 101, '1'.repeat(31)]) expect(await put({ pickAskTo })).toEqual([400, 'pickAskTo must be a ClickUp user id of 1 to 30 digits, or null'])
+  const rule = 'pickNonePhrases must be at most 30 phrases of 3 to 60 characters'
+  for (const pickNonePhrases of [Array.from({ length: 31 }, (_, n) => `p${n}`), ['  '], ['ab'], ['x'.repeat(61)], 'nope', [5]]) expect(await put({ pickNonePhrases })).toEqual([400, rule])
 })

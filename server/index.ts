@@ -256,6 +256,8 @@ export async function createApp(): Promise<Elysia> {
     notify: (item, event) => notifyOn.pickReply(item, event),
     unpublish: async item => { if (item.published !== undefined) await unpublish(item.published.sub, publishDir()) },
     publishKeepDays: async () => (await readConfig()).publishKeepDays,
+    pickAskTo: async () => (await readConfig()).pickAskTo,
+    pickNonePhrases: async () => (await readConfig()).pickNonePhrases,
     sweepPublished: () => removeLeftovers(publishDir()),
     parallel: async () => (await readConfig()).queueParallel,
   })

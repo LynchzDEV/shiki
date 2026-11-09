@@ -15,6 +15,7 @@ export type OptionValues = Record<string, string | boolean | string[] | undefine
 export type Context = {
   client: Client
   args: Record<string, string | undefined>
+  rest: string[]
   values: OptionValues
   json: boolean
   cwd: string

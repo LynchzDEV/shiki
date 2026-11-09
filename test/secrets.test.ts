@@ -44,7 +44,7 @@ async function modeOf(path: string): Promise<number> {
 describe('defaults', () => {
   test('missing files fall back to documented defaults', async () => {
     expect(await readSecrets()).toEqual({ zaiAuthToken: null, zaiBaseUrl: DEFAULT_ZAI_BASE_URL, apiToken: null, notifyWebhookUrl: null, notifyWebhookKey: null })
-    expect(await readConfig()).toEqual({ roles: DEFAULT_ROLES, fallback: DEFAULT_FALLBACK, autoReview: false, chatHome: null, flowApproval: true, marketplaces: [], queueParallel: 1, replyPollMinutes: 2, publishKeepDays: 14 })
+    expect(await readConfig()).toEqual({ roles: DEFAULT_ROLES, fallback: DEFAULT_FALLBACK, autoReview: false, chatHome: null, flowApproval: true, marketplaces: [], queueParallel: 1, replyPollMinutes: 2, publishKeepDays: 14, pickAskTo: null, pickNonePhrases: [] })
   })
 
   test('corrupt json falls back instead of throwing', async () => {
@@ -158,6 +158,24 @@ describe('round trip', () => {
       await Bun.write(configPath(CONFIG_FILE), JSON.stringify({ publishKeepDays: raw }))
       expect((await readConfig()).publishKeepDays).toBe(read)
     }
+  })
+
+  test('pickAskTo reads only a digit id of up to 30 characters, otherwise null', async () => {
+    await ensureConfigDir()
+    for (const [raw, read] of [['101078127', '101078127'], ['', null], ['12a', null], [101, null], ['1'.repeat(31), null], ['1'.repeat(30), '1'.repeat(30)]] as const) {
+      await Bun.write(configPath(CONFIG_FILE), JSON.stringify({ pickAskTo: raw }))
+      expect((await readConfig()).pickAskTo).toBe(read)
+    }
+  })
+
+  test('pickNonePhrases reads trimmed phrases of 1..60 characters, at most 30, and drops the rest', async () => {
+    await ensureConfigDir()
+    await Bun.write(configPath(CONFIG_FILE), JSON.stringify({ pickNonePhrases: [' ไม่เอา ', '', 'ab', 7, 'x'.repeat(61), 'nope'] }))
+    expect((await readConfig()).pickNonePhrases).toEqual(['ไม่เอา', 'nope'])
+    await Bun.write(configPath(CONFIG_FILE), JSON.stringify({ pickNonePhrases: Array.from({ length: 40 }, (_, n) => `p${n}`) }))
+    expect((await readConfig()).pickNonePhrases).toHaveLength(30)
+    await Bun.write(configPath(CONFIG_FILE), JSON.stringify({ pickNonePhrases: 'nope' }))
+    expect((await readConfig()).pickNonePhrases).toEqual([])
   })
 
   test('publishDomain is not a config setting: an old value on disk is dropped on the next write', async () => {

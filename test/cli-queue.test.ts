@@ -138,6 +138,50 @@ describe('shiki queue', () => {
     }
   })
 
+  test('ask-to sets, shows and clears who design picks are asked', async () => {
+    const set = harness(() => Response.json({ parallel: 1, pickAskTo: '101078127', pickNonePhrases: [] }))
+    expect(await main(['queue', 'ask-to', '101078127'], set.deps)).toBe(0)
+    expect(set.calls).toEqual([{ method: 'PUT', path: '/api/queue/settings', body: { pickAskTo: '101078127' } }])
+    expect(set.out()).toBe('Design picks are asked to ClickUp user 101078127.\n')
+    const show = harness(() => Response.json({ items: [], pickAskTo: null }))
+    expect(await main(['queue', 'ask-to'], show.deps)).toBe(0)
+    expect(routesOf(show.calls)).toEqual(['GET /api/queue'])
+    expect(show.out()).toBe("Design picks are asked to the card's owner (default).\n")
+    const cleared = harness(() => Response.json({ pickAskTo: null }))
+    expect(await main(['queue', 'ask-to', '--clear'], cleared.deps)).toBe(0)
+    expect(cleared.calls[0]?.body).toEqual({ pickAskTo: null })
+    for (const argv of [['queue', 'ask-to', '12a'], ['queue', 'ask-to', '1'.repeat(31)], ['queue', 'ask-to', '1', '--clear']]) {
+      const rejected = harness()
+      expect(await main(argv, rejected.deps)).toBe(2)
+      expect(rejected.calls).toEqual([])
+    }
+  })
+
+  test('none-phrases replaces, shows and clears the extra phrases', async () => {
+    const set = harness(() => Response.json({ pickNonePhrases: ['abc', 'b cd'] }))
+    expect(await main(['queue', 'none-phrases', 'abc', ' b cd '], set.deps)).toBe(0)
+    expect(set.calls).toEqual([{ method: 'PUT', path: '/api/queue/settings', body: { pickNonePhrases: ['abc', 'b cd'] } }])
+    expect(set.out()).toBe('Extra "none of these" phrases: abc, b cd.\n')
+    const show = harness(() => Response.json({ items: [], pickNonePhrases: [] }))
+    expect(await main(['queue', 'none-phrases'], show.deps)).toBe(0)
+    expect(show.out()).toBe('No extra "none of these" phrases.\n')
+    const cleared = harness(() => Response.json({ pickNonePhrases: [] }))
+    expect(await main(['queue', 'none-phrases', '--clear'], cleared.deps)).toBe(0)
+    expect(cleared.calls[0]?.body).toEqual({ pickNonePhrases: [] })
+    for (const argv of [['queue', 'none-phrases', 'x'.repeat(61)], ['queue', 'none-phrases', '  '], ['queue', 'none-phrases', 'ab'], ['queue', 'none-phrases', 'abc', '--clear'], ['queue', 'none-phrases', ...Array.from({ length: 31 }, (_, n) => `p${n}`)]]) {
+      const rejected = harness()
+      expect(await main(argv, rejected.deps)).toBe(2)
+      expect(rejected.calls).toEqual([])
+    }
+  })
+
+  test('help shows the optional and repeated arguments in brackets', async () => {
+    const h = harness()
+    expect(await main(['queue', '--help'], h.deps)).toBe(0)
+    expect(h.out()).toContain('shiki queue ask-to [userId] [options]')
+    expect(h.out()).toContain('shiki queue none-phrases [phrase...] [options]')
+  })
+
   test('unpublish takes a card\'s published mockups down', async () => {
     const ok = harness(() => Response.json({ item: { id: 'a1' } }))
     expect(await main(['queue', 'unpublish', 'a1'], ok.deps)).toBe(0)

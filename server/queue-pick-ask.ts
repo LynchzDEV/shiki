@@ -1,5 +1,5 @@
 import type { PickChoice, QueueEngineDeps } from './queue-engine'
-import { parsePickReply, pickOwner, type PickReply } from './queue-pick-reply'
+import { parsePickReply, pickOwner, type CardPeople, type Person, type PickReply } from './queue-pick-reply'
 import { cleanPickSummary, NO_PICK } from './queue-prompts'
 import { message } from './queue-replies'
 import type { SourceReplies, SourceReply } from './queue-source'
@@ -74,6 +74,13 @@ export function pickAsker(deps: QueueEngineDeps, steps: PickAskerSteps): PickAsk
     return deps.pickIn !== undefined && await deps.pickIn(plugin) === 'clickup'
   }
 
+  async function askedOwner(people: CardPeople): Promise<Person> {
+    const id = await deps.pickAskTo?.() ?? null
+    if (id === null) return pickOwner(people)
+    const known = [people.creator, ...people.assignees, people.me].find(person => person?.id === id)
+    return { id, username: known?.username ?? '' }
+  }
+
   async function posted(item: QueueItem): Promise<{ ask: PickAsk; lastSeenId: string | null }> {
     let host: string | null = null
     try {
@@ -83,7 +90,7 @@ export function pickAsker(deps: QueueEngineDeps, steps: PickAskerSteps): PickAsk
       await store.update(item.id, { published })
       const source = deps.source(item.source)
       const people = await source.people({ id: item.externalId })
-      const owner = pickOwner(people)
+      const owner = await askedOwner(people)
       const draft: PickAsk = { ref: '', ownerId: owner.id, ownerName: owner.username, meId: people.me.id, host, postedAt: now() }
       await store.update(item.id, { pick: { ...item.pick!, ask: { ...draft, posting: true } } })
       const post = await source.post({ id: item.externalId, kind: 'ask', lines: askLines(item.pick!, host), mention: owner.id, assignee: owner.id })
@@ -131,9 +138,10 @@ export function pickAsker(deps: QueueEngineDeps, steps: PickAskerSteps): PickAsk
     const judged = (reply: SourceReply): boolean => reply.authorId !== '' && (reply.authorId === asked.ownerId || reply.authorId === asked.meId)
     const others = result.replies.filter(reply => !judged(reply))
     if (others.length > 0) await steps.keep(item, worktree, others).catch(error => console.error(`Queue item ${item.id} replies not saved`, error))
+    const extraPhrases = await deps.pickNonePhrases?.() ?? []
     let decided: { reply: SourceReply; choice: PickChoice } | undefined
     for (const reply of result.replies.filter(judged)) {
-      const verdict = parsePickReply(reply.text, item.pick!.options)
+      const verdict = parsePickReply(reply.text, item.pick!.options, extraPhrases)
       if (verdict.kind !== 'unclear') { decided = { reply, choice: choiceOf(verdict) }; break }
       deps.notify?.(item, { event: 'pick-unclear', replyId: reply.id, text: reply.text, by: reply.author })
     }
