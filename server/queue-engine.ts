@@ -192,7 +192,8 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
     if (tech.length > 0) return askOwner(deps, item, tech, continuing(item, run, biz, (item.repos ?? []).filter(name => !settled.repos?.includes(name))))
     try {
       const posted = await deps.source(item.source).post({ id: item.externalId, kind: 'ask', lines: biz })
-      await store.update(item.id, { state: 'waiting-info', questions: biz, askedIn: undefined, lastSeenId: item.lastSeenId ?? posted.commentId, currentRunId: null })
+      const parked = await store.update(item.id, { state: 'waiting-info', questions: biz, askedIn: undefined, lastSeenId: item.lastSeenId ?? posted.commentId, currentRunId: null })
+      deps.needsYou(parked, 'Question posted to ClickUp')
     } catch (error) {
       await fail(item, `Could not post the questions: ${message(error)}`)
     }

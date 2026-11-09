@@ -120,6 +120,7 @@ test('a run blocked with questions posts them, parks the item and frees the slot
   expect(h.posted).toEqual([{ id: '1', kind: 'ask', lines: ['Which page?'] }])
   expect(h.store.list()[0]).toMatchObject({ state: 'waiting-info', questions: ['Which page?'], lastSeenId: 'c1', currentRunId: null })
   expect(h.store.list()[1]!.state).toBe('building')
+  expect(h.alerts).toEqual([{ title: 'Task 1', reason: 'Question posted to ClickUp', state: 'waiting-info' }])
 })
 
 test('a blocked run without questions, a failed or a stopped run fails the item and tells you', async () => {

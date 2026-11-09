@@ -35,6 +35,7 @@ async function parked(replies: () => Promise<SourceReplies>, overrides: Partial<
   const blocked: RunView = { id: 'run-1', status: 'blocked', error: null, attempts: [{ nodeId: 'plan', number: 1, jobId: 'j', status: 'settled', prompt: '', startedAt: 1, endedAt: 2, result: { outcome: 'blocked', summary: 's', evidence: ['biz: Which page?'] }, checks: [], output: '', workspace: null, tokenId: 't', pathId: 'main', from: [] }] }
   runs.set(blocked.id, blocked)
   await engine.onRunSettled(blocked)
+  alerts.splice(0)
   Object.assign(deps, overrides)
   return { engine, store, item, alerts, requests, files, runs, blocked }
 }
