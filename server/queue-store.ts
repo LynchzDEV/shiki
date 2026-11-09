@@ -5,11 +5,11 @@ import { dirname, join } from 'node:path'
 import { isRepoList } from './repo-names'
 import type { RunEvents } from './run-events'
 import { configDir } from './secrets'
-import { atomicJson, type LandStage } from './workflows'
+import { atomicJson, QUEUE_STATES, type LandStage } from './workflows'
 
 export const QUEUE_FILE = 'queue.json'
 
-export type QueueState = 'queued' | 'building' | 'waiting-info' | 'waiting-pick' | 'ready' | 'failed' | 'landing' | 'awaiting-stage' | 'landed'
+export type QueueState = typeof QUEUE_STATES[number]
 
 export type QueuePick = { options: string[]; path: string; recommended: string | null; tester: string | null; summary: string }
 export type LandStageState = {
@@ -27,7 +27,7 @@ export type QueueItem = {
   runIds: string[]; currentRunId: string | null; questions: string[]; lastSeenId: string | null; error: string | null
   createdAt: number; updatedAt: number; repos?: string[]; repoReruns?: number
   realBaseline?: Record<string, string>; realChanged?: string[]; pick?: QueuePick; land?: LandProgress; autoPicks?: number; resumeRunId?: string
-  askedIn?: 'shikidan'; recoverRebuilds?: number; recoverBuild?: BuildRecover
+  askedIn?: 'shikidan'; recoverRebuilds?: number; recoverBuild?: BuildRecover; syncedStatus?: string
 }
 
 export type NewQueueItem = Pick<QueueItem, 'source' | 'externalId' | 'title' | 'url' | 'repo' | 'flowId' | 'repos'>
@@ -37,13 +37,13 @@ export type QueueStore = RunEvents & {
   list(): QueueItem[]
   get(id: string): QueueItem | undefined
   add(item: NewQueueItem, position: 'end' | 'next'): Promise<QueueItem>
-  update(id: string, patch: QueuePatch): Promise<QueueItem>
+  update(id: string, patch: QueuePatch, options?: { touch?: boolean }): Promise<QueueItem>
   remove(id: string): Promise<boolean>
   move(id: string, to: number): Promise<boolean>
   toFront(id: string): Promise<void>
 }
 
-const STATES = new Set<string>(['queued', 'building', 'waiting-info', 'waiting-pick', 'ready', 'failed', 'landing', 'awaiting-stage', 'landed'])
+const STATES = new Set<string>(QUEUE_STATES)
 const RESUMABLE: ReadonlySet<QueueState> = new Set(['queued', 'failed'])
 const isText = (value: unknown): value is string => typeof value === 'string'
 const isTextOrNull = (value: unknown): boolean => value === null || typeof value === 'string'
@@ -74,6 +74,7 @@ function isItem(value: unknown): value is QueueItem {
     && (item.askedIn === undefined || item.askedIn === 'shikidan')
     && (item.recoverRebuilds === undefined || isCount(item.recoverRebuilds))
     && (item.recoverBuild === undefined || isStoredBuild(item.recoverBuild))
+    && (item.syncedStatus === undefined || isText(item.syncedStatus))
 }
 
 const isCount = (value: unknown): boolean => Number.isInteger(value) && (value as number) >= 0
@@ -144,10 +145,10 @@ export function createQueueStore(path: string, clock: () => number = Date.now): 
       await save(position === 'next' ? [item, ...items] : [...items, item])
       return item
     },
-    async update(id, patch) {
+    async update(id, patch, options) {
       const current = items.find(item => item.id === id)
       if (current === undefined) throw new Error(`No queue item ${id}`)
-      const next: QueueItem = { ...current, ...definedFields(patch), updatedAt: clock() }
+      const next: QueueItem = { ...current, ...definedFields(patch), updatedAt: options?.touch === false ? current.updatedAt : clock() }
       if ('pick' in patch && patch.pick === undefined) delete next.pick
       if ('land' in patch && patch.land === undefined) delete next.land
       if ('recoverBuild' in patch && patch.recoverBuild === undefined) delete next.recoverBuild

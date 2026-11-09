@@ -46,8 +46,10 @@ import { prepareRepoWorkspace, registerQueueWorkspaces } from './repo-workspace'
 import { terminalsRoutes } from './routes/terminals'
 import { outcomesRoutes } from './routes/outcomes'
 import { attentionRoutes } from './routes/attention'
-import { createAttentionStore } from './attention'
-import { raiseQueueAlert, sweepQueueAlerts, watchQueueAlerts } from './queue-attention'
+import { attentionKey, createAttentionStore } from './attention'
+import { raiseQueueAlert, raiseSyncAlert, sweepQueueAlerts, watchQueueAlerts } from './queue-attention'
+import { statusMaps } from './queue-status'
+import { createStatusSync, type StatusSync } from './queue-status-sync'
 import { createNotifier } from './notify'
 import { createNotifyEvents } from './notify-events'
 import { notifyRoutes } from './routes/notify'
@@ -204,6 +206,8 @@ export async function createApp(): Promise<Elysia> {
   })
   const terminalRegistry = createTerminalRegistry({ log: createTerminalLog() })
   let queueEngine: QueueEngine | undefined
+  let statusSync: StatusSync | undefined
+  const syncStatus = () => { void statusSync?.reconcile().catch(error => console.error('Status sync failed', error)) }
   const workflowRunner = createWorkflowRunner({
     manager: jobManager,
     resolver: realEngineResolver,
@@ -215,7 +219,7 @@ export async function createApp(): Promise<Elysia> {
       void queueEngine?.onRunSettled(run).catch(error => console.error('Queue settle failed', error))
     },
     onSessionStep: run => { void chatFlusher.onSessionStep(run).catch(error => console.error('In Session chat nudge failed', error)) },
-    onChange: () => runEvents.changed(),
+    onChange: () => { runEvents.changed(); syncStatus() },
     availability: createAvailabilityCheck({ secrets: readSecrets, quota: () => quotaCache.get() }),
   })
   const chatQueue = createChatQueue(chatQueuePath())
@@ -232,11 +236,12 @@ export async function createApp(): Promise<Elysia> {
   await workflowRunner.recover()
   const queueStore = createQueueStore(queuePath())
   queueItems = () => queueStore.list()
+  const queueSource = (pluginId: string) => pluginSource(pluginId, { installed: getInstalled, runtimes: defaultRuntimes })
   registerQueueWorkspaces(path => queueStore.list().some(item => item.repos !== undefined && item.worktree === path))
   queueEngine = createQueueEngine({
     store: queueStore,
     runner: workflowRunner,
-    source: pluginId => pluginSource(pluginId, { installed: getInstalled, runtimes: defaultRuntimes }),
+    source: queueSource,
     prepareWorktree: (repo, label) => prepareWorktree(repo, label),
     prepareWorkspace: (folder, repos, label) => prepareRepoWorkspace(folder, repos, label),
     isWorktree: (repo, worktree) => isWorktreeOf(repo, worktree),
@@ -248,10 +253,20 @@ export async function createApp(): Promise<Elysia> {
     parallel: async () => (await readConfig()).queueParallel,
   })
   watchQueueAlerts(queueStore, attention)
+  statusSync = createStatusSync({
+    store: queueStore,
+    run: id => workflowRunner.get(id),
+    map: statusMaps({ flow: id => workflowStore.get(id), setting: getSetting }),
+    source: queueSource,
+    onSynced: item => { void attention.resolve(attentionKey.queueSync(item.id)).catch(error => console.error('Status sync alert failed', error)) },
+    onFailed: (item, _status, error) => { void raiseSyncAlert(attention, item, error).catch(alertError => console.error('Status sync alert failed', alertError)) },
+  })
+  queueStore.subscribe(syncStatus)
   const bootQueue = queueEngine
   void bootQueue.recover().then(
     () => {
       void sweepQueueAlerts(queueStore, attention).catch(error => console.error('Queue alert sweep failed', error))
+      syncStatus()
       return bootQueue.checkReplies().catch(error => console.error('Queue reply check failed', error))
     },
     error => console.error('Queue recover failed', error),

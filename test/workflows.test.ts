@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CORE_RULES, createWorkflowStore, defaultWorkflow, draftRevision, forkSections, passTargets, validateWorkflow, workflowSchema, composeWorkflowPrompt } from '../server/workflows'
+import { pstackFlows } from '../server/pstack-flows'
 import { classicWorkflow } from './support/classic-workflow'
 
 let dir: string
@@ -220,6 +221,24 @@ const button = { id: 'prod', run: 'button', label: 'Deploy prod', command: { com
 test('a flow without land stages keeps the revision it had before land existed', () => {
   expect(draftRevision(defaultWorkflow()).revision).toBe('d91a841cdee32b2315bd26ce')
   expect(draftRevision(landed([auto])).revision).not.toBe('d91a841cdee32b2315bd26ce')
+})
+
+const sourceStatus = { states: { queued: 'Open', landed: 'Closed' }, nodes: { implement: 'in progress' } }
+
+test('a flow without a status map keeps its exact revision, and one with a map gets a new one', () => {
+  expect(draftRevision(defaultWorkflow()).revision).toBe('d91a841cdee32b2315bd26ce')
+  expect(draftRevision(pstackFlows().find(flow => flow.id === 'pstack-arena')).revision).toBe('beebafda13621036eac532bf')
+  expect('sourceStatus' in workflowSchema.parse(defaultWorkflow())).toBe(false)
+  const mapped = draftRevision({ ...defaultWorkflow(), sourceStatus })
+  expect(mapped.sourceStatus).toEqual(sourceStatus)
+  expect(mapped.revision).not.toBe('d91a841cdee32b2315bd26ce')
+})
+
+test('a status map names only queue states and non-empty statuses', () => {
+  expect(workflowSchema.safeParse({ ...defaultWorkflow(), sourceStatus: { states: { building: 'x', flying: 'y' } } }).success).toBe(false)
+  expect(workflowSchema.safeParse({ ...defaultWorkflow(), sourceStatus: { nodes: { implement: '   ' } } }).success).toBe(false)
+  expect(workflowSchema.safeParse({ ...defaultWorkflow(), sourceStatus: { nodes: { implement: 'x'.repeat(101) } } }).success).toBe(false)
+  expect(workflowSchema.parse({ ...defaultWorkflow(), sourceStatus: { states: { failed: ' hold ' } } }).sourceStatus).toEqual({ states: { failed: 'hold' } })
 })
 
 test('land stages accept an auto and a button stage with their defaults', () => {

@@ -12,6 +12,7 @@ export type QueueSource = {
   item(input: { id: string }): Promise<SourceItem>
   post(input: { id: string; kind: 'ask' | 'update'; lines: string[]; mention?: string; status?: string }): Promise<{ commentId: string; status?: string; warning?: string }>
   replies(input: { id: string; sinceId: string | null }): Promise<SourceReplies>
+  status(input: { id: string; status: string }): Promise<{ status: string }>
 }
 
 export type SourceDeps = {
@@ -21,6 +22,7 @@ export type SourceDeps = {
 
 const text = z.string().max(64000)
 const postSchema = z.object({ commentId: z.string().min(1).max(200), status: z.string().max(200).optional(), warning: z.string().max(2000).optional() })
+const statusSchema = z.object({ status: z.string().min(1).max(200) })
 const imageSchema = z.object({ name: z.string().min(1).max(200), path: z.string().min(1).max(1024) })
 const itemSchema = z.object({ title: z.string().min(1).max(500), url: z.string().max(2048), contextMarkdown: z.string().max(524288), images: z.array(imageSchema).max(30).optional() })
 const repliesSchema = z.object({
@@ -50,5 +52,6 @@ export function pluginSource(pluginId: string, deps: SourceDeps): QueueSource {
     item: input => call('source.item', input, itemSchema),
     post: input => call('source.post', input, postSchema),
     replies: input => call('source.replies', input, repliesSchema),
+    status: input => call('source.status', input, statusSchema),
   }
 }

@@ -180,3 +180,17 @@ test('recovery counters must be whole numbers, and items without them still load
   expect(createQueueStore(path).list().map(entry => entry.id)).toEqual(['plain', 'good'])
   spy.mockRestore()
 })
+
+test('the last confirmed source status survives a new instance, and a malformed one is left out', async () => {
+  const store = createQueueStore(path)
+  const a = await store.add(item('a'), 'end')
+  await store.add(item('b'), 'end')
+  await store.update(a.id, { syncedStatus: 'in progress' })
+  expect(createQueueStore(path).get(a.id)!.syncedStatus).toBe('in progress')
+  const file = JSON.parse(await readFile(path, 'utf8'))
+  file.items[1].syncedStatus = 7
+  await writeFile(path, JSON.stringify(file))
+  const logged = spyOn(console, 'error').mockImplementation(() => {})
+  expect(createQueueStore(path).list().map(entry => entry.id)).toEqual([a.id])
+  logged.mockRestore()
+})

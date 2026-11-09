@@ -36,6 +36,7 @@ export const attentionKey = {
   needs: (chatId: string) => `needs:${chatId}`,
   loop: (jobId: string) => `loop:${jobId}`,
   queue: (itemId: string) => `queue:${itemId}`,
+  queueSync: (itemId: string) => `queue-sync:${itemId}`,
 }
 
 export function chatOfJob(record: Pick<JobRecord, 'purpose' | 'threadRoot' | 'chatId'>): string | null {

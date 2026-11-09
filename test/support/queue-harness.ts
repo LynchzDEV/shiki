@@ -32,6 +32,7 @@ export function queueHarness(dir: string, over: Partial<QueueEngineDeps> = {}, s
     item: async ({ id }) => ({ title: `Task ${id}`, url: `https://x/t/${id}`, contextMarkdown: `# ${id}` }),
     post: async input => { posted.push(input); return { commentId: 'c1' } },
     replies: async ({ sinceId }) => { sinceIds.push(sinceId); return replies() },
+    status: async ({ status }) => ({ status }),
     ...sourceOver,
   }
   const deps: QueueEngineDeps = {

@@ -74,3 +74,13 @@ test('missing, disabled, unstartable or failing plugins throw readable errors', 
   await expect(pluginSource('clickup-board', deps(() => ({}), { runtimeError: 'needs a newer Bun' }).deps).item({ id: '1' })).rejects.toThrow('needs a newer Bun')
   await expect(pluginSource('clickup-board', deps(() => new Error('No method source.item')).deps).item({ id: '1' })).rejects.toThrow('No method source.item')
 })
+
+test('status calls source.status and returns the status the source read back', async () => {
+  const { deps: d, calls } = deps(() => ({ status: 'in progress' }))
+  expect(await pluginSource('clickup-board', d).status({ id: '1', status: 'in progress' })).toEqual({ status: 'in progress' })
+  expect(calls).toEqual([{ method: 'source.status', params: { id: '1', status: 'in progress' } }])
+  const { deps: bad } = deps(() => ({ status: '' }))
+  await expect(pluginSource('clickup-board', bad).status({ id: '1', status: 'x' })).rejects.toThrow('clickup-board returned an unexpected source.status result')
+  const { deps: refused } = deps(() => new Error('No status "hold" on this list'))
+  await expect(pluginSource('clickup-board', refused).status({ id: '1', status: 'hold' })).rejects.toThrow('No status "hold" on this list')
+})

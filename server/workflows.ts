@@ -31,11 +31,18 @@ export const nodeSchema = z.object({
   denyTools: z.array(z.string().min(1).max(200)).max(20).optional(),
   position: z.object({ x: z.number().finite(), y: z.number().finite() }).default({ x: 0, y: 0 }),
 })
+export const QUEUE_STATES = ['queued', 'building', 'waiting-info', 'waiting-pick', 'ready', 'failed', 'landing', 'awaiting-stage', 'landed'] as const
+const sourceStatusName = z.string().trim().min(1).max(100)
+export const sourceStatusSchema = z.object({
+  states: z.partialRecord(z.enum(QUEUE_STATES), sourceStatusName).optional(),
+  nodes: z.record(z.string(), sourceStatusName).optional(),
+})
 export const workflowSchema = z.object({
   id: identifier, name: z.string().trim().min(1).max(120), entry: identifier,
   nodes: z.array(nodeSchema).min(1).max(64),
   edges: z.array(z.object({ source: identifier, target: identifier, outcome: z.enum(['pass', 'fail', 'blocked']) })).max(192),
   land: z.array(landStageSchema).max(4).default([]),
+  sourceStatus: sourceStatusSchema.optional(),
 })
 export type Workflow = z.infer<typeof workflowSchema>
 export type WorkflowNode = Workflow['nodes'][number]

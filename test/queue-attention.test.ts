@@ -3,8 +3,8 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { createAttentionStore } from '../server/attention'
-import { raiseQueueAlert, sweepQueueAlerts, watchQueueAlerts } from '../server/queue-attention'
+import { attentionKey, createAttentionStore } from '../server/attention'
+import { raiseQueueAlert, raiseSyncAlert, sweepQueueAlerts, watchQueueAlerts } from '../server/queue-attention'
 import { createQueueStore, type NewQueueItem } from '../server/queue-store'
 
 let dir: string
@@ -118,4 +118,23 @@ test('alerts for a stage waiting on a person and for a landed item stay until th
   expect(await sweepQueueAlerts(store, attention)).toBe(0)
   await store.update(waiting.id, { state: 'landing' })
   expect(await sweepQueueAlerts(store, attention)).toBe(1)
+})
+
+test('a status sync alert stays while its item exists, whatever the state, and goes with the item', async () => {
+  const store = createQueueStore(join(dir, 'queue.json'))
+  const attention = createAttentionStore(join(dir, 'attention.json'))
+  const building = await store.update((await store.add(task('a'), 'end')).id, { state: 'building' })
+  const ready = await store.update((await store.add(task('b'), 'end')).id, { state: 'ready' })
+  await raiseQueueAlert(attention, ready, 'Built and ready for review')
+  await raiseSyncAlert(attention, building, new Error('No status "hold" on this list'))
+  await raiseSyncAlert(attention, ready, 'boom')
+  expect(attention.list().find(alert => alert.key === attentionKey.queueSync(building.id))).toMatchObject({ kind: 'queue', title: 'Task a', detail: 'ClickUp status sync failed: No status "hold" on this list' })
+  expect(attention.list().find(alert => alert.key === `queue:${ready.id}`)!.detail).toBe('Built and ready for review')
+  expect(await sweepQueueAlerts(store, attention)).toBe(0)
+  await store.update(ready.id, { state: 'building' })
+  expect(await sweepQueueAlerts(store, attention)).toBe(1)
+  expect(keys(attention)).toEqual([`queue-sync:${building.id}`, `queue-sync:${ready.id}`].sort())
+  await store.remove(building.id)
+  expect(await sweepQueueAlerts(store, attention)).toBe(1)
+  expect(keys(attention)).toEqual([`queue-sync:${ready.id}`])
 })
