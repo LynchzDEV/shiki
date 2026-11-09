@@ -697,6 +697,24 @@ test('same model family through different engine names cannot perform cross-fami
   expect(manager.listJobs()).toHaveLength(0)
 })
 
+test('a grok connection pinned on verify-plan and review counts as a different family from a claude implementation', async () => {
+  const { createConnectionStore } = await import('../server/agent-connections')
+  const store = await build()
+  await createConnectionStore(dir).save({ id: 'grok', name: 'Grok Build', adapter: 'acp', command: process.execPath, args: [join(import.meta.dir, 'fixtures/agents/acp.ts')], family: 'grok' })
+  const graph = classicWorkflow()
+  graph.id = 'grok-review'
+  graph.nodes[1]!.agent = { role: 'review', engine: 'grok' }
+  graph.nodes[2]!.agent = { role: 'execute', engine: 'claude', model: 'sonnet' }
+  graph.nodes[3]!.agent = { role: 'review', engine: 'grok' }
+  await store.save(graph)
+  const run = await runner.start({ workflowId: graph.id, cwd: repo, request: 'Implement', label: 'grok-review' })
+  expect(run.agents.execute).toMatchObject({ engine: 'claude', family: 'claude' })
+  expect(run.agents['verify-plan']).toMatchObject({ engine: 'grok', family: 'grok' })
+  expect(run.agents.review).toMatchObject({ engine: 'grok', family: 'grok' })
+  await runner.stop(run.id)
+  await finished(run.id)
+})
+
 test('restart adopts an existing running job and continues without dispatching it twice', async () => {
   const store = await build(({ prompt }) => ({ cmd: process.execPath, args: ['-e', `setTimeout(() => console.log(${JSON.stringify(report())}), 150)`], env: {} }))
   const run = await runner.start({ cwd: repo, request: 'Inspect', label: 'restart' })
