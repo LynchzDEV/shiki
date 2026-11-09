@@ -667,6 +667,26 @@ test('a waiting-pick row shows the Pick a variant pill and a Pick button', () =>
   expect(buttonNamed('Pick', view)).toBeDefined()
 })
 
+test('a waiting-pick card asked in ClickUp shows its published link and who was asked', () => {
+  const asked = { ...picking, pick: { ...picking.pick!, ask: { ref: 'r1', ownerId: '11', ownerName: 'Kan', meId: '99', host: '86d3j4f8q-ab12cd34.shikidan.com', postedAt: 1 } } } as QueueItem
+  const view = queue.renderQueue(queue.readQueueItems([asked]), context())
+  const link = view.querySelector<HTMLAnchorElement>('.q-meta a.q-published')!
+  expect(link.href).toBe('https://86d3j4f8q-ab12cd34.shikidan.com/')
+  expect(link.textContent).toBe('86d3j4f8q-ab12cd34.shikidan.com')
+  expect([link.target, link.rel]).toEqual(['_blank', 'noopener noreferrer'])
+  expect(view.querySelector('.q-meta > span:last-child')?.textContent).toBe('asked Kan on ClickUp')
+})
+
+test('a failed ask still links what was published but names nobody, and no ask or no host shows no link', () => {
+  const failed = { ...picking, pick: { ...picking.pick!, ask: { ref: '', ownerId: '', ownerName: '', meId: '', host: 'x-ab12cd34.shikidan.com', postedAt: 1, error: 'people failed' } } } as QueueItem
+  const failedView = queue.renderQueue(queue.readQueueItems([failed]), context())
+  expect(failedView.querySelector('a.q-published')?.textContent).toBe('x-ab12cd34.shikidan.com')
+  expect(failedView.querySelector('.q-meta')?.textContent).not.toContain('asked')
+  const noHost = { ...picking, pick: { ...picking.pick!, ask: { ...failed.pick!.ask!, host: null } } } as QueueItem
+  expect(queue.renderQueue(queue.readQueueItems([noHost]), context()).querySelector('a.q-published')).toBeNull()
+  expect(queue.renderQueue(queue.readQueueItems([picking]), context()).querySelector('a.q-published')).toBeNull()
+})
+
 test('Pick opens the review screen with every section of a structured summary', async () => {
   await openPick()
   expect(shown.at(-1)).toBe('queue-review')

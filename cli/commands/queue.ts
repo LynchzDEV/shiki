@@ -61,6 +61,15 @@ function parallelOption(ctx: Context): number {
   return Number(text)
 }
 
+function wholeArg(ctx: Context, name: string, max: number): number {
+  const text = arg(ctx, name)
+  const value = /^\d+$/.test(text) ? Number(text) : 0
+  if (value < 1 || value > max) throw new UsageError(`${name} must be a whole number from 1 to ${max}`)
+  return value
+}
+
+const putSettings = async (ctx: Context, body: Json, text: (value: unknown) => string): Promise<void> => emit(ctx, await ctx.client.put('/api/queue/settings', body), text)
+
 const parallelText = (value: unknown): string => {
   const parallel = field(value, 'parallel')
   return parallel === 1 ? 'One card builds at a time.\n' : `Up to ${cell(parallel)} cards build at once.\n`
@@ -135,6 +144,24 @@ export const queueCommands: Command[] = [
       const parallel = parallelOption(ctx)
       emit(ctx, await ctx.client.put('/api/queue/settings', { parallel }), parallelText)
     },
+  },
+  {
+    path: ['queue', 'poll'],
+    args: ['minutes'],
+    summary: 'Set how often ClickUp replies (questions and design picks) are checked, 1 to 15 minutes (default 2)',
+    run: async (ctx) => putSettings(ctx, { replyPollMinutes: wholeArg(ctx, 'minutes', 15) }, value => `ClickUp replies are checked every ${cell(field(value, 'replyPollMinutes'))} minutes.\n`),
+  },
+  {
+    path: ['queue', 'publish-days'],
+    args: ['days'],
+    summary: 'Set how many days published mockups stay up, 1 to 90 (default 14)',
+    run: async (ctx) => putSettings(ctx, { publishKeepDays: wholeArg(ctx, 'days', 90) }, value => `Published mockups come down after ${cell(field(value, 'publishKeepDays'))} days, or when the card lands or is removed.\n`),
+  },
+  {
+    path: ['queue', 'unpublish'],
+    args: ['id'],
+    summary: 'Take down the published design-pick mockups of an item',
+    run: async (ctx) => emit(ctx, await ctx.client.post(itemPath(ctx, '/unpublish'), {}), () => 'Unpublished.\n'),
   },
   {
     path: ['queue', 'requeue'],

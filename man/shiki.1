@@ -602,6 +602,20 @@ Build up to
 cards at once, 1 to 4 (default 1). Keep 1 for projects whose worktrees share
 one test database: two cards running tests at once deadlock there.
 .TP
+.BI "shiki queue poll " minutes
+Check ClickUp for replies to questions and design picks every
+.I minutes
+minutes, 1 to 15 (default 2). The new pace applies straight away.
+.TP
+.BI "shiki queue publish\-days " n
+Take published mockups down after
+.I n
+days, 1 to 90 (default 14). They also come down when the card lands or is
+removed.
+.TP
+.BI "shiki queue unpublish " id
+Take down an item's published mockups now.
+.TP
 .BI "shiki queue requeue " id
 Put a failed, ready or waiting item back in line.
 A failed item resumes the run it failed in, keeping the steps that passed;
@@ -619,6 +633,37 @@ When the flow's plugin has its
 setting on, the queue takes the recommended variant itself, alerts
 .RI "Auto-picked " option
 and keeps building; a pick with no recommended variant still waits for you.
+Unless the flow's plugin sets
+.B pickIn
+to
+.BR shikidan ,
+the card's mockups are published at
+.IB card \- random . domain
+(the domain is
+.BR SKD_PUBLISH_DOMAIN ,
+default
+.BR shikidan.com )
+and the card owner is tagged in ClickUp with the link. Folders named
+.B renders/
+or
+.B verify/
+are never published, and every file under
+.BR shots/ ,
+or any image with the same bytes as an image downloaded from the card, is
+replaced by a placeholder. Only the first line of the owner's reply decides:
+.IR "แบบ C" ,
+.I "C ครับ"
+or
+.I "ไม่ชอบเลย อยากได้แบบเดิม"
+is taken as the pick, and lines after the option, such as
+.I "ปุ่มใหญ่ขึ้นหน่อย"
+on the next line, become its note. A first line with anything else on it,
+such as
+.IR "C ครับ ปุ่มใหญ่ขึ้นหน่อย" ,
+leaves the card waiting. The pick is confirmed in ClickUp and the ask comment
+is resolved, also when the pick is made here, or the card is requeued or
+removed. When publishing or tagging fails, or Shikidan restarted while the
+question was being posted, the card waits for a pick here.
 .TP
 .BI "shiki queue remove " id
 Remove an item that is not building.
@@ -686,6 +731,24 @@ Config folder that holds
 .BR secrets.json .
 Default:
 .BR ~/.config/shikidan .
+.TP
+.B SKD_PUBLISH_DIR
+For
+.B bun static\-host/serve.ts
+only: the folder it serves. Default:
+.BR ~/.config/shikidan/published .
+.TP
+.B SKD_STATIC_PORT
+For
+.B static\-host/serve.ts
+only: the port it binds on 127.0.0.1. Default: 7780.
+.TP
+.B SKD_PUBLISH_DOMAIN
+The domain design\-pick mockups are published under, read by both the server
+(for the link in the ClickUp ask) and
+.B static\-host/serve.ts
+(for the subdomains it answers), so set it the same for both. Default:
+.BR shikidan.com .
 .SH EXIT STATUS
 .TP
 .B 0
@@ -768,6 +831,13 @@ Holds the API token used for non\-local servers, the z.ai token and the webhook 
 Webhook events not yet delivered, and the last event sent per queue item or job.
 Delivery retries after 10 s, 1 min, 5 min, then every 30 min with the same
 eventId until the receiver answers 2xx, and resumes after a restart.
+.TP
+.B ~/.config/shikidan/published/
+One folder per card with published design\-pick mockups, named after the
+card's subdomain. The separate process
+.B bun static\-host/serve.ts
+serves it on 127.0.0.1:7780, by Host header only, GET and HEAD only, and
+nothing else; put a tunnel in front of that port, never in front of 7777.
 .SH SEE ALSO
 .BR shiki " \-\-help" ,
 the "Command line" section of the Shikidan README.

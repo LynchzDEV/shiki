@@ -1,6 +1,7 @@
 export type QueueState = 'queued' | 'building' | 'waiting-info' | 'waiting-pick' | 'ready' | 'failed' | 'landing' | 'awaiting-stage' | 'landed'
 
-export type QueuePickView = { options: string[]; path: string; recommended: string | null; tester: string | null; summary: string }
+export type PickAskView = { host: string | null; ownerName: string; error?: string }
+export type QueuePickView = { options: string[]; path: string; recommended: string | null; tester: string | null; summary: string; ask?: PickAskView }
 export type LandStageView = { status: string; preflight?: { exitCode: number; markdown: string } }
 export type LandView = { stage: string; runId?: string; message?: string; plan: Array<{ id: string; label?: string }>; stages: Record<string, LandStageView> }
 
@@ -276,6 +277,13 @@ function answerBox(item: QueueItemView, draft: string): HTMLElement {
     el('div', { class: 'q-answer-foot' }, el('span', {}, 'This stays in Shikidan. Nothing is posted on the card.'), button('Send', 'connection-button primary', { 'data-id': item.id, 'data-act': 'answer' })))
 }
 
+function publishedLink(item: QueueItemView): HTMLElement[] {
+  const ask = item.state === 'waiting-pick' ? item.pick?.ask : undefined
+  if (ask?.host == null) return []
+  const asked = ask.error === undefined && ask.ownerName !== '' ? [el('span', {}, `asked ${ask.ownerName} on ClickUp`)] : []
+  return [el('a', { class: 'q-published', href: `https://${ask.host}`, target: '_blank', rel: 'noopener noreferrer', title: 'Published mockups' }, icon('mk-link'), ask.host), ...asked]
+}
+
 const folderName = (path: string): string => path.split('/').filter(part => part !== '').at(-1) ?? path
 
 function folderWithRepos(item: QueueItemView): HTMLElement[] {
@@ -298,7 +306,8 @@ function row(item: QueueItemView, items: readonly QueueItemView[], context: Queu
     sourceBadge(item, context.plugins),
     ...folderWithRepos(item),
     el('span', {}, icon('flow-icon'), flowName(item, context.flows)),
-    el('span', {}, progressText(item, items, context.now)))
+    el('span', {}, progressText(item, items, context.now)),
+    ...publishedLink(item))
   return el('article', { class: 'q-row', 'data-id': item.id, 'data-state': item.state, 'data-movable': movable, draggable: movable ? 'true' : false, 'data-openable': openable, 'data-open': open, 'data-watchable': watchable, tabindex: rowKeys ? '0' : false, title: watchable ? 'Watch this run' : false, 'aria-label': rowKeys ? `${item.title}, ${PILL[item.state].label}. Press Enter to watch its run` : false },
     el('span', { class: 'q-grip', title: movable ? 'Drag to reorder' : false }, icon('q-grip')),
     pill(item.state, answering ? 'Needs your answer' : stagePill(item)),
@@ -343,9 +352,16 @@ function readStep(value: unknown): { step: QueueStepView } | null {
 
 function readPick(value: unknown): { pick: QueuePickView } | null {
   if (typeof value !== 'object' || value === null) return null
-  const { options, path, recommended, tester, summary } = value as Record<string, unknown>
+  const { options, path, recommended, tester, summary, ask } = value as Record<string, unknown>
   if (!isTexts(options) || !isText(path) || !isText(summary)) return null
-  return { pick: { options, path, summary, recommended: isText(recommended) ? recommended : null, tester: isText(tester) ? tester : null } }
+  return { pick: { options, path, summary, recommended: isText(recommended) ? recommended : null, tester: isText(tester) ? tester : null, ...readAsk(ask) } }
+}
+
+function readAsk(value: unknown): { ask: PickAskView } | null {
+  if (typeof value !== 'object' || value === null) return null
+  const { host, ownerName, error } = value as Record<string, unknown>
+  if ((host !== null && !isText(host)) || !isText(ownerName)) return null
+  return { ask: { host, ownerName, ...(isText(error) ? { error } : {}) } }
 }
 
 function readStages(value: unknown): Record<string, LandStageView> {

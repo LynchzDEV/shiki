@@ -106,6 +106,48 @@ describe('shiki queue', () => {
     }
   })
 
+  test('poll sets how often replies are checked and rejects anything but 1 to 15', async () => {
+    const ok = harness(() => Response.json({ parallel: 1, replyPollMinutes: 5, publishKeepDays: 14 }))
+    expect(await main(['queue', 'poll', '5'], ok.deps)).toBe(0)
+    expect(routesOf(ok.calls)).toEqual(['PUT /api/queue/settings'])
+    expect(ok.calls[0]?.body).toEqual({ replyPollMinutes: 5 })
+    expect(ok.out()).toBe('ClickUp replies are checked every 5 minutes.\n')
+    for (const bad of ['0', '16', '1.5', 'x']) {
+      const rejected = harness()
+      expect(await main(['queue', 'poll', bad], rejected.deps)).toBe(2)
+      expect(rejected.err()).toContain('shiki: minutes must be a whole number from 1 to 15')
+      expect(rejected.calls).toEqual([])
+    }
+  })
+
+  test('publish-domain is not a command: the domain comes from SKD_PUBLISH_DOMAIN', async () => {
+    const none = harness()
+    expect(await main(['queue', 'publish-domain', 'mockups.example.com'], none.deps)).not.toBe(0)
+    expect(none.calls).toEqual([])
+  })
+
+  test('publish-days sets how long published mockups stay up and rejects anything but 1 to 90', async () => {
+    const ok = harness(() => Response.json({ parallel: 1, replyPollMinutes: 2, publishKeepDays: 30 }))
+    expect(await main(['queue', 'publish-days', '30'], ok.deps)).toBe(0)
+    expect(ok.calls[0]?.body).toEqual({ publishKeepDays: 30 })
+    expect(ok.out()).toBe('Published mockups come down after 30 days, or when the card lands or is removed.\n')
+    for (const bad of ['0', '91', 'x']) {
+      const rejected = harness()
+      expect(await main(['queue', 'publish-days', bad], rejected.deps)).toBe(2)
+      expect(rejected.err()).toContain('shiki: days must be a whole number from 1 to 90')
+    }
+  })
+
+  test('unpublish takes a card\'s published mockups down', async () => {
+    const ok = harness(() => Response.json({ item: { id: 'a1' } }))
+    expect(await main(['queue', 'unpublish', 'a1'], ok.deps)).toBe(0)
+    expect(routesOf(ok.calls)).toEqual(['POST /api/queue/a1/unpublish'])
+    expect(ok.out()).toBe('Unpublished.\n')
+    const refused = harness(() => Response.json({ error: 'It has no published link' }, { status: 409 }))
+    expect(await main(['queue', 'unpublish', 'a1'], refused.deps)).not.toBe(0)
+    expect(refused.err()).toContain('It has no published link')
+  })
+
   test('move sends a whole number and rejects anything else', async () => {
     const ok = harness(() => Response.json({ items: [] }))
     expect(await main(['queue', 'move', 'a1', '2'], ok.deps)).toBe(0)
