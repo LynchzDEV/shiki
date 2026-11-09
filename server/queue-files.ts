@@ -1,6 +1,6 @@
 import { constants } from 'node:fs'
-import { chmod, lstat, mkdir, open, realpath, unlink, type FileHandle } from 'node:fs/promises'
-import { basename, join, resolve, sep } from 'node:path'
+import { chmod, lstat, mkdir, open, readdir, realpath, unlink, type FileHandle } from 'node:fs/promises'
+import { basename, extname, join, resolve, sep } from 'node:path'
 
 import { ContextTooLarge, excludeFromGit, MAX_CONTEXT_BYTES, safeContextName, SESSION_CONTEXT_DIR, stamp, type TaskContext } from './plugins/context-files'
 import type { SourceImage, SourceReply } from './queue-source'
@@ -103,6 +103,20 @@ export async function importImages(root: string, replies: SourceReply[], folder:
 const queueRoot = (worktree: string): string => join(worktree, SESSION_CONTEXT_DIR, 'queue')
 
 export const queueFolder = (worktree: string, source: string): string => join(queueRoot(worktree), source)
+
+export const cardImagesFolder = (worktree: string, source: string): string => join(queueFolder(worktree, source), 'card-images')
+
+async function filesIn(folder: string): Promise<string[]> {
+  const entries = await readdir(folder, { withFileTypes: true }).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
+  })
+  return entries.filter(entry => entry.isFile() && extname(entry.name) !== '.md').map(entry => join(folder, entry.name))
+}
+
+export async function cardImageFiles(worktree: string, source: string): Promise<string[]> {
+  return [...await filesIn(queueFolder(worktree, source)), ...await filesIn(cardImagesFolder(worktree, source))]
+}
 
 async function refuseLinkedFolder(path: string): Promise<void> {
   const found = await lstat(path).catch((error: unknown) => {

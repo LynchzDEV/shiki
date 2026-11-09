@@ -51,7 +51,7 @@ describe('createNotifier', () => {
   test('posts the exact event shape with both auth headers', async () => {
     const h = harness()
     const notifier = h.make()
-    await notifier.emit(input({ node: 'mockups', runId: 'run-1', runStatus: 'running', clickupStatus: 'hold', options: ['A', 'B'], recommended: 'A', questions: ['Which?'], landStage: 'uat' }))
+    await notifier.emit(input({ node: 'mockups', runId: 'run-1', runStatus: 'running', clickupStatus: 'hold', options: ['A', 'B'], recommended: 'A', questions: ['Which?'], landStage: 'uat', host: 'kan-ab12cd34.shikidan.com', owner: 'Kan' }))
     await notifier.drain()
     expect(h.calls).toHaveLength(1)
     const call = h.calls[0]!
@@ -65,6 +65,7 @@ describe('createNotifier', () => {
       queueItemId: 'item-1', runId: 'run-1', taskId: 'T1', taskUrl: 'https://app.clickup.com/t/T1', title: 'Card',
       node: 'mockups', itemState: 'waiting-pick', runStatus: 'running', clickupStatus: 'hold',
       detail: 'Choose one', questions: ['Which?'], options: ['A', 'B'], recommended: 'A', mockups: [], landStage: 'uat',
+      host: 'kan-ab12cd34.shikidan.com', owner: 'Kan', pickedBy: null,
     })
   })
 
@@ -78,6 +79,7 @@ describe('createNotifier', () => {
       queueItemId: null, runId: null, taskId: null, taskUrl: null, title: 'Job',
       node: null, itemState: null, runStatus: null, clickupStatus: null,
       detail: '', questions: [], options: [], recommended: null, mockups: [], landStage: null,
+      host: null, owner: null, pickedBy: null,
     })
   })
 

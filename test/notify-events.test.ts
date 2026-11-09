@@ -126,6 +126,42 @@ describe('job events', () => {
   })
 })
 
+describe('design pick in ClickUp', () => {
+  const pick = { options: ['A', 'B', 'C'], path: 'visualizer/x', recommended: 'B', tester: null, summary: 's' }
+  const ask = { ref: 'r1', ownerId: '11', ownerName: 'Kan', meId: '99', host: 't1-ab12cd34.shikidan.com', postedAt: 5 }
+
+  test('a pick asked in ClickUp carries the host and the owner', () => {
+    const { events, emitted } = setup([])
+    events.queue(item({ state: 'waiting-pick', pick: { ...pick, ask } }), 'Pick a design variant')
+    expect(emitted[0]).toMatchObject({ event: 'pick', host: 't1-ab12cd34.shikidan.com', owner: 'Kan' })
+  })
+
+  test('a pick never asked in ClickUp has no host or owner', () => {
+    const { events, emitted } = setup([])
+    events.queue(item({ state: 'waiting-pick', pick }), 'Pick a design variant')
+    expect(emitted[0]).toMatchObject({ event: 'pick', host: null, owner: null })
+  })
+
+  test('a failed ask sends publish-failed with the reason, and the host when publishing got that far', () => {
+    const { events, emitted } = setup([])
+    events.queue(item({ state: 'waiting-pick', pick: { ...pick, ask: { ...ask, ref: '', ownerId: '', ownerName: '', meId: '', error: 'people failed' } } }), 'Pick in Shikidan, the ClickUp ask failed: people failed')
+    expect(emitted[0]).toMatchObject({ event: 'publish-failed', host: 't1-ab12cd34.shikidan.com', owner: null, detail: 'Pick in Shikidan, the ClickUp ask failed: people failed', options: ['A', 'B', 'C'] })
+  })
+
+  test('picked carries who picked and the option, keyed by the reply so each reply sends once', () => {
+    const { events, emitted } = setup([])
+    const queued = item({ state: 'queued', published: { sub: 't1-ab12cd34', host: 't1-ab12cd34.shikidan.com', at: 1 } })
+    events.pickReply(queued, { event: 'picked', replyId: 'c7', option: 'C', by: 'Kan' })
+    expect(emitted[0]).toMatchObject({ event: 'picked', detail: 'C', pickedBy: 'Kan', host: 't1-ab12cd34.shikidan.com', itemState: 'queued', fingerprintKey: 'item-1:picked:c7' })
+  })
+
+  test('pick-unclear carries the reply text', () => {
+    const { events, emitted } = setup([])
+    events.pickReply(item({ state: 'waiting-pick', pick: { ...pick, ask } }), { event: 'pick-unclear', replyId: 'c8', text: 'A หรือ C ดี', by: 'Kan' })
+    expect(emitted[0]).toMatchObject({ event: 'pick-unclear', detail: 'A หรือ C ดี', pickedBy: 'Kan', owner: 'Kan', fingerprintKey: 'item-1:pick-unclear:c8' })
+  })
+})
+
 describe('sync-failed', () => {
   test('exposes emit for the status sync callback', () => {
     const { events, emitted } = setup([])

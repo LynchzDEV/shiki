@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, utimes } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import { ContextTooLarge, MAX_CONTEXT_BYTES, writeContextFile } from '../server/plugins/context-files'
-import { queueFolder, writeQueueContext } from '../server/queue-files'
+import { cardImageFiles, cardImagesFolder, queueFolder, writeQueueContext } from '../server/queue-files'
 import { initScratchGitRepo } from './support/scratch-git-repo'
 
 let repo: string
@@ -55,4 +55,17 @@ test('writeQueueContext refuses a queue folder that is a symlink', async () => {
   await mkdir(join(repo, '.shikidan'), { recursive: true })
   await symlink(elsewhere, join(repo, '.shikidan', 'queue'))
   await expect(writeQueueContext('clickup-board', { name: 'item-1', markdown: '# Task 1' }, repo)).rejects.toThrow('not a private folder')
+})
+
+test('cardImageFiles lists the card images and reply images of a source, not its context files or other sources', async () => {
+  const folder = queueFolder(repo, 'clickup-board')
+  await mkdir(cardImagesFolder(repo, 'clickup-board'), { recursive: true })
+  await mkdir(queueFolder(repo, 'other'), { recursive: true })
+  await writeFile(join(cardImagesFolder(repo, 'clickup-board'), '0-portal.png'), 'card')
+  await writeFile(join(folder, 'c9-0-reply.jpg'), 'reply')
+  await writeFile(join(folder, '20261005-010203-item-1.md'), '# Task 1')
+  await writeFile(join(queueFolder(repo, 'other'), 'x.png'), 'other')
+  await symlink(join(repo, 'outside.png'), join(folder, 'link.png'))
+  expect((await cardImageFiles(repo, 'clickup-board')).sort()).toEqual([join(folder, 'c9-0-reply.jpg'), join(cardImagesFolder(repo, 'clickup-board'), '0-portal.png')].sort())
+  expect(await cardImageFiles(repo, 'missing')).toEqual([])
 })

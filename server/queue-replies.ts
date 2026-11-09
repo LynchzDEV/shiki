@@ -27,6 +27,7 @@ export type ReplyCheck = {
   apply(item: QueueItem, worktree: string, result: SourceReplies): Promise<boolean>
   answer(item: QueueItem, worktree: string, text: string): Promise<void>
   keepAnswer(item: QueueItem, worktree: string, text: string): Promise<void>
+  keep(item: QueueItem, worktree: string, replies: SourceReply[]): Promise<void>
 }
 
 export function replyCheck(deps: QueueEngineDeps, fail: (item: QueueItem, reason: string) => Promise<void>): ReplyCheck {
@@ -78,7 +79,8 @@ export function replyCheck(deps: QueueEngineDeps, fail: (item: QueueItem, reason
 
   const fromOwner = (text: string): SourceReply[] => [{ id: 'owner', author: 'Owner', authorId: '', text, images: [] }]
   const answer = (item: QueueItem, worktree: string, text: string): Promise<void> => resume(item, worktree, fromOwner(text), null)
-  const keepAnswer = async (item: QueueItem, worktree: string, text: string): Promise<void> => { await store.update(item.id, await saved(item, worktree, fromOwner(text))) }
+  const keep = async (item: QueueItem, worktree: string, replies: SourceReply[]): Promise<void> => { await store.update(item.id, await saved(item, worktree, replies)) }
+  const keepAnswer = (item: QueueItem, worktree: string, text: string): Promise<void> => keep(item, worktree, fromOwner(text))
 
-  return { read, apply, answer, keepAnswer }
+  return { read, apply, answer, keepAnswer, keep }
 }

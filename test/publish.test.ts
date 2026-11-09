@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { PLACEHOLDER_SHOT, publish, unpublish, type PublishItem } from '../server/publish'
+import { PLACEHOLDER_SHOT, publish, publishDomain, unpublish, type PublishItem } from '../server/publish'
 
 let dir: string
 let worktree: string
@@ -155,4 +155,17 @@ test('unpublish removes the folder and is harmless when it is already gone', asy
 test('unpublish refuses a sub that is not a plain host label', async () => {
   await expect(unpublish('../worktree', out)).rejects.toThrow('Not a published folder')
   await expect(unpublish('', out)).rejects.toThrow('Not a published folder')
+})
+
+test('the publish domain is SKD_PUBLISH_DOMAIN, or shikidan.com when it is not set', () => {
+  const saved = process.env.SKD_PUBLISH_DOMAIN
+  try {
+    delete process.env.SKD_PUBLISH_DOMAIN
+    expect(publishDomain()).toBe('shikidan.com')
+    process.env.SKD_PUBLISH_DOMAIN = 'mockups.example.com'
+    expect(publishDomain()).toBe('mockups.example.com')
+  } finally {
+    if (saved === undefined) delete process.env.SKD_PUBLISH_DOMAIN
+    else process.env.SKD_PUBLISH_DOMAIN = saved
+  }
 })

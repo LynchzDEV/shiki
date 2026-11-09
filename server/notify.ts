@@ -16,7 +16,7 @@ const MAX_FINGERPRINTS = 500
 export const MAX_PENDING = 200
 export const MAX_MOCKUP_BYTES = 5 * 1024 * 1024
 
-export type NotifyEventName = 'pick' | 'question' | 'failed' | 'stage-ready' | 'ready' | 'landed' | 'blocked' | 'permission' | 'slow' | 'sync-failed'
+export type NotifyEventName = 'pick' | 'question' | 'failed' | 'stage-ready' | 'ready' | 'landed' | 'blocked' | 'permission' | 'slow' | 'sync-failed' | 'picked' | 'pick-unclear' | 'publish-failed'
 
 export type ImageRef = { option: string; root: string; relative: string }
 
@@ -29,6 +29,7 @@ export type NotifyEvent = {
   detail: string; questions: string[]; options: string[]; recommended: string | null
   mockups: NotifyMockup[]
   landStage: string | null
+  host: string | null; owner: string | null; pickedBy: string | null
 }
 
 export type NotifyInput = {
@@ -41,6 +42,7 @@ export type NotifyInput = {
   detail?: string; questions?: string[]; options?: string[]; recommended?: string | null
   mockups?: ImageRef[]
   landStage?: string | null
+  host?: string | null; owner?: string | null; pickedBy?: string | null
 }
 
 export type SendResult = { ok: true; status: number } | { ok: false; status: number | null; error?: string }
@@ -151,6 +153,7 @@ export function createNotifier(deps: NotifyDeps): Notifier {
       node: input.node ?? null, itemState: input.itemState ?? null, runStatus: input.runStatus ?? null, clickupStatus: input.clickupStatus ?? null,
       detail: (input.detail ?? '').slice(0, MAX_DETAIL), questions: input.questions ?? [], options: input.options ?? [], recommended: input.recommended ?? null,
       landStage: input.landStage ?? null,
+      host: input.host ?? null, owner: input.owner ?? null, pickedBy: input.pickedBy ?? null,
     }
   }
 

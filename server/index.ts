@@ -37,7 +37,7 @@ import { getSetting } from './plugins/settings'
 import { isWorktreeOf, prepareWorktree } from './job-worktrees'
 import { getInstalled } from './plugins/store'
 import { createQueueEngine, type QueueEngine } from './queue-engine'
-import { writeQueueContext } from './queue-files'
+import { cardImageFiles, writeQueueContext } from './queue-files'
 import { pluginSource } from './queue-source'
 import { createQueueStore, queuePath } from './queue-store'
 import { queueRoutes } from './routes/queue'
@@ -51,6 +51,7 @@ import { raiseQueueAlert, raiseSyncAlert, sweepQueueAlerts, watchQueueAlerts } f
 import { statusMaps } from './queue-status'
 import { createStatusSync, type StatusSync } from './queue-status-sync'
 import { createNotifier } from './notify'
+import { publish, publishDir, publishDomain } from './publish'
 import { createNotifyEvents } from './notify-events'
 import { notifyRoutes } from './routes/notify'
 import type { QueueItem } from './queue-store'
@@ -250,6 +251,9 @@ export async function createApp(): Promise<Elysia> {
     backupDir: itemId => join(configDir(), 'queue-files', itemId),
     needsYou: (item, reason) => { void raiseQueueAlert(attention, item, reason).catch(error => console.error('Queue alert failed', error)); notifyOn.queue(item, reason) },
     autoPick: async id => (await getSetting(id, 'autoPick')) === 'true',
+    pickIn: async id => (id !== undefined && (await getSetting(id, 'pickIn'))?.trim().toLowerCase() === 'shikidan' ? 'shikidan' : 'clickup'),
+    publish: async item => publish(item, { dir: publishDir(), domain: publishDomain(), cardImages: item.worktree === null ? [] : await cardImageFiles(item.worktree, item.source) }),
+    notify: (item, event) => notifyOn.pickReply(item, event),
     parallel: async () => (await readConfig()).queueParallel,
   })
   watchQueueAlerts(queueStore, attention)

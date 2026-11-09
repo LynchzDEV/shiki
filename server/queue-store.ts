@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
+import type { Published } from './publish'
 import { isRepoList } from './repo-names'
 import type { RunEvents } from './run-events'
 import { configDir } from './secrets'
@@ -11,7 +12,8 @@ export const QUEUE_FILE = 'queue.json'
 
 export type QueueState = typeof QUEUE_STATES[number]
 
-export type QueuePick = { options: string[]; path: string; recommended: string | null; tester: string | null; summary: string }
+export type PickAsk = { ref: string; ownerId: string; ownerName: string; meId: string; host: string | null; postedAt: number; posting?: true; error?: string }
+export type QueuePick = { options: string[]; path: string; recommended: string | null; tester: string | null; summary: string; ask?: PickAsk }
 export type LandStageState = {
   status: 'running' | 'ok' | 'failed' | 'waiting' | 'skipped'
   startedAt?: number; endedAt?: number; exitCode?: number | null; posted?: string; warning?: string
@@ -27,7 +29,7 @@ export type QueueItem = {
   runIds: string[]; currentRunId: string | null; questions: string[]; lastSeenId: string | null; error: string | null
   createdAt: number; updatedAt: number; repos?: string[]; repoReruns?: number
   realBaseline?: Record<string, string>; realChanged?: string[]; pick?: QueuePick; land?: LandProgress; autoPicks?: number; resumeRunId?: string
-  askedIn?: 'shikidan'; recoverRebuilds?: number; recoverBuild?: BuildRecover; syncedStatus?: string
+  askedIn?: 'shikidan'; recoverRebuilds?: number; recoverBuild?: BuildRecover; syncedStatus?: string; published?: Published
 }
 
 export type NewQueueItem = Pick<QueueItem, 'source' | 'externalId' | 'title' | 'url' | 'repo' | 'flowId' | 'repos'>
@@ -53,7 +55,19 @@ const isTextRecord = (value: unknown): boolean => typeof value === 'object' && v
 function isPick(value: unknown): boolean {
   if (typeof value !== 'object' || value === null) return false
   const pick = value as Record<string, unknown>
-  return isTexts(pick.options) && isText(pick.path) && isText(pick.summary) && isTextOrNull(pick.recommended) && isTextOrNull(pick.tester)
+  return isTexts(pick.options) && isText(pick.path) && isText(pick.summary) && isTextOrNull(pick.recommended) && isTextOrNull(pick.tester) && (pick.ask === undefined || isAsk(pick.ask))
+}
+
+function isAsk(value: unknown): boolean {
+  if (!isRecord(value)) return false
+  const ask = value as Record<string, unknown>
+  return [ask.ref, ask.ownerId, ask.ownerName, ask.meId].every(isText) && isTextOrNull(ask.host) && typeof ask.postedAt === 'number' && (ask.posting === undefined || ask.posting === true) && (ask.error === undefined || isText(ask.error))
+}
+
+function isPublished(value: unknown): boolean {
+  if (!isRecord(value)) return false
+  const published = value as Record<string, unknown>
+  return isText(published.sub) && isText(published.host) && typeof published.at === 'number'
 }
 
 function isItem(value: unknown): value is QueueItem {
@@ -75,6 +89,7 @@ function isItem(value: unknown): value is QueueItem {
     && (item.recoverRebuilds === undefined || isCount(item.recoverRebuilds))
     && (item.recoverBuild === undefined || isStoredBuild(item.recoverBuild))
     && (item.syncedStatus === undefined || isText(item.syncedStatus))
+    && (item.published === undefined || isPublished(item.published))
 }
 
 const isCount = (value: unknown): boolean => Number.isInteger(value) && (value as number) >= 0
@@ -152,6 +167,7 @@ export function createQueueStore(path: string, clock: () => number = Date.now): 
       if ('pick' in patch && patch.pick === undefined) delete next.pick
       if ('land' in patch && patch.land === undefined) delete next.land
       if ('recoverBuild' in patch && patch.recoverBuild === undefined) delete next.recoverBuild
+      if ('published' in patch && patch.published === undefined) delete next.published
       if (next.state !== 'waiting-info' || ('askedIn' in patch && patch.askedIn === undefined)) delete next.askedIn
       if (('resumeRunId' in patch && patch.resumeRunId === undefined) || !RESUMABLE.has(next.state)) delete next.resumeRunId
       await save(items.map(item => (item.id === id ? next : item)))

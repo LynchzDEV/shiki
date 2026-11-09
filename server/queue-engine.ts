@@ -4,8 +4,10 @@ import type { TaskContext } from './plugins/context-files'
 import { backUpAnswers, dropAnswerBackups, restoreAnswers } from './queue-answers'
 import { agentCouldFix, bizQuestionsOf, blockedSummary, cardImagesMarkdown, NO_PICK, noPickMarkdown, pickOf, repoRequestsOf, runRequest, SETTLED, oneLine, stillOpenMarkdown, techQuestionsOf, type PickAnswer, type RunView } from './queue-prompts'
 import { adoptionProblem, grantRepos, movedRealRepos, movedText, realRepoStates, reposToOffer, SINGLE_REPO_ASK } from './queue-repo-asks'
-import { importCardImages, queueFolder, refuseLinkedQueueFolders } from './queue-files'
+import { cardImagesFolder, importCardImages, refuseLinkedQueueFolders } from './queue-files'
 import { createLand, PICK_FILE, type Land } from './queue-land'
+import { isAsked, pickAsker, type PickAsker, type PickIn, type PickReplyEvent } from './queue-pick-ask'
+import type { Published } from './publish'
 import { afterRecoveries, applyRecovery, askOwner, buildRecoveryRequest, MAX_BUILD_RECOVERIES, ownerAnswerText, recoverGraph, withOpenBiz } from './queue-recover'
 import { buildReport } from './queue-report'
 import { QueueRefusal } from './queue-refusal'
@@ -34,6 +36,9 @@ export type QueueEngineDeps = {
   backupDir(itemId: string): string
   needsYou(item: QueueItem, reason: string): void
   autoPick?(pluginId: string): Promise<boolean>
+  pickIn?(pluginId: string | undefined): Promise<PickIn>
+  publish?(item: QueueItem): Promise<Published>
+  notify?(item: QueueItem, event: PickReplyEvent): void
   parallel?(): Promise<number>
   now?: () => number
 }
@@ -131,7 +136,30 @@ type QueueSteps = {
   paused(): QueuePause | null
 }
 
-function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string | null) => void, wake: () => void, onPausedChange: () => void): QueueSteps {
+async function pickNow(deps: QueueEngineDeps, id: string, choice: PickChoice): Promise<void> {
+  const item = found(deps.store, id)
+  if (item.state !== 'waiting-pick' || item.pick === undefined) throw stateRefusal(item.state)
+  if (isRunningInStudio(deps, item)) throw new QueueRefusal('It is running in Studio now', 409)
+  const none = choice.option === NO_PICK
+  if (!none && !item.pick.options.includes(choice.option)) throw new QueueRefusal(`Not an option: ${choice.option}`, 409)
+  if (none && (choice.feedback ?? '').trim() === '') throw new QueueRefusal('Say what should change', 400)
+  if (!none && choice.feedback !== undefined) throw new QueueRefusal('Feedback is only for none of these', 400)
+  if (item.worktree === null) throw new QueueRefusal('It has no workspace', 409)
+  try {
+    await writePick(deps, item, item.worktree, choice)
+  } catch (error) {
+    if (error instanceof WorktreeGone) throw new QueueRefusal(error.message, 409)
+    throw error
+  }
+}
+
+function isRunningInStudio(deps: QueueEngineDeps, item: QueueItem): boolean {
+  const lastRunId = item.runIds.at(-1)
+  const run = lastRunId === undefined ? undefined : deps.runner.get(lastRunId)
+  return run !== undefined && !SETTLED.has(run.status)
+}
+
+function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string | null) => void, wake: () => void, onPausedChange: () => void, asker: () => PickAsker): QueueSteps {
   const { store } = deps
   const now = deps.now ?? Date.now
   let paused: QueuePause | null = null
@@ -185,6 +213,7 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
     if (picked !== null) {
       if (picked.recommended !== null && await autoPicked(item, picked.recommended, run.workflow?.plugin)) return
       const parked = await store.update(item.id, { state: 'waiting-pick', pick: { ...picked, summary: blockedSummary(run) }, questions, currentRunId: null })
+      if (await asker().asksInSource(parked, run.workflow?.plugin)) return asker().ask(parked)
       deps.needsYou(parked, 'Pick a design variant')
       return
     }
@@ -334,7 +363,7 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
   async function contextIn(item: QueueItem, worktree: string): Promise<string> {
     if (item.contextPath !== null && await fileExists(item.contextPath)) return item.contextPath
     const detail = await deps.source(item.source).item({ id: item.externalId })
-    const outcomes = await importCardImages(deps.pluginFiles(item.source), detail.images ?? [], join(queueFolder(worktree, item.source), 'card-images'))
+    const outcomes = await importCardImages(deps.pluginFiles(item.source), detail.images ?? [], cardImagesFolder(worktree, item.source))
     return deps.writeContext(item.source, { name: `item-${item.externalId}`, markdown: detail.contextMarkdown + cardImagesMarkdown(outcomes) }, worktree)
   }
 
@@ -409,7 +438,8 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
   const tell = (): void => { for (const listener of checkListeners) listener() }
   let preparingId: string | null = null
   const land = createLand({ ...deps, settleRun: (run) => { void onRunSettled(run).catch(error => console.error('Queue settle failed', error)) } })
-  const { answeredBuildRecovery, atBoot, failer, fail, settle, startNext, paused } = queueSteps(deps, land, (id) => { preparingId = id; tell() }, () => { void kick().catch(error => console.error('queue resume failed', error)) }, () => tell())
+  let asker: PickAsker | undefined
+  const { answeredBuildRecovery, atBoot, failer, fail, settle, startNext, paused } = queueSteps(deps, land, (id) => { preparingId = id; tell() }, () => { void kick().catch(error => console.error('queue resume failed', error)) }, () => tell(), () => asker!)
   let lane: Promise<unknown> = Promise.resolve()
   const serial = <T>(work: () => Promise<T>): Promise<T> => {
     const result = lane.then(work)
@@ -440,11 +470,7 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
     return store.get(item.id) ?? item
   }
 
-  const runningInStudio = (item: QueueItem): boolean => {
-    const lastRunId = item.runIds.at(-1)
-    const run = lastRunId === undefined ? undefined : deps.runner.get(lastRunId)
-    return run !== undefined && !SETTLED.has(run.status)
-  }
+  const runningInStudio = (item: QueueItem): boolean => isRunningInStudio(deps, item)
 
   const requeue = (id: string, options: RequeueOptions = {}): Promise<QueueItem> => serial(async () => {
     const item = found(store, id)
@@ -453,26 +479,16 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
     const resumeRunId = item.state === 'failed' && options.fresh !== true ? item.resumeRunId : undefined
     const unsentNote = item.recoverBuild?.runId === resumeRunId ? item.recoverBuild?.note : undefined
     await store.update(id, { state: 'queued', error: null, currentRunId: null, pick: undefined, land: undefined, questions: [], repoReruns: item.repoReruns === undefined ? undefined : 0, realChanged: item.realChanged === undefined ? undefined : [], resumeRunId, recoverBuild: unsentNote === undefined ? undefined : { runId: resumeRunId!, attempts: 0, note: unsentNote } })
+    await asker!.close(item)
     await store.move(id, store.list().length)
     await startNext()
     return found(store, id)
   })
 
   const pick = (id: string, choice: PickChoice): Promise<QueueItem> => serial(async () => {
-    const item = found(store, id)
-    if (item.state !== 'waiting-pick' || item.pick === undefined) throw stateRefusal(item.state)
-    if (runningInStudio(item)) throw new QueueRefusal('It is running in Studio now', 409)
-    const none = choice.option === NO_PICK
-    if (!none && !item.pick.options.includes(choice.option)) throw new QueueRefusal(`Not an option: ${choice.option}`, 409)
-    if (none && (choice.feedback ?? '').trim() === '') throw new QueueRefusal('Say what should change', 400)
-    if (!none && choice.feedback !== undefined) throw new QueueRefusal('Feedback is only for none of these', 400)
-    if (item.worktree === null) throw new QueueRefusal('It has no workspace', 409)
-    try {
-      await writePick(deps, item, item.worktree, choice)
-    } catch (error) {
-      if (error instanceof WorktreeGone) throw new QueueRefusal(error.message, 409)
-      throw error
-    }
+    const asked = found(store, id)
+    await pickNow(deps, id, choice)
+    await asker!.close(asked, choice)
     await startNext()
     return found(store, id)
   })
@@ -496,6 +512,7 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
     const item = found(store, id)
     if (item.state === 'building') await stopRun(item)
     if (item.state === 'landing') { await stopRun(item); land.halt(id) }
+    await asker!.close(item)
     await store.remove(id)
     await dropAnswerBackups(deps.backupDir(id)).catch(error => console.error('queue answer backups not removed', error))
   })
@@ -507,10 +524,12 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
   })
 
   const replies = replyCheck(deps, fail)
+  asker = pickAsker(deps, { pickNow: (id, choice) => pickNow(deps, id, choice), keep: replies.keep })
+  const readsReplies = (item: QueueItem): boolean => item.worktree !== null && ((item.state === 'waiting-info' && item.askedIn !== 'shikidan') || isAsked(item))
   const stillWaiting = (read: QueueItem): { item: QueueItem; worktree: string } | undefined => {
     const item = store.get(read.id)
-    if (item?.state !== 'waiting-info' || item.lastSeenId !== read.lastSeenId || item.worktree === null || runningInStudio(item)) return undefined
-    return { item, worktree: item.worktree }
+    if (item === undefined || !readsReplies(item) || item.state !== read.state || item.lastSeenId !== read.lastSeenId || item.pick?.ask?.ref !== read.pick?.ask?.ref || runningInStudio(item)) return undefined
+    return { item, worktree: item.worktree! }
   }
 
   let lastCheckedAt: number | null = null
@@ -520,14 +539,16 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
   }
 
   const checkReplies = async (): Promise<{ checked: number; resumed: number }> => {
-    const waiting = store.list().filter(item => item.state === 'waiting-info' && item.worktree !== null && item.askedIn !== 'shikidan')
+    await serial(() => asker!.askUnasked())
+    const waiting = store.list().filter(readsReplies)
     const reads = await Promise.allSettled(waiting.map(item => runningInStudio(item) ? Promise.resolve(null) : replies.read(item)))
     return serial(async () => {
       let resumed = 0
       for (const [index, read] of reads.entries()) {
         const current = stillWaiting(waiting[index]!)
         if (read.status !== 'fulfilled' || read.value === null || current === undefined) continue
-        if (await replies.apply(current.item, current.worktree, read.value)) resumed += 1
+        const apply = current.item.state === 'waiting-pick' ? asker!.apply : replies.apply
+        if (await apply(current.item, current.worktree, read.value)) resumed += 1
       }
       await startNext()
       return { checked: waiting.length, resumed }
@@ -568,6 +589,7 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
           else if (SETTLED.has(run.status)) await settle(run)
         }
       })
+      await asker!.askUnasked()
       await startNext()
     })
   }

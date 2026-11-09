@@ -2,6 +2,7 @@ import { join } from 'node:path'
 
 import type { JobRecord } from './jobs'
 import type { ImageRef, Notifier, NotifyEventName, NotifyInput, NotifyMockup } from './notify'
+import type { PickReplyEvent } from './queue-pick-ask'
 import type { QueueItem, QueueState } from './queue-store'
 import type { WorkflowRun } from './workflow-runner'
 
@@ -43,8 +44,11 @@ function itemFields(item: QueueItem, run: RunView | undefined) {
   }
 }
 
+const queueEvent = (item: QueueItem): NotifyEventName | undefined =>
+  item.state === 'waiting-pick' && item.pick?.ask?.error !== undefined ? 'publish-failed' : QUEUE_EVENT[item.state]
+
 export function queueInput(item: QueueItem, reason: string, run: RunView | undefined): NotifyInput | null {
-  const event = QUEUE_EVENT[item.state]
+  const event = queueEvent(item)
   if (event === undefined) return null
   const questions = item.state === 'waiting-info' ? item.questions : []
   const options = item.pick?.options ?? []
@@ -55,6 +59,7 @@ export function queueInput(item: QueueItem, reason: string, run: RunView | undef
     questions, options, recommended: item.pick?.recommended ?? null,
     mockups: item.state === 'waiting-pick' ? mockupsOf(item) : [],
     landStage: item.land?.stage ?? null,
+    host: item.pick?.ask?.host ?? null, owner: item.pick?.ask?.ownerName || null,
   }
 }
 
@@ -93,6 +98,10 @@ export function createNotifyEvents(deps: NotifyEventsDeps) {
       const { item, run } = ofJob(record)
       const minutes = Math.floor(((record.slowAt ?? Date.now()) - record.startedAt) / 60_000)
       emit(jobInput('slow', record, `${record.id}:slow`, `May be stuck: ${record.turns} turns in ${minutes} min`, item, run))
+    },
+    pickReply: (item: QueueItem, reply: PickReplyEvent): void => {
+      const detail = reply.event === 'picked' ? reply.option : reply.text
+      emit({ ...itemFields(item, undefined), event: reply.event, fingerprintKey: `${item.id}:${reply.event}:${reply.replyId}`, detail, pickedBy: reply.by, host: item.pick?.ask?.host ?? item.published?.host ?? null, owner: item.pick?.ask?.ownerName || null })
     },
     syncFailed: (item: QueueItem, status: string, error: string): void => {
       emit({ ...itemFields(item, undefined), event: 'sync-failed', fingerprintKey: `${item.id}:sync-failed`, detail: `ClickUp status sync to ${status} failed: ${error}` })

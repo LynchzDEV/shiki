@@ -18,6 +18,7 @@ const MAX_LABEL = 63
 const ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789'
 
 export const publishDir = (): string => join(configDir(), 'published')
+export const publishDomain = (): string => process.env.SKD_PUBLISH_DOMAIN || 'shikidan.com'
 
 function randomToken(length: number): string {
   let token = ''
