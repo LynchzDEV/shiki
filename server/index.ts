@@ -48,6 +48,9 @@ import { outcomesRoutes } from './routes/outcomes'
 import { attentionRoutes } from './routes/attention'
 import { createAttentionStore } from './attention'
 import { raiseQueueAlert, sweepQueueAlerts, watchQueueAlerts } from './queue-attention'
+import { createNotifier } from './notify'
+import { createNotifyEvents } from './notify-events'
+import type { QueueItem } from './queue-store'
 import { createOutcomeLedger, OUTCOME_RETENTION_MS } from './outcomes'
 import { createSessionResolver } from './outcome-session'
 import { secretsRoutes } from './routes/secrets'
@@ -169,9 +172,13 @@ export async function createApp(): Promise<Elysia> {
   const runEvents = createRunEvents()
   const attention = createAttentionStore()
   const attentionOn = attentionEvents(attention)
+  const notifier = createNotifier({ config: async () => { const secrets = await readSecrets(); return { url: secrets.notifyWebhookUrl, key: secrets.notifyWebhookKey } } })
+  void notifier.resume()
+  let queueItems: () => QueueItem[] = () => []
+  const notifyOn = createNotifyEvents({ notifier, items: () => queueItems(), run: id => workflowRunner.get(id) })
   const jobManager = createJobManager({
-    onJobSlow: (record) => { void attentionOn.slow(record).catch(error => console.error('Attention raise failed', error)) },
-    onPermissionRequest: (record, request) => { void attentionOn.permission(record, request).catch(error => console.error('Attention raise failed', error)) },
+    onJobSlow: (record) => { notifyOn.slow(record); void attentionOn.slow(record).catch(error => console.error('Attention raise failed', error)) },
+    onPermissionRequest: (record, request) => { notifyOn.permission(record, request); void attentionOn.permission(record, request).catch(error => console.error('Attention raise failed', error)) },
     onJobStarted: (record) => { log(jobLine('started', record)); runEvents.changed(); void attentionOn.started(record).catch(() => {}) },
     onJobProgress: () => runEvents.changed(),
     onJobSettled: (record) => {
@@ -203,6 +210,7 @@ export async function createApp(): Promise<Elysia> {
     terminals: terminalRegistry,
     onRunSettled: run => {
       void chatFlusher.onRunSettled(run).catch(error => console.error('Workflow chat report failed', error))
+      notifyOn.runSettled(run)
       void queueEngine?.onRunSettled(run).catch(error => console.error('Queue settle failed', error))
     },
     onSessionStep: run => { void chatFlusher.onSessionStep(run).catch(error => console.error('In Session chat nudge failed', error)) },
@@ -222,6 +230,7 @@ export async function createApp(): Promise<Elysia> {
   const workflowBuilder = createWorkflowBuilder({ manager: jobManager, resolver: realEngineResolver, store: workflowStore })
   await workflowRunner.recover()
   const queueStore = createQueueStore(queuePath())
+  queueItems = () => queueStore.list()
   registerQueueWorkspaces(path => queueStore.list().some(item => item.repos !== undefined && item.worktree === path))
   queueEngine = createQueueEngine({
     store: queueStore,
@@ -233,7 +242,7 @@ export async function createApp(): Promise<Elysia> {
     writeContext: (pluginId, context, cwd) => writeQueueContext(pluginId, context, cwd),
     pluginFiles: pluginId => join(configDir(), 'plugin-data', pluginId, 'files'),
     backupDir: itemId => join(configDir(), 'queue-files', itemId),
-    needsYou: (item, reason) => { void raiseQueueAlert(attention, item, reason).catch(error => console.error('Queue alert failed', error)) },
+    needsYou: (item, reason) => { void raiseQueueAlert(attention, item, reason).catch(error => console.error('Queue alert failed', error)); notifyOn.queue(item, reason) },
     autoPick: async id => (await getSetting(id, 'autoPick')) === 'true',
     parallel: async () => (await readConfig()).queueParallel,
   })
