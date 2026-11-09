@@ -1,5 +1,5 @@
 import { ApiError, segment } from '../client'
-import { arg, countOpt, emit, flag, oneOf, records, stringOpt, UsageError, type Command, type Context } from '../command'
+import { arg, countOpt, emit, flag, listOpt, records, stringOpt, UsageError, type Command, type Context } from '../command'
 import { cell, keyValue, relativeAge, table } from '../format'
 
 const ROLE_NAMES = ['plan', 'execute', 'review'] as const
@@ -10,6 +10,7 @@ const DEFAULT_ENGINE = 'claude'
 const USAGE_WINDOWS: Array<[string, string]> = [['fiveHourPct', '5h'], ['weeklyPct', 'week'], ['monthlyPct', 'month']]
 
 type RoleAssignment = { engine: string; model: string | null }
+type ConnectionDoc = { builtins: string[]; connections: Array<Record<string, unknown>>; presets: Array<Record<string, unknown>> }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -54,12 +55,22 @@ function roleNames(roles: Record<string, unknown>): string[] {
   return [...ROLE_NAMES, ...Object.keys(roles).filter((name) => !(ROLE_NAMES as readonly string[]).includes(name) && !NOT_ROLES.includes(name) && isRecord(roles[name]))]
 }
 
+async function connectionDoc(ctx: Context): Promise<ConnectionDoc> {
+  const doc = await ctx.client.get('/api/studio/connections')
+  const builtins = isRecord(doc) && Array.isArray(doc.builtins) ? doc.builtins.filter((id): id is string => typeof id === 'string') : []
+  return { builtins, connections: records(doc, 'connections'), presets: records(doc, 'presets') }
+}
+
 async function setRole(ctx: Context): Promise<void> {
   const role = arg(ctx, 'role')
   if (!ROLE_NAME.test(role) || NOT_ROLES.includes(role)) throw new UsageError('role must be plan, execute, review or a name of letters, digits, - and _')
+  const engine = arg(ctx, 'connection')
+  const doc = await connectionDoc(ctx).catch((error: unknown) => { if (error instanceof ApiError && error.status === 403) return null; throw error })
+  const ids = doc && [...doc.builtins, ...doc.connections.map((connection) => String(connection.id))]
+  if (ids && !ids.includes(engine)) throw new UsageError(`unknown AI "${engine}": use one of ${ids.join(', ')}, or add one with shiki connection add <preset>`)
   const current = await ctx.client.get('/api/roles')
   const roles = Object.fromEntries(roleNames(isRecord(current) ? current : {}).map((name) => [name, roleAssignment(isRecord(current) ? current[name] : undefined)]))
-  const next = { ...roles, [role]: { engine: arg(ctx, 'engine'), model: stringOpt(ctx, 'model') ?? null } }
+  const next = { ...roles, [role]: { engine, model: stringOpt(ctx, 'model') ?? null } }
   emit(ctx, await ctx.client.post('/api/roles', next), keyValue)
 }
 
@@ -117,6 +128,48 @@ async function connectionModels(ctx: Context): Promise<void> {
   emit(ctx, state, (value) => modelsText(isRecord(record.models) ? record.models[id] : [], value))
 }
 
+function connectionChanges(ctx: Context): Record<string, unknown> {
+  const command = stringOpt(ctx, 'command')
+  const args = listOpt(ctx, 'arg')
+  const models = listOpt(ctx, 'model')
+  return { ...(command === undefined ? {} : { command }), ...(args.length ? { args } : {}), ...(models.length ? { models } : {}) }
+}
+
+async function saveConnection(ctx: Context, body: Record<string, unknown>): Promise<void> {
+  const probe = flag(ctx, 'probe')
+  if (probe && body.adapter === 'cli') throw new UsageError('CLI connections have no capability probe; drop --probe')
+  const saved = await ctx.client.post('/api/studio/connections', body)
+  if (!probe) return emit(ctx, saved, keyValue)
+  emit(ctx, { connection: saved, probe: await ctx.client.post(`/api/studio/connections/${segment(String(body.id))}/probe`) }, keyValue)
+}
+
+async function addConnection(ctx: Context): Promise<void> {
+  const name = arg(ctx, 'preset')
+  const doc = await connectionDoc(ctx)
+  const preset = doc.presets.find((candidate) => candidate.id === name)
+  if (!preset) throw new UsageError(`unknown preset "${name}": use one of ${doc.presets.map((candidate) => String(candidate.id)).join(', ')}`)
+  const id = stringOpt(ctx, 'id') ?? name
+  if (doc.builtins.includes(id)) throw new UsageError(`"${id}" is a built-in AI`)
+  if (doc.connections.some((connection) => connection.id === id)) throw new UsageError(`connection "${id}" already exists: use shiki connection set ${id}`)
+  await saveConnection(ctx, { ...preset, id, ...connectionChanges(ctx) })
+}
+
+async function setConnection(ctx: Context): Promise<void> {
+  const id = arg(ctx, 'id')
+  const changes = connectionChanges(ctx)
+  if (Object.keys(changes).length === 0) throw new UsageError('nothing to change: pass --command, --arg or --model')
+  const current = (await connectionDoc(ctx)).connections.find((connection) => connection.id === id)
+  if (!current) throw new ApiError(404, `Connection "${id}" is not configured`)
+  await saveConnection(ctx, { ...current, ...changes })
+}
+
+const CONNECTION_OPTIONS = {
+  command: { type: 'string', description: 'command that starts the AI', placeholder: 'CMD' },
+  arg: { type: 'string', multiple: true, description: 'one argument (replaces the saved list)', placeholder: 'ARG' },
+  model: { type: 'string', multiple: true, description: 'one model id (replaces the saved list)', placeholder: 'M' },
+  probe: { type: 'boolean', description: 'check the connection after saving' },
+} as const
+
 const MODEL_OPTION = { model: { type: 'string', description: 'model id', placeholder: 'M' } } as const
 
 export const systemCommands: Command[] = [
@@ -132,9 +185,9 @@ export const systemCommands: Command[] = [
   { path: ['roles'], summary: 'Show which engine plays each role, and the fallback AI', run: async (ctx) => emit(ctx, await ctx.client.get('/api/roles'), keyValue) },
   {
     path: ['roles', 'set'],
-    args: ['role', 'engine'],
+    args: ['role', 'connection'],
     options: MODEL_OPTION,
-    summary: 'Assign an engine (and optional model) to plan, execute, review or a named role',
+    summary: 'Give plan, execute, review or a named role to a built-in or connected AI (see shiki connections)',
     run: setRole,
   },
   { path: ['models'], summary: 'List the models each engine offers', run: async (ctx) => emit(ctx, await ctx.client.get('/api/models'), keyValue) },
@@ -219,6 +272,26 @@ export const systemCommands: Command[] = [
     run: async (ctx) => emit(ctx, await ctx.client.get('/api/terminals/sessions', { cwd: stringOpt(ctx, 'cwd') ?? ctx.cwd }), keyValue),
   },
   { path: ['connections'], summary: 'Built-in and connected AI agents', run: async (ctx) => emit(ctx, await ctx.client.get('/api/studio/connections'), keyValue) },
+  {
+    path: ['connection', 'add'],
+    args: ['preset'],
+    options: { id: { type: 'string', description: 'connection id (default: the preset name)', placeholder: 'ID' }, ...CONNECTION_OPTIONS },
+    summary: 'Connect an AI from a preset: grok, qwen, opencode, custom-agent or custom-cli',
+    run: addConnection,
+  },
+  {
+    path: ['connection', 'set'],
+    args: ['id'],
+    options: CONNECTION_OPTIONS,
+    summary: 'Change the command, arguments or models of a connected AI',
+    run: setConnection,
+  },
+  {
+    path: ['connection', 'remove'],
+    args: ['id'],
+    summary: 'Remove a connected AI (refused while a role uses it)',
+    run: async (ctx) => emit(ctx, await ctx.client.del(`/api/studio/connections/${segment(arg(ctx, 'id'))}`), keyValue),
+  },
   {
     path: ['connection', 'probe'],
     args: ['id'],

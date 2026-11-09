@@ -25,9 +25,9 @@ description: Use when the user wants to set up, start, check, configure or opera
 | Claude Code | `claude` installed and signed in. It is the default chat AI. |
 | Codex | `codex login` (the user runs it; never sign in for them). Codex is the default reviewer. |
 | GLM | Browser → **Studio** → Manage AIs → GLM: base URL `https://api.z.ai/api/anthropic` plus a z.ai key |
-| Grok / others | Studio → Manage AIs → **Add an AI** (ACP agent, OpenCode, headless CLI), then **Check connection** |
+| Grok / others | `shiki connection add <grok\|qwen\|opencode\|custom-agent\|custom-cli> --probe` (or Studio → Manage AIs → **Add an AI**) |
 
-`shiki connections`, `shiki providers` and `shiki models` show what is connected. Roles decide who plans, builds and reviews (defaults: plan Claude, execute GLM, review Codex). Check them with `shiki roles` and change them with `shiki roles set <plan|execute|review> <engine> [--model <id>]`. A role pointing at an unconnected AI makes jobs fail, so move it to an AI the user has.
+`shiki connections`, `shiki providers` and `shiki models` show what is connected. Roles decide who plans, builds and reviews (defaults: plan Claude, execute GLM, review Codex). Check them with `shiki roles` and change them with `shiki roles set <plan|execute|review> <connection> [--model <id>]`, where the connection is a built-in (claude, glm, codex) or any id from `shiki connections`. Change or remove a connection with `shiki connection set <id>` / `shiki connection remove <id>`; removal is refused while a role uses it.
 
 ## 3. Everyday commands
 
@@ -46,7 +46,7 @@ description: Use when the user wants to set up, start, check, configure or opera
 
 Run `shiki` for every command and `shiki <group> --help` for options. Add `--json` when you parse the output (`job follow` prints NDJSON). Exit codes: `0` ok, `1` API error, `2` usage error, `3` unreachable. Target another instance with `--url` or `SKD_URL`. Non-local URLs need `SKD_TOKEN`.
 
-The browser handles what the CLI can't: revealing or rotating secrets, creating or deleting connections, editing workflows and policy, and attaching to a live terminal.
+The browser handles what the CLI can't: revealing or rotating secrets, editing workflows and policy, and attaching to a live terminal.
 
 ## 4. Rules
 

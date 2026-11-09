@@ -73,9 +73,19 @@ window), which engine and model play each role, and the fallback AI.
 Show the engine and model for each role, and the fallback AI that steps
 use when their role is not defined or their AI cannot start.
 .TP
-.BI "shiki roles set " "role engine" " \fR[\fB\-\-model\fR \fIM\fR]"
-Assign an engine (and optionally a model) to
-.IR role :
+.BI "shiki roles set " "role connection" " \fR[\fB\-\-model\fR \fIM\fR]"
+Give
+.I role
+to a built\-in AI
+.RB ( claude ,
+.BR glm ,
+.BR codex )
+or a connection id from
+.BR "shiki connections" ,
+and optionally a model.
+An AI that is not connected is refused before anything is saved.
+.I role
+is
 .BR plan ,
 .BR execute ,
 .B review
@@ -94,6 +104,36 @@ Connected AI providers.
 .TP
 .B shiki connections
 Built\-in and connected AI agents.
+.TP
+.BI "shiki connection add " preset " \fR[\fB\-\-id\fR \fIID\fR] [\fB\-\-command\fR \fICMD\fR] [\fB\-\-arg\fR \fIARG\fR]... [\fB\-\-model\fR \fIM\fR]... [\fB\-\-probe\fR]"
+Connect an AI from a preset:
+.BR grok ,
+.BR qwen ,
+.BR opencode ,
+.B custom\-agent
+or
+.BR custom\-cli .
+The id defaults to the preset name and must not exist yet.
+.B \-\-command
+replaces the preset's command,
+.B \-\-arg
+its arguments and
+.B \-\-model
+its model list; repeat the last two for more.
+The preset's model family comes along, so cross\-family review knows a
+.B grok
+connection is not Claude.
+.B \-\-probe
+checks the connection after saving (not for CLI connections).
+.TP
+.BI "shiki connection set " id " \fR[\fB\-\-command\fR \fICMD\fR] [\fB\-\-arg\fR \fIARG\fR]... [\fB\-\-model\fR \fIM\fR]... [\fB\-\-probe\fR]"
+Change a connected AI.
+Each option given replaces that part of the saved connection; the rest is kept.
+.TP
+.BI "shiki connection remove " id
+Remove a connected AI.
+Refused while a role or the fallback uses it; move the role first with
+.BR "shiki roles set" .
 .TP
 .BI "shiki connection probe " id
 Ask a connected agent what it can do.

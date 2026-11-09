@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { main, VERSION, type MainDeps } from '../cli/shiki'
+import { CONNECTION_PRESETS } from '../server/agent-connections'
 
 let configDir: string
 
@@ -21,7 +22,8 @@ type Call = { method: string; path: string; query: Record<string, string>; body:
 
 const ROLES = { plan: { engine: 'claude', model: null }, execute: { engine: 'glm', model: null }, review: { engine: 'codex', model: 'gpt-5' }, autoReview: false }
 const GROK_STATE = { models: ['grok-4.7', 'grok-4.5'], current: 'grok-4.7', checkedAt: Date.now() - 3 * 60_000, error: null }
-const CONNECTIONS = { builtins: ['claude'], connections: [{ id: 'grok', adapter: 'acp', models: ['grok-custom'] }], models: { grok: ['grok-4.7', 'grok-4.5', 'grok-custom'] }, discovery: { grok: GROK_STATE } }
+const GROK = { id: 'grok', name: 'Grok Build', adapter: 'acp', command: 'grok', args: ['agent', 'stdio'], env: {}, models: ['grok-custom'], family: 'grok', autoApprove: false, output: 'text', terminalArgs: [], provider: 'custom' }
+const CONNECTIONS = { builtins: ['claude', 'glm', 'codex'], connections: [GROK], presets: CONNECTION_PRESETS, models: { grok: ['grok-4.7', 'grok-4.5', 'grok-custom'] }, discovery: { grok: GROK_STATE } }
 const JOB = { id: 'job-1', status: 'done', engine: 'claude', label: 'Fix the bug', prompt: 'Fix the bug\nmore', startedAt: Date.now() - 120_000 }
 
 function cannedResponse(method: string, path: string): Response {
@@ -91,6 +93,30 @@ const ROWS: Row[] = [
   { argv: ['connection', 'probe', 'my-acp'], method: 'POST', path: '/api/studio/connections/my-acp/probe' },
   { argv: ['connection', 'models', 'grok'], method: 'GET', path: '/api/studio/connections' },
   { argv: ['connection', 'models', 'grok', '--refresh'], method: 'POST', path: '/api/studio/connections/grok/models/refresh' },
+  { argv: ['connection', 'add', 'qwen'], method: 'POST', path: '/api/studio/connections', body: { id: 'qwen', name: 'Qwen Code', adapter: 'acp', command: 'qwen', args: ['--acp'], family: 'qwen', terminalArgs: [] } },
+  {
+    argv: ['connection', 'add', 'grok', '--id', 'grok-team', '--model', 'grok-4.6', '--model', 'grok-4.5'],
+    method: 'POST',
+    path: '/api/studio/connections',
+    body: { id: 'grok-team', name: 'Grok Build', adapter: 'acp', command: 'grok', args: ['agent', 'stdio'], family: 'grok', terminalArgs: [], models: ['grok-4.6', 'grok-4.5'] },
+  },
+  {
+    argv: ['connection', 'add', 'custom-cli', '--id', 'mycli', '--command', 'mycli', '--arg', 'run', '--arg', '{{prompt}}'],
+    method: 'POST',
+    path: '/api/studio/connections',
+    body: { id: 'mycli', name: 'Custom headless CLI', adapter: 'cli', command: 'mycli', args: ['run', '{{prompt}}'] },
+  },
+  { argv: ['connection', 'add', 'qwen', '--probe'], method: 'POST', path: '/api/studio/connections/qwen/probe' },
+  { argv: ['connection', 'set', 'grok', '--model', 'grok-4.5'], method: 'POST', path: '/api/studio/connections', body: { ...GROK, models: ['grok-4.5'] } },
+  { argv: ['connection', 'set', 'grok', '--command', '/opt/grok', '--arg', 'agent'], method: 'POST', path: '/api/studio/connections', body: { ...GROK, command: '/opt/grok', args: ['agent'] } },
+  { argv: ['connection', 'set', 'grok', '--model', 'grok-4.6', '--probe'], method: 'POST', path: '/api/studio/connections/grok/probe' },
+  { argv: ['connection', 'remove', 'grok'], method: 'DELETE', path: '/api/studio/connections/grok' },
+  {
+    argv: ['roles', 'set', 'review', 'grok', '--model', 'grok-4.6'],
+    method: 'POST',
+    path: '/api/roles',
+    body: { plan: { engine: 'claude', model: null }, execute: { engine: 'glm', model: null }, review: { engine: 'grok', model: 'grok-4.6' } },
+  },
   { argv: ['flow-approval'], method: 'GET', path: '/api/flow-approval' },
   { argv: ['flow-approval', 'set', 'on'], method: 'PUT', path: '/api/flow-approval', body: { flowApproval: true } },
   { argv: ['flow-approval', 'set', 'false'], method: 'PUT', path: '/api/flow-approval', body: { flowApproval: false } },
@@ -243,6 +269,23 @@ describe('usage errors exit 2 without calling the server', () => {
       expect(h.err()).not.toBe('')
     })
   }
+
+  const refused: Array<[string, string[], string]> = [
+    ['connection add of an existing id', ['connection', 'add', 'grok'], 'connection "grok" already exists: use shiki connection set grok'],
+    ['connection add over a built-in', ['connection', 'add', 'qwen', '--id', 'claude'], '"claude" is a built-in AI'],
+    ['connection add of an unknown preset', ['connection', 'add', 'nope'], 'unknown preset "nope": use one of grok, qwen, opencode, custom-agent, custom-cli'],
+    ['connection add --probe on a CLI connection', ['connection', 'add', 'custom-cli', '--id', 'x', '--command', 'x', '--arg', '{{prompt}}', '--probe'], 'CLI connections have no capability probe'],
+    ['connection set with nothing to change', ['connection', 'set', 'grok'], 'nothing to change: pass --command, --arg or --model'],
+    ['roles set to an AI that is not connected', ['roles', 'set', 'review', 'ghost'], 'unknown AI "ghost": use one of claude, glm, codex, grok, or add one with shiki connection add <preset>'],
+  ]
+  for (const [name, argv, message] of refused) {
+    test(name, async () => {
+      const h = harness()
+      expect(await main(argv, h.deps)).toBe(2)
+      expect(h.calls.filter((call) => call.method !== 'GET')).toEqual([])
+      expect(h.err()).toContain(message)
+    })
+  }
 })
 
 describe('output', () => {
@@ -292,9 +335,15 @@ describe('output', () => {
   })
 
   test('roles set keeps the named roles already in Settings', async () => {
-    const h = harness((method, path) => method === 'GET' && path === '/api/roles' ? Response.json({ ...ROLES, builder: { engine: 'claude', model: 'opus' }, fallback: null }) : Response.json({ ok: true }))
+    const h = harness((method, path) => method === 'GET' && path === '/api/roles' ? Response.json({ ...ROLES, builder: { engine: 'claude', model: 'opus' }, fallback: null }) : cannedResponse(method, path))
     expect(await main(['roles', 'set', 'tester', 'codex'], h.deps)).toBe(0)
     expect(h.calls.at(-1)!.body).toEqual({ plan: ROLES.plan, execute: ROLES.execute, review: ROLES.review, builder: { engine: 'claude', model: 'opus' }, tester: { engine: 'codex', model: null } })
+  })
+
+  test('roles set leaves the AI check to the server when an API token may not list connections', async () => {
+    const h = harness((method, path) => path === '/api/studio/connections' ? Response.json({ error: 'forbidden' }, { status: 403 }) : cannedResponse(method, path))
+    expect(await main(['roles', 'set', 'review', 'grok'], h.deps)).toBe(0)
+    expect(h.calls.at(-1)).toMatchObject({ method: 'POST', path: '/api/roles', body: { review: { engine: 'grok', model: null } } })
   })
 
   test('status combines health, usage and roles', async () => {
@@ -338,6 +387,25 @@ describe('output', () => {
     const h = harness()
     expect(await main(['connection', 'models', 'ghost'], h.deps)).toBe(1)
     expect(h.err()).toContain('Connection "ghost" is not configured')
+  })
+
+  test('connection set with an unknown id is an API-style error and saves nothing', async () => {
+    const h = harness()
+    expect(await main(['connection', 'set', 'ghost', '--model', 'x'], h.deps)).toBe(1)
+    expect(h.err()).toContain('Connection "ghost" is not configured')
+    expect(h.calls.filter((call) => call.method !== 'GET')).toEqual([])
+  })
+
+  test('connection remove prints why the server refused', async () => {
+    const h = harness((method, path) => method === 'DELETE' ? Response.json({ error: 'Connection "grok" is in use by: review' }, { status: 409 }) : cannedResponse(method, path))
+    expect(await main(['connection', 'remove', 'grok'], h.deps)).toBe(1)
+    expect(h.err()).toContain('Connection "grok" is in use by: review')
+  })
+
+  test('connection add --probe --json prints the saved connection and what the probe found', async () => {
+    const h = harness((method, path) => path === '/api/studio/connections/qwen/probe' ? Response.json({ type: 'skd_capabilities', loadSession: true }) : method === 'POST' ? Response.json({ id: 'qwen', adapter: 'acp' }) : cannedResponse(method, path))
+    expect(await main(['connection', 'add', 'qwen', '--probe', '--json'], h.deps)).toBe(0)
+    expect(JSON.parse(h.out())).toEqual({ connection: { id: 'qwen', adapter: 'acp' }, probe: { type: 'skd_capabilities', loadSession: true } })
   })
 
   test('job show with an unknown id is an API-style error', async () => {
