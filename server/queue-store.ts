@@ -24,6 +24,12 @@ export type LandProgress = { stage: string; stages: Record<string, LandStageStat
 export type ResumeAt = { node: string; note?: string }
 export type CardLease = { holder: string; until: number }
 export type ActionKey = { key: string; action: string; paramsHash: string; result: unknown }
+export type DoctorAction = { action: 'pick'; params: { option: string; feedback?: string } } | { action: 'resume'; params: { at: string; note: string } }
+export type DoctorSuggestion = {
+  id: string; at: number; state: QueueState; askRef: string | null
+  intent: 'pick' | 'reject' | 'keep' | 'question' | 'off-topic' | 'unknown'; option?: string; replyId: string; confidence: number
+  actions: DoctorAction[]; reason: string; status: 'proposed' | 'applied' | 'dismissed' | 'stale'
+}
 export type BuildRecover = { runId: string; attempts: number; recoveryRunId?: string; asked?: true; openBiz?: string[]; addedRepos?: string[]; note?: string }
 
 export type QueueItem = {
@@ -33,7 +39,7 @@ export type QueueItem = {
   createdAt: number; updatedAt: number; repos?: string[]; repoReruns?: number
   realBaseline?: Record<string, string>; realChanged?: string[]; pick?: QueuePick; land?: LandProgress; autoPicks?: number; resumeRunId?: string
   askedIn?: 'shikidan'; recoverRebuilds?: number; recoverBuild?: BuildRecover; syncedStatus?: string; published?: Published
-  lease?: CardLease; actionKeys?: ActionKey[]; limitsResetAt?: number; resumeAt?: ResumeAt
+  lease?: CardLease; actionKeys?: ActionKey[]; limitsResetAt?: number; resumeAt?: ResumeAt; doctor?: DoctorSuggestion
 }
 
 export type NewQueueItem = Pick<QueueItem, 'source' | 'externalId' | 'title' | 'url' | 'repo' | 'flowId' | 'repos'>
@@ -97,9 +103,17 @@ function isItem(value: unknown): value is QueueItem {
     && (item.lease === undefined || isLease(item.lease))
     && (item.actionKeys === undefined || (Array.isArray(item.actionKeys) && item.actionKeys.every(isActionKey)))
     && (item.limitsResetAt === undefined || typeof item.limitsResetAt === 'number')
+    && (item.doctor === undefined || isDoctor(item.doctor))
     && (item.resumeAt === undefined || (isRecord(item.resumeAt) && isText((item.resumeAt as Record<string, unknown>).node) && ((item.resumeAt as Record<string, unknown>).note === undefined || isText((item.resumeAt as Record<string, unknown>).note))))
 }
 
+const DOCTOR_STATUSES = new Set(['proposed', 'applied', 'dismissed', 'stale'])
+const isDoctor = (value: unknown): boolean => {
+  if (!isRecord(value)) return false
+  const doctor = value as Record<string, unknown>
+  return [doctor.id, doctor.intent, doctor.replyId, doctor.reason].every(isText) && STATES.has(doctor.state as string) && DOCTOR_STATUSES.has(doctor.status as string)
+    && typeof doctor.at === 'number' && typeof doctor.confidence === 'number' && isTextOrNull(doctor.askRef) && Array.isArray(doctor.actions)
+}
 const isLease = (value: unknown): boolean => isRecord(value) && isText((value as Record<string, unknown>).holder) && typeof (value as Record<string, unknown>).until === 'number'
 const isActionKey = (value: unknown): boolean => isRecord(value) && [(value as Record<string, unknown>).key, (value as Record<string, unknown>).action, (value as Record<string, unknown>).paramsHash].every(isText)
 
@@ -180,6 +194,7 @@ export function createQueueStore(path: string, clock: () => number = Date.now): 
       if ('recoverBuild' in patch && patch.recoverBuild === undefined) delete next.recoverBuild
       if ('published' in patch && patch.published === undefined) delete next.published
       if ('lease' in patch && patch.lease === undefined) delete next.lease
+      if ('doctor' in patch && patch.doctor === undefined) delete next.doctor
       if (next.state !== 'waiting-info' || ('askedIn' in patch && patch.askedIn === undefined)) delete next.askedIn
       if (('resumeRunId' in patch && patch.resumeRunId === undefined) || !RESUMABLE.has(next.state)) delete next.resumeRunId
       if (next.resumeRunId === undefined || ('resumeAt' in patch && patch.resumeAt === undefined)) delete next.resumeAt

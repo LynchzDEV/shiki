@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { requireLocal, type GuardContext } from '../auth'
 import { peerAddress, trustedHostRequest } from '../local-access'
 import { actorSchema, cardToolbox, DEFAULT_CARD_LIMITS, HUMAN, type ActionMeta, type ActionName, type CardShow, type CardToolbox } from '../card-toolbox'
+import type { CardDoctor, DiagnoseMeta } from '../card-doctor'
 import { QueueRefusal, SourceFailure, type QueueEngine } from '../queue-engine'
 import { cleanPickSummary } from '../queue-prompts'
 import type { QueueItem, QueueStore } from '../queue-store'
@@ -41,6 +42,7 @@ const DO_RULE = `Send { params, actor, why }: ${ACTOR_RULE}, why is 1 to 1000 ch
 const claimSchema = z.object({ actor: doSchema.shape.actor, ms: z.number().int(), why: z.string().max(1000).optional() })
 const releaseSchema = z.object({ actor: doSchema.shape.actor, why: z.string().max(1000).optional() })
 const resetSchema = z.object({ actor: doSchema.shape.actor, why: doSchema.shape.why })
+const doctorSchema = z.object({ actor: actorSchema, why: z.string().trim().min(1).max(1000).optional() })
 const limitSchema = z.object({ actor: doSchema.shape.actor, action: z.enum(Object.keys(DEFAULT_CARD_LIMITS) as [string, ...string[]]), limit: z.number().int().min(0).max(MAX_CARD_LIMIT) })
 const confirmSchema = z.object({ confirm: z.literal(true) })
 const FROM_BROWSER: ActionMeta = { actor: 'human', why: 'browser' }
@@ -147,7 +149,15 @@ async function requireLocalExceptMockupAssets(context: GuardContext): Promise<vo
   return requireLocal(context)
 }
 
-export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: () => Promise<QueueTree> = () => queueTree(store.list()), runs: QueueRunLookup = NO_RUNS, onSettings: (settings: QueueSettings) => void = () => {}, toolbox: CardToolbox = cardToolbox({ store, engine })) {
+export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: () => Promise<QueueTree> = () => queueTree(store.list()), runs: QueueRunLookup = NO_RUNS, onSettings: (settings: QueueSettings) => void = () => {}, toolbox: CardToolbox = cardToolbox({ store, engine }), doctor?: CardDoctor) {
+  const doctorDoes = <T>(body: unknown, set: Status, work: (doctor: CardDoctor, meta: DiagnoseMeta) => Promise<T>) => {
+    const parsed = doctorSchema.safeParse(body ?? {})
+    if (!parsed.success) { set.status = 400; return { error: `Send { actor, why? }: ${ACTOR_RULE}, why is 1 to 1000 characters` } }
+    return fromSource(set, () => refusing(set, async () => {
+      if (doctor === undefined) throw new QueueRefusal('The card doctor is not set up', 404)
+      return work(doctor, { actor: parsed.data.actor, why: parsed.data.why ?? 'cli' })
+    }))
+  }
   const act = (id: string, action: ActionName, raw: unknown, set: Status, explain?: (error: unknown) => string) => fromSource(set, () => refusing(set, async () => {
     await toolbox.perform(id, action, raw ?? {}, FROM_BROWSER)
     return { item: cleaned(store.get(id)!) }
@@ -228,6 +238,13 @@ export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: 
       if (!parsed.success) { set.status = 400; return { error: `Send { actor, why }: ${ACTOR_RULE}, why is 1 to 1000 characters` } }
       return refusing(set, async () => { await toolbox.resetLimits(params.id, parsed.data.actor, parsed.data.why); return { ok: true } })
     })
+    .post('/api/queue/:id/doctor', ({ params, body, set }) => doctorDoes(body, set, (cardDoctor, meta) => cardDoctor.diagnose(params.id, meta)))
+    .get('/api/queue/:id/doctor', ({ params, set }) => refusing(set, async () => {
+      if (doctor === undefined) throw new QueueRefusal('The card doctor is not set up', 404)
+      return { suggestion: doctor.show(params.id) }
+    }))
+    .post('/api/queue/:id/doctor/apply', ({ params, body, set }) => doctorDoes(body, set, async (cardDoctor, meta) => ({ suggestion: await cardDoctor.apply(params.id, meta), item: cleaned(store.get(params.id)!) })))
+    .post('/api/queue/:id/doctor/dismiss', ({ params, body, set }) => doctorDoes(body, set, async (cardDoctor, meta) => ({ suggestion: await cardDoctor.dismiss(params.id, meta) })))
     .get('/api/queue/:id/show', ({ params, set }) => refusing(set, async () => shownCleaned(await toolbox.perform(params.id, 'show', {}, { actor: 'human', why: 'show' }))))
     .get('/api/queue/:id/history', ({ params, query, set }) => refusing(set, async () => {
       const lines = await toolbox.history(params.id, query.limit === undefined ? undefined : Number.parseInt(query.limit, 10) || undefined)

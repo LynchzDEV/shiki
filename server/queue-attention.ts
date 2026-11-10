@@ -3,8 +3,8 @@ import type { QueueItem, QueueStore } from './queue-store'
 
 const NEEDS_PERSON = new Set<QueueItem['state']>(['ready', 'failed', 'waiting-info', 'waiting-pick', 'awaiting-stage', 'landed'])
 
-export function raiseQueueAlert(attention: AttentionStore, item: QueueItem, reason: string): Promise<void> {
-  return attention.raise({ key: attentionKey.queue(item.id), kind: 'queue', title: item.title, detail: reason, command: null, chatId: null, jobId: null, requestId: null })
+export function raiseQueueAlert(attention: AttentionStore, item: QueueItem, reason: string, command: string | null = null): Promise<void> {
+  return attention.raise({ key: attentionKey.queue(item.id), kind: 'queue', title: item.title, detail: reason, command, chatId: null, jobId: null, requestId: null })
 }
 
 export type QueueNeedsYou = (item: QueueItem, reason: string, options?: { webhook?: boolean }) => void

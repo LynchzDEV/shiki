@@ -15,12 +15,13 @@ export type Actor = string
 export const ACTION_NAMES = ['show', 'note', 'resume', 'repost', 'say', 'pick', 'requeue', 'reread', 'answer', 'stop'] as const
 export type ActionName = typeof ACTION_NAMES[number]
 
+export type LoggedAction = 'claim' | 'release' | 'limits-reset' | 'diagnose' | 'dismiss'
 export type ActionTraits = { readOnly: boolean; destructive: boolean; openWorld: boolean; doctor: boolean }
 export type ActionMeta = { actor: Actor; why: string; key?: string; expect?: QueueState }
 export type CardSnapshot = { state: QueueState; node: string | null }
 
 export type AuditLine = {
-  at: number; cardId: string; actor: Actor; action: ActionName | 'claim' | 'release' | 'limits-reset'; why: string
+  at: number; cardId: string; actor: Actor; action: ActionName | LoggedAction; why: string
   params: unknown
   before: CardSnapshot
   after: CardSnapshot | null
@@ -72,6 +73,7 @@ export type CardToolbox = {
   limits(): Promise<CardLimits>
   resetLimits(id: string, actor: Actor, why: string): Promise<void>
   traits(action: ActionName, raw: unknown): ActionTraits
+  logged<T>(id: string, actor: Actor, name: 'diagnose' | 'dismiss', why: string, params: unknown, work: (item: QueueItem, history: AuditLine[]) => Promise<T>): Promise<T>
 }
 
 const SHOW_HISTORY = 10
@@ -257,13 +259,14 @@ export function cardToolbox(deps: ToolboxDeps): CardToolbox {
     })
   }
 
-  async function guarded(id: string, actor: Actor, name: 'claim' | 'release' | 'limits-reset', why: string, params: unknown, work: (item: QueueItem) => Promise<void>): Promise<void> {
+  async function guarded<T>(id: string, actor: Actor, name: LoggedAction, why: string, params: unknown, work: (item: QueueItem) => Promise<T>): Promise<T> {
     const item = found(id)
     auditPath(item.id)
     const line = { cardId: item.id, actor, action: name, why, params, before: snapshot(item) }
     try {
-      await work(item)
+      const result = await work(item)
       await audit({ ...line, after: snapshotAfter(item.id), result: 'ok' })
+      return result
     } catch (error) {
       await audit({ ...line, after: null, result: error instanceof QueueRefusal ? 'refused' : 'failed', error: errorText(error) })
       throw error
@@ -299,6 +302,7 @@ export function cardToolbox(deps: ToolboxDeps): CardToolbox {
     history: async (id, limit) => serial(() => history(id, limit)),
     limits,
     resetLimits,
+    logged: (id, actor, name, why, params, work) => serial(async () => guarded(id, actor, name, why, params, async item => work(item, await history(item.id)))),
     traits: (name, raw) => { const action = actionOf(name); return { ...NO_TRAITS, ...action.traits, ...action.traitsFor?.(action.params(raw)) } },
   }
 }

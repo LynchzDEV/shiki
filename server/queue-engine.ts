@@ -36,6 +36,7 @@ export type QueueEngineDeps = {
   pluginFiles(pluginId: string): string
   backupDir(itemId: string): string
   needsYou(item: QueueItem, reason: string, options?: { webhook?: boolean }): void
+  diagnose?(item: QueueItem): void
   autoPick?(pluginId: string): Promise<boolean>
   pickIn?(pluginId: string | undefined): Promise<PickIn>
   publish?(item: QueueItem): Promise<Published>

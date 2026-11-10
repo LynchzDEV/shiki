@@ -37,7 +37,7 @@ import { getSetting } from './plugins/settings'
 import { isWorktreeOf, prepareWorktree } from './job-worktrees'
 import { getInstalled } from './plugins/store'
 import { cardToolbox } from './card-toolbox'
-import { createQueueEngine, type QueueEngine } from './queue-engine'
+import { createQueueEngine, SourceFailure, type QueueEngine } from './queue-engine'
 import { cardImageFiles, writeQueueContext } from './queue-files'
 import { pluginSource } from './queue-source'
 import { createQueueStore, queuePath } from './queue-store'
@@ -49,7 +49,10 @@ import { terminalsRoutes } from './routes/terminals'
 import { outcomesRoutes } from './routes/outcomes'
 import { attentionRoutes } from './routes/attention'
 import { attentionKey, createAttentionStore } from './attention'
-import { queueNeedsYou, raiseLimitAlert, raiseSyncAlert, sweepQueueAlerts, watchQueueAlerts } from './queue-attention'
+import { queueNeedsYou, raiseLimitAlert, raiseQueueAlert, raiseSyncAlert, sweepQueueAlerts, watchQueueAlerts } from './queue-attention'
+import { cardDoctor, DOCTOR, type CardDoctor } from './card-doctor'
+import { ownerReplies } from './queue-pick-ask'
+import { QueueRefusal } from './queue-refusal'
 import { automateOn, statusMaps } from './queue-status'
 import { createStatusSync, type StatusSync } from './queue-status-sync'
 import { createNotifier } from './notify'
@@ -209,6 +212,7 @@ export async function createApp(): Promise<Elysia> {
   })
   const terminalRegistry = createTerminalRegistry({ log: createTerminalLog() })
   let queueEngine: QueueEngine | undefined
+  let doctor: CardDoctor | undefined
   let statusSync: StatusSync | undefined
   const syncStatus = () => { void statusSync?.reconcile().catch(error => console.error('Status sync failed', error)) }
   const workflowRunner = createWorkflowRunner({
@@ -220,6 +224,7 @@ export async function createApp(): Promise<Elysia> {
       void chatFlusher.onRunSettled(run).catch(error => console.error('Workflow chat report failed', error))
       notifyOn.runSettled(run)
       void queueEngine?.onRunSettled(run).catch(error => console.error('Queue settle failed', error))
+      void doctor?.onRunSettled(run).catch(error => console.error('Doctor settle failed', error))
     },
     onSessionStep: run => { void chatFlusher.onSessionStep(run).catch(error => console.error('In Session chat nudge failed', error)) },
     onChange: () => { runEvents.changed(); syncStatus() },
@@ -252,6 +257,11 @@ export async function createApp(): Promise<Elysia> {
     pluginFiles: pluginId => join(configDir(), 'plugin-data', pluginId, 'files'),
     backupDir: itemId => join(configDir(), 'queue-files', itemId),
     needsYou: queueNeedsYou(attention, notifyOn.queue),
+    diagnose: item => {
+      void doctor?.diagnose(item.id, { actor: DOCTOR, why: 'ClickUp reply not understood' }).catch(error => {
+        if (!(error instanceof QueueRefusal)) console.error(`Doctor could not look at ${item.id}`, error)
+      })
+    },
     autoPick: async id => (await getSetting(id, 'autoPick')) === 'true',
     pickIn: async id => (await automateOn(getSetting, id) ? 'clickup' : 'shikidan'),
     publish: async item => publish(item, { dir: publishDir(), domain: publishDomain(), cardImages: item.worktree === null ? [] : await cardImageFiles(item.worktree, item.source) }),
@@ -263,6 +273,26 @@ export async function createApp(): Promise<Elysia> {
     pickKeepPhrases: async () => (await readConfig()).pickKeepPhrases,
     sweepPublished: () => removeLeftovers(publishDir()),
     parallel: async () => (await readConfig()).queueParallel,
+  })
+  const toolbox = cardToolbox({
+    store: queueStore,
+    engine: queueEngine,
+    runs: { get: id => workflowRunner.get(id) },
+    alert: (item, reason) => { void raiseLimitAlert(attention, item, reason).catch(error => console.error('Queue limit alert failed', error)) },
+    clearAlert: id => { void attention.resolve(attentionKey.queueLimit(id)).catch(error => console.error('Queue limit alert failed', error)) },
+  })
+  doctor = cardDoctor({
+    store: queueStore,
+    toolbox,
+    runner: workflowRunner,
+    replies: async item => {
+      try {
+        return await ownerReplies(queueSource(item.source), item)
+      } catch (error) {
+        throw new SourceFailure(error instanceof Error ? error.message : String(error))
+      }
+    },
+    alert: (item, detail, command) => { void raiseQueueAlert(attention, item, detail, command).catch(error => console.error('Doctor alert failed', error)) },
   })
   watchQueueAlerts(queueStore, attention)
   statusSync = createStatusSync({
@@ -353,13 +383,7 @@ export async function createApp(): Promise<Elysia> {
     .use(providersRoutes)
     .use(pluginsRoutes())
     .use(humanSettingsRoutes())
-    .use(queueRoutes(queueStore, queueEngine, () => queueTree(queueStore.list()), { get: id => workflowRunner.get(id), subscribe: runEvents.subscribe }, settings => sweepRepliesEvery(settings.replyPollMinutes), cardToolbox({
-      store: queueStore,
-      engine: queueEngine,
-      runs: { get: id => workflowRunner.get(id) },
-      alert: (item, reason) => { void raiseLimitAlert(attention, item, reason).catch(error => console.error('Queue limit alert failed', error)) },
-      clearAlert: id => { void attention.resolve(attentionKey.queueLimit(id)).catch(error => console.error('Queue limit alert failed', error)) },
-    })))
+    .use(queueRoutes(queueStore, queueEngine, () => queueTree(queueStore.list()), { get: id => workflowRunner.get(id), subscribe: runEvents.subscribe }, settings => sweepRepliesEvery(settings.replyPollMinutes), toolbox, doctor))
 
   await defaultRuntimes()
 

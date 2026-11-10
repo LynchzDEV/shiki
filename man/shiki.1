@@ -860,6 +860,62 @@ Remove an item that is not building.
 .TP
 .B shiki queue check
 Check sources for replies now instead of waiting for the next check.
+.SH CARD DOCTOR
+When the owner's ClickUp reply to a pick ask is not understood, the card
+doctor reads the owner's replies since the ask and suggests a fix. It only
+suggests: nothing runs until a person applies it.
+.PP
+The reading is one run with no tools (no shell, edits, web or sub-agents)
+in a fresh empty folder, on the
+.B plan
+role (or claude sonnet when that role cannot enforce a deny list). Each
+reply is passed wrapped as untrusted data. Its answer is checked in plain
+code: the intent must be pick, reject, keep, question, off-topic or
+unknown, the option must be one on the card, the reply id one it was given,
+a quote words from that reply, and confidence at least 0.6; anything else
+counts as unknown. The plan comes from a fixed map, never from the model:
+pick becomes
+.BR "queue pick <option>" ,
+reject becomes
+.B queue pick none
+with the owner's full reply as feedback, keep becomes
+.B queue resume
+at the flow's keep step (fixstack:
+.BR how )
+with the confirm\-keep message and the owner's reply as a wrapped note.
+Other intents give no actions and a reason.
+.PP
+At most 3 readings per card in 24 hours, logged as
+.B diagnose
+in the card's audit log; none while another actor holds the card.
+.I doctor/playbook.md
+(the instructions the doctor reads) and
+.I doctor/flows.json
+.RB ( { \(dq<flowId>\(dq: { \(dqkeepStep\(dq: \(dq<step>\(dq } } )
+are edited by hand only; the doctor never writes them.
+.TP
+.BI "shiki doctor " id " \fR[\fB\-\-why\fR \fITEXT\fR] [\fB\-\-as\fR \fINAME\fR]"
+Ask the doctor to read an item waiting on a ClickUp pick now.
+.TP
+.BI "shiki doctor show " id
+The suggestion: intent, confidence, the deciding reply, the reason and the
+exact
+.B shiki queue
+commands apply would run. Read it before you apply.
+.TP
+.BI "shiki doctor apply " id " \fR[\fB\-\-as\fR \fINAME\fR] [\fB\-\-why\fR \fITEXT\fR]"
+Run the proposed actions through the card toolbox as
+.IR NAME ,
+each logged with why
+.IR "doctor <suggestion id>: <why>" .
+Refused (409) unless the suggestion is still proposed and the item is in
+the same state, with the same ask, as when the doctor looked; otherwise
+the suggestion is marked stale. The actor
+.B doctor
+can never apply.
+.TP
+.BI "shiki doctor dismiss " id " \fR[\fB\-\-as\fR \fINAME\fR] [\fB\-\-why\fR \fITEXT\fR]"
+Mark the suggestion wrong; nothing is run.
 .SH CLICKUP MESSAGES
 The fixed texts Shikidan posts in a ClickUp pick thread are files a human
 can edit:

@@ -3,7 +3,7 @@ import { parsePickReply, pickOwner, type CardPeople, type Person, type PickReply
 import { message as template, messageLines } from './messages'
 import { cleanPickSummary, KEEP_PICK, NO_PICK } from './queue-prompts'
 import { message } from './queue-replies'
-import type { SourceReplies, SourceReply } from './queue-source'
+import type { QueueSource, SourceReplies, SourceReply } from './queue-source'
 import type { PickAsk, QueueItem, QueuePick } from './queue-store'
 
 export type PickIn = 'clickup' | 'shikidan'
@@ -85,6 +85,14 @@ const wasCutOff = (ask: PickAsk | undefined): ask is PickAsk => ask?.posting ===
 const failedReason = (error: string): string => `Pick in Shikidan, the ClickUp ask failed: ${error}`
 
 export const isAsked = (item: QueueItem): boolean => item.state === 'waiting-pick' && isOpen(item.pick?.ask)
+
+const judgedBy = (asked: PickAsk) => (reply: SourceReply): boolean => reply.authorId !== '' && (reply.authorId === asked.ownerId || reply.authorId === asked.meId)
+
+export async function ownerReplies(source: Pick<QueueSource, 'replies'>, item: QueueItem): Promise<SourceReply[]> {
+  const asked = item.pick!.ask!
+  const { replies } = await source.replies({ id: item.externalId, sinceId: askCursor(asked) })
+  return replies.filter(judgedBy(asked)).filter((reply, at, all) => all.findIndex(other => other.id === reply.id) === at)
+}
 
 export function pickAsker(deps: QueueEngineDeps, steps: PickAskerSteps): PickAsker {
   const { store } = deps
@@ -190,10 +198,9 @@ export function pickAsker(deps: QueueEngineDeps, steps: PickAskerSteps): PickAsk
     return true
   }
 
-  async function ownerThread(item: QueueItem, judged: (reply: SourceReply) => boolean): Promise<SourceReply[] | null> {
+  async function ownerThread(item: QueueItem): Promise<SourceReply[] | null> {
     try {
-      const { replies } = await deps.source(item.source).replies({ id: item.externalId, sinceId: askCursor(item.pick!.ask!) })
-      return replies.filter(judged).filter((reply, at, all) => all.findIndex(other => other.id === reply.id) === at)
+      return await ownerReplies(deps.source(item.source), item)
     } catch (error) {
       console.error(`Queue item ${item.id} earlier replies not read, using the deciding reply only`, error)
       return null
@@ -203,7 +210,7 @@ export function pickAsker(deps: QueueEngineDeps, steps: PickAskerSteps): PickAsk
   async function apply(item: QueueItem, worktree: string, result: SourceReplies, { keepOthers = true }: { keepOthers?: boolean } = {}): Promise<boolean> {
     const asked = item.pick!.ask!
     await acknowledge(item, result.replies)
-    const judged = (reply: SourceReply): boolean => reply.authorId !== '' && (reply.authorId === asked.ownerId || reply.authorId === asked.meId)
+    const judged = judgedBy(asked)
     const others = result.replies.filter(reply => !judged(reply))
     if (keepOthers && others.length > 0) await steps.keep(item, worktree, others).catch(error => console.error(`Queue item ${item.id} replies not saved`, error))
     const extraNone = await deps.pickNonePhrases?.() ?? []
@@ -222,10 +229,12 @@ export function pickAsker(deps: QueueEngineDeps, steps: PickAskerSteps): PickAsk
     if (cursor !== null) await store.update(item.id, { lastSeenId: cursor })
     if (decided === undefined) {
       const latest = pending.at(-1)
-      if (latest !== undefined) deps.needsYou(store.get(item.id) ?? item, `ClickUp reply not understood: "${firstLineOf(latest.text)}"`, { webhook: false })
+      if (latest === undefined) return false
+      deps.needsYou(store.get(item.id) ?? item, `ClickUp reply not understood: "${firstLineOf(latest.text)}"`, { webhook: false })
+      deps.diagnose?.(store.get(item.id) ?? item)
       return false
     }
-    const choice = choiceFromThread(decided, await ownerThread(item, judged) ?? [decided.reply])
+    const choice = choiceFromThread(decided, await ownerThread(item) ?? [decided.reply])
     try {
       await steps.pickNow(item.id, choice)
     } catch (error) {

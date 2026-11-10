@@ -116,3 +116,37 @@ describe('shiki studio overlay', () => {
     expect(h.calls).toEqual([])
   })
 })
+
+const SUGGESTION = { id: 's1', at: 0, state: 'waiting-pick', askRef: 'r', intent: 'reject', replyId: 'c9', confidence: 0.8, status: 'proposed', reason: 'the owner rejected every option', actions: [{ action: 'pick', params: { option: 'none', feedback: 'อยากได้ "สีเขียว"' } }] }
+
+describe('shiki doctor', () => {
+  test('doctor <id> starts a diagnosis as the given actor and says where to read it', async () => {
+    const h = harness(() => Response.json({ runId: 'run-9', suggestion: null }))
+    expect(await main(['doctor', '6ea3', '--as', 'grok', '--why', 'owner reply looked like a reject'], h.deps)).toBe(0)
+    expect(h.calls).toEqual([{ method: 'POST', path: '/api/queue/6ea3/doctor', body: { actor: 'grok', why: 'owner reply looked like a reject' } }])
+    expect(h.out()).toContain('shiki doctor show 6ea3')
+  })
+
+  test('show prints the intent, the reason and the exact command apply would run', async () => {
+    const h = harness(() => Response.json({ suggestion: SUGGESTION }))
+    expect(await main(['doctor', 'show', '6ea3'], h.deps)).toBe(0)
+    expect(h.calls.map(call => `${call.method} ${call.path}`)).toEqual(['GET /api/queue/6ea3/doctor'])
+    for (const text of ['reject', '0.80', 'reply c9', 'the owner rejected every option', 'shiki queue pick 6ea3 none --feedback "อยากได้ \\"สีเขียว\\""', 'shiki doctor apply 6ea3 --as <you>']) expect(h.out()).toContain(text)
+  })
+
+  test('show on an unknown card prints the server 404 and exits non-zero', async () => {
+    const h = harness(() => Response.json({ error: 'No queue item bogus' }, { status: 404 }))
+    expect(await main(['doctor', 'show', 'bogus'], h.deps)).not.toBe(0)
+    expect(h.err()).toContain('No queue item bogus')
+  })
+
+  test('apply and dismiss post the actor from SKD_ACTOR', async () => {
+    const h = harness(() => Response.json({ suggestion: { ...SUGGESTION, status: 'applied' } }), { SKD_ACTOR: 'grok' })
+    expect(await main(['doctor', 'apply', '6ea3'], h.deps)).toBe(0)
+    expect(await main(['doctor', 'dismiss', '6ea3', '--why', 'wrong'], h.deps)).toBe(0)
+    expect(h.calls).toEqual([
+      { method: 'POST', path: '/api/queue/6ea3/doctor/apply', body: { actor: 'grok', why: 'cli' } },
+      { method: 'POST', path: '/api/queue/6ea3/doctor/dismiss', body: { actor: 'grok', why: 'wrong' } },
+    ])
+  })
+})
