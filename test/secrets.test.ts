@@ -44,7 +44,7 @@ async function modeOf(path: string): Promise<number> {
 describe('defaults', () => {
   test('missing files fall back to documented defaults', async () => {
     expect(await readSecrets()).toEqual({ zaiAuthToken: null, zaiBaseUrl: DEFAULT_ZAI_BASE_URL, apiToken: null, notifyWebhookUrl: null, notifyWebhookKey: null })
-    expect(await readConfig()).toEqual({ roles: DEFAULT_ROLES, fallback: DEFAULT_FALLBACK, autoReview: false, chatHome: null, flowApproval: true, marketplaces: [], queueParallel: 1, replyPollMinutes: 2, publishKeepDays: 14, pickAskTo: null, pickNonePhrases: [], pickKeepPhrases: [] })
+    expect(await readConfig()).toEqual({ roles: DEFAULT_ROLES, fallback: DEFAULT_FALLBACK, autoReview: false, chatHome: null, flowApproval: true, marketplaces: [], queueParallel: 1, replyPollMinutes: 2, publishKeepDays: 14, pickAskTo: null, pickNonePhrases: [], pickKeepPhrases: [], cardLimits: {} })
   })
 
   test('corrupt json falls back instead of throwing', async () => {

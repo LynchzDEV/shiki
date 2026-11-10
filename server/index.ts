@@ -48,7 +48,7 @@ import { terminalsRoutes } from './routes/terminals'
 import { outcomesRoutes } from './routes/outcomes'
 import { attentionRoutes } from './routes/attention'
 import { attentionKey, createAttentionStore } from './attention'
-import { queueNeedsYou, raiseSyncAlert, sweepQueueAlerts, watchQueueAlerts } from './queue-attention'
+import { queueNeedsYou, raiseLimitAlert, raiseSyncAlert, sweepQueueAlerts, watchQueueAlerts } from './queue-attention'
 import { automateOn, statusMaps } from './queue-status'
 import { createStatusSync, type StatusSync } from './queue-status-sync'
 import { createNotifier } from './notify'
@@ -351,7 +351,13 @@ export async function createApp(): Promise<Elysia> {
     .use(modelsRoutes)
     .use(providersRoutes)
     .use(pluginsRoutes())
-    .use(queueRoutes(queueStore, queueEngine, () => queueTree(queueStore.list()), { get: id => workflowRunner.get(id), subscribe: runEvents.subscribe }, settings => sweepRepliesEvery(settings.replyPollMinutes), cardToolbox({ store: queueStore, engine: queueEngine, runs: { get: id => workflowRunner.get(id) } })))
+    .use(queueRoutes(queueStore, queueEngine, () => queueTree(queueStore.list()), { get: id => workflowRunner.get(id), subscribe: runEvents.subscribe }, settings => sweepRepliesEvery(settings.replyPollMinutes), cardToolbox({
+      store: queueStore,
+      engine: queueEngine,
+      runs: { get: id => workflowRunner.get(id) },
+      alert: (item, reason) => { void raiseLimitAlert(attention, item, reason).catch(error => console.error('Queue limit alert failed', error)) },
+      clearAlert: id => { void attention.resolve(attentionKey.queueLimit(id)).catch(error => console.error('Queue limit alert failed', error)) },
+    })))
 
   await defaultRuntimes()
 

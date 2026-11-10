@@ -3,7 +3,7 @@ import { z } from 'zod'
 
 import { requireLocal, type GuardContext } from '../auth'
 import { peerAddress, trustedHostRequest } from '../local-access'
-import { cardToolbox, type ActionMeta, type ActionName, type CardShow, type CardToolbox } from '../card-toolbox'
+import { cardToolbox, DEFAULT_CARD_LIMITS, HUMAN, type ActionMeta, type ActionName, type CardShow, type CardToolbox } from '../card-toolbox'
 import { QueueRefusal, SourceFailure, type QueueEngine } from '../queue-engine'
 import { cleanPickSummary } from '../queue-prompts'
 import type { QueueItem, QueueStore } from '../queue-store'
@@ -14,7 +14,7 @@ import { listFolderRepos, resolveQueueFolder } from '../queue-folder'
 import { queueTree, type QueueTree } from '../queue-tree'
 import { eventStreamResponse, type RunEvents } from '../run-events'
 import { QUEUE_STATES } from '../workflows'
-import { MAX_NONE_PHRASE_LENGTH, MAX_NONE_PHRASES, MIN_NONE_PHRASE_LENGTH, MAX_PUBLISH_KEEP_DAYS, MAX_QUEUE_PARALLEL, MAX_REPLY_POLL_MINUTES, MAX_USER_ID_LENGTH, readConfig, writeConfig, type AppConfig } from '../secrets'
+import { MAX_CARD_LIMIT, MAX_NONE_PHRASE_LENGTH, MAX_NONE_PHRASES, MIN_NONE_PHRASE_LENGTH, MAX_PUBLISH_KEEP_DAYS, MAX_QUEUE_PARALLEL, MAX_REPLY_POLL_MINUTES, MAX_USER_ID_LENGTH, readConfig, writeConfig, type AppConfig } from '../secrets'
 
 type Status = { status?: number | string }
 type QueueEngineRoutes = Pick<QueueEngine, 'add' | 'requeue' | 'pick' | 'unpublish' | 'checkReplies' | 'answer' | 'say' | 'reread' | 'repost' | 'remove' | 'stop' | 'move' | 'checkedAt' | 'subscribeChecks' | 'startStage' | 'refreshPreflight' | 'retryStage' | 'markDone' | 'landLog' | 'report'> & Partial<Pick<QueueEngine, 'preparing' | 'paused' | 'kick'>>
@@ -38,6 +38,10 @@ const doSchema = z.object({
   expect: z.enum(QUEUE_STATES).optional(),
 })
 const DO_RULE = `Send { params, actor, why }: ${ACTOR_RULE}, why is 1 to 1000 characters, key (letters, digits, . : _ -) and expect (a queue state) are optional`
+const claimSchema = z.object({ actor: doSchema.shape.actor, ms: z.number().int(), why: z.string().max(1000).optional() })
+const releaseSchema = z.object({ actor: doSchema.shape.actor, why: z.string().max(1000).optional() })
+const resetSchema = z.object({ actor: doSchema.shape.actor, why: doSchema.shape.why })
+const limitSchema = z.object({ actor: doSchema.shape.actor, action: z.enum(Object.keys(DEFAULT_CARD_LIMITS) as [string, ...string[]]), limit: z.number().int().min(0).max(MAX_CARD_LIMIT) })
 const confirmSchema = z.object({ confirm: z.literal(true) })
 const FROM_BROWSER: ActionMeta = { actor: 'human', why: 'browser' }
 const moveSchema = z.object({ to: z.number().int().min(0) })
@@ -174,6 +178,14 @@ export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: 
       await engine.kick?.()
       return settings
     })
+    .get('/api/queue/limits', async () => ({ limits: await toolbox.limits() }))
+    .put('/api/queue/limits', async ({ body, set }) => {
+      const parsed = limitSchema.safeParse(body)
+      if (!parsed.success) { set.status = 400; return { error: `Send { actor, action, limit }: action is one of ${Object.keys(DEFAULT_CARD_LIMITS).join(', ')}, limit is a whole number from 0 to ${MAX_CARD_LIMIT}` } }
+      if (parsed.data.actor !== HUMAN) { set.status = 403; return { error: 'Only a human can change card limits' } }
+      await writeConfig({ cardLimits: { ...(await readConfig()).cardLimits, [parsed.data.action]: parsed.data.limit } })
+      return { limits: await toolbox.limits() }
+    })
     .get('/api/queue/tree', () => tree())
     .get('/api/queue/folder', ({ query, set }) => folderRepos(query.path, set))
     .get('/api/queue/stream', ({ request }) => eventStreamResponse(itemsChecksAndRuns(store, engine, runs, settingsListeners), snapshot, request.signal))
@@ -199,6 +211,21 @@ export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: 
         const item = store.get(params.id)
         return { result: shownCleaned(result), item: item === undefined ? null : cleaned(item) }
       }))
+    })
+    .post('/api/queue/:id/claim', ({ params, body, set }) => {
+      const parsed = claimSchema.safeParse(body)
+      if (!parsed.success) { set.status = 400; return { error: `Send { actor, ms }: ${ACTOR_RULE}, ms is how long the claim lasts` } }
+      return refusing(set, async () => ({ lease: await toolbox.claim(params.id, parsed.data.actor, parsed.data.ms, parsed.data.why) }))
+    })
+    .post('/api/queue/:id/release', ({ params, body, set }) => {
+      const parsed = releaseSchema.safeParse(body)
+      if (!parsed.success) { set.status = 400; return { error: `Send { actor }: ${ACTOR_RULE}` } }
+      return refusing(set, async () => { await toolbox.release(params.id, parsed.data.actor, parsed.data.why); return { ok: true } })
+    })
+    .post('/api/queue/:id/limits/reset', ({ params, body, set }) => {
+      const parsed = resetSchema.safeParse(body)
+      if (!parsed.success) { set.status = 400; return { error: `Send { actor, why }: ${ACTOR_RULE}, why is 1 to 1000 characters` } }
+      return refusing(set, async () => { await toolbox.resetLimits(params.id, parsed.data.actor, parsed.data.why); return { ok: true } })
     })
     .get('/api/queue/:id/show', ({ params, set }) => refusing(set, async () => shownCleaned(await toolbox.perform(params.id, 'show', {}, { actor: 'human', why: 'show' }))))
     .get('/api/queue/:id/history', ({ params, query, set }) => refusing(set, async () => {

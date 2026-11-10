@@ -90,6 +90,7 @@ export type QueueEngine = {
 export type QueuePause = { reason: string; until: number }
 
 const MAX_RUN_LABEL = 120
+const POLLER = 'poller'
 const MAX_AUTO_PICKS = 2
 const DAY_MS = 24 * 60 * 60_000
 const DEFAULT_KEEP_DAYS = 14
@@ -564,7 +565,8 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
 
   const replies = replyCheck(deps, fail)
   asker = pickAsker(deps, { pickNow: (id, choice) => pickNow(deps, id, choice), keep: replies.keep })
-  const readsReplies = (item: QueueItem): boolean => item.worktree !== null && ((item.state === 'waiting-info' && item.askedIn !== 'shikidan') || isAsked(item))
+  const leasedAway = (item: QueueItem): boolean => item.lease !== undefined && item.lease.until > (deps.now ?? Date.now)() && item.lease.holder !== POLLER
+  const readsReplies = (item: QueueItem): boolean => item.worktree !== null && !leasedAway(item) && ((item.state === 'waiting-info' && item.askedIn !== 'shikidan') || isAsked(item))
   const stillWaiting = (read: QueueItem): { item: QueueItem; worktree: string } | undefined => {
     const item = store.get(read.id)
     if (item === undefined || !readsReplies(item) || item.state !== read.state || item.lastSeenId !== read.lastSeenId || item.pick?.ask?.ref !== read.pick?.ask?.ref || runningInStudio(item)) return undefined

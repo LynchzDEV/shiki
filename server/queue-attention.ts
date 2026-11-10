@@ -16,6 +16,10 @@ export function queueNeedsYou(attention: AttentionStore, notifyQueue: (item: Que
   }
 }
 
+export function raiseLimitAlert(attention: AttentionStore, item: QueueItem, reason: string): Promise<void> {
+  return attention.raise({ key: attentionKey.queueLimit(item.id), kind: 'queue', title: item.title, detail: reason, command: `shiki queue limits reset ${item.id}`, chatId: null, jobId: null, requestId: null })
+}
+
 export function raiseSyncAlert(attention: AttentionStore, item: QueueItem, error: unknown): Promise<void> {
   const reason = error instanceof Error ? error.message : String(error)
   return attention.raise({ key: attentionKey.queueSync(item.id), kind: 'queue', title: item.title, detail: `ClickUp status sync failed: ${reason}`, command: null, chatId: null, jobId: null, requestId: null })
@@ -24,11 +28,13 @@ export function raiseSyncAlert(attention: AttentionStore, item: QueueItem, error
 const markedDone = (item: QueueItem): boolean => item.state === 'landed' && item.land?.stages[item.land.stage]?.status === 'skipped'
 
 const SYNC_PREFIX = attentionKey.queueSync('')
+const LIMIT_PREFIX = attentionKey.queueLimit('')
 const QUEUE_PREFIX = attentionKey.queue('')
 
 function needsNoPerson(store: QueueStore, alert: AttentionItem): boolean {
   if (alert.kind !== 'queue') return false
   if (alert.key.startsWith(SYNC_PREFIX)) return store.get(alert.key.slice(SYNC_PREFIX.length)) === undefined
+  if (alert.key.startsWith(LIMIT_PREFIX)) return store.get(alert.key.slice(LIMIT_PREFIX.length)) === undefined
   if (!alert.key.startsWith(QUEUE_PREFIX)) return false
   const item = store.get(alert.key.slice(QUEUE_PREFIX.length))
   return item === undefined || !NEEDS_PERSON.has(item.state) || markedDone(item)

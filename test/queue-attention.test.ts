@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { attentionKey, createAttentionStore } from '../server/attention'
-import { raiseQueueAlert, raiseSyncAlert, sweepQueueAlerts, watchQueueAlerts } from '../server/queue-attention'
+import { raiseLimitAlert, raiseQueueAlert, raiseSyncAlert, sweepQueueAlerts, watchQueueAlerts } from '../server/queue-attention'
 import { createQueueStore, type NewQueueItem } from '../server/queue-store'
 
 let dir: string
@@ -137,4 +137,16 @@ test('a status sync alert stays while its item exists, whatever the state, and g
   await store.remove(building.id)
   expect(await sweepQueueAlerts(store, attention)).toBe(1)
   expect(keys(attention)).toEqual([`queue-sync:${ready.id}`])
+})
+
+test('a card limit alert stays while its card is queued or building and goes with the card', async () => {
+  const store = createQueueStore(join(dir, 'queue.json'))
+  const attention = createAttentionStore(join(dir, 'attention.json'))
+  const card = await store.update((await store.add(task('a'), 'end')).id, { state: 'building' })
+  await raiseLimitAlert(attention, card, 'Card needs a human: say reached its limit of 5 in 24 hours')
+  expect(attention.list()[0]).toMatchObject({ key: attentionKey.queueLimit(card.id), kind: 'queue', command: `shiki queue limits reset ${card.id}` })
+  await store.update(card.id, { state: 'queued' })
+  expect(await sweepQueueAlerts(store, attention)).toBe(0)
+  await store.remove(card.id)
+  expect(await sweepQueueAlerts(store, attention)).toBe(1)
 })

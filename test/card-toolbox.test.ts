@@ -147,3 +147,118 @@ test('GET show and history return the card and its log; an unknown card is a cle
     expect((await missing.json()).error).toBe('No queue item bogus')
   }
 })
+
+test('a card leased to another actor refuses with 423 naming the holder; an expired lease can be reclaimed', async () => {
+  let clock = 1_700_000_000_000
+  const h = queueHarness(dir)
+  const item = await parkedItem(h)
+  const toolbox = toolboxOf(h, { now: () => clock })
+  const lease = await toolbox.claim(item.id, 'grok', 30 * 60_000, 'fixing the pick')
+  expect(lease).toEqual({ holder: 'grok', until: clock + 30 * 60_000 })
+  const refused = await refusal(toolbox.perform(item.id, 'say', { text: 'hi' }, human))
+  expect(refused).toMatchObject({ status: 423 })
+  expect((refused as Error).message).toStartWith('grok holds this card until')
+  expect(await refusal(toolbox.claim(item.id, 'doctor', 60_000))).toMatchObject({ status: 423 })
+  expect(await refusal(toolbox.release(item.id, 'doctor'))).toMatchObject({ status: 423 })
+  expect(await toolbox.perform(item.id, 'say', { text: 'hi' }, { actor: 'grok', why: 'mine' })).toMatchObject({ state: 'waiting-info' })
+  expect((await toolbox.perform(item.id, 'show', {}, human) as { lease: unknown }).lease).toEqual(lease)
+  clock += 30 * 60_000 + 1
+  expect((await toolbox.perform(item.id, 'show', {}, human) as { lease: unknown }).lease).toBeNull()
+  expect(await toolbox.perform(item.id, 'say', { text: 'after' }, human)).toMatchObject({ state: 'waiting-info' })
+  expect(await toolbox.claim(item.id, 'doctor', 60_000)).toEqual({ holder: 'doctor', until: clock + 60_000 })
+  await toolbox.release(item.id, 'doctor', 'done')
+  expect(h.store.get(item.id)!.lease).toBeUndefined()
+  for (const ms of [59_999, 4 * 60 * 60_000 + 1, 1.5]) expect(await refusal(toolbox.claim(item.id, 'grok', ms))).toMatchObject({ status: 400 })
+  const actions = (await toolbox.history(item.id)).map(line => `${line.actor} ${line.action} ${line.result}`)
+  expect(actions.slice(0, 7)).toEqual(['grok claim ok', 'human say refused', 'doctor claim refused', 'doctor release refused', 'grok say ok', 'human say ok', 'doctor claim ok'])
+})
+
+test('the same idempotency key and params returns the stored result without running again; other params are a 409', async () => {
+  const h = queueHarness(dir)
+  const item = await parkedItem(h)
+  const toolbox = toolboxOf(h)
+  const before = h.posted.length
+  const meta = { actor: 'grok', why: 'tell', key: 'plan-1:0' }
+  const first = await toolbox.perform(item.id, 'say', { text: 'once' }, meta)
+  expect(await toolbox.perform(item.id, 'say', { text: 'once' }, meta)).toEqual(first)
+  expect(h.posted.length).toBe(before + 1)
+  expect(await refusal(toolbox.perform(item.id, 'say', { text: 'twice' }, meta))).toMatchObject({ status: 409, message: 'Key plan-1:0 was already used for a different action or params' })
+  expect(await refusal(toolbox.perform(item.id, 'reread', {}, meta))).toMatchObject({ status: 409 })
+  expect(h.posted.length).toBe(before + 1)
+  expect((await toolbox.history(item.id)).map(line => line.result)).toEqual(['ok', 'replayed', 'refused', 'refused'])
+  expect(h.restart().store.get(item.id)!.actionKeys).toEqual([{ key: 'plan-1:0', action: 'say', paramsHash: expect.any(String), result: first }])
+})
+
+test('expect refuses with 409 when the card moved on', async () => {
+  const h = queueHarness(dir)
+  const item = await parkedItem(h)
+  const toolbox = toolboxOf(h)
+  expect(await refusal(toolbox.perform(item.id, 'say', { text: 'x' }, { ...human, expect: 'waiting-pick' }))).toMatchObject({ status: 409, message: 'Expected waiting-pick, but it is waiting-info now' })
+  expect(await toolbox.perform(item.id, 'say', { text: 'x' }, { ...human, expect: 'waiting-info' })).toMatchObject({ state: 'waiting-info' })
+})
+
+test('over its limit an action is refused with 429 and raises attention; only a human reset clears it', async () => {
+  let clock = 1_700_000_000_000
+  const alerts: string[] = []
+  const cleared: string[] = []
+  const h = queueHarness(dir)
+  const item = await parkedItem(h)
+  const toolbox = toolboxOf(h, { now: () => clock, limits: async () => ({ say: 2 }), alert: (_item, reason) => { alerts.push(reason) }, clearAlert: id => { cleared.push(id) } })
+  expect((await toolbox.limits()).say).toBe(2)
+  expect((await toolbox.limits()).pick).toBe(3)
+  for (const text of ['one', 'two']) await toolbox.perform(item.id, 'say', { text }, human)
+  await refusal(toolbox.perform(item.id, 'say', { text: '' }, human))
+  expect(await refusal(toolbox.perform(item.id, 'say', { text: 'three' }, human))).toMatchObject({ status: 429 })
+  expect(alerts).toEqual(['Card needs a human: say reached its limit of 2 in 24 hours'])
+  expect(await refusal(toolbox.resetLimits(item.id, 'grok', 'let me'))).toMatchObject({ status: 403 })
+  expect(cleared).toEqual([])
+  clock += 1
+  await toolbox.resetLimits(item.id, 'human', 'checked the thread')
+  expect(cleared).toEqual([item.id])
+  expect(await toolbox.perform(item.id, 'say', { text: 'three' }, human)).toMatchObject({ state: 'waiting-info' })
+  clock += 24 * 60 * 60_000
+  await toolbox.perform(item.id, 'say', { text: 'next day' }, human)
+  expect(h.restart().store.get(item.id)!.limitsResetAt).toBe(1_700_000_000_001)
+})
+
+test('the reply poller skips a card leased to someone else, but not one leased to poller or expired', async () => {
+  let clock = 1_700_000_000_000
+  const h = queueHarness(dir, { now: () => clock })
+  const item = await parkedItem(h)
+  h.answer(async () => ({ replies: [{ id: 'r1', author: 'Ploy', authorId: '', text: 'The login page', images: [] }], lastId: 'r1' }))
+  await h.store.update(item.id, { lease: { holder: 'grok', until: clock + 60_000 } })
+  expect(await h.engine.checkReplies()).toEqual({ checked: 0, resumed: 0 })
+  expect(h.store.get(item.id)!.state).toBe('waiting-info')
+  await h.store.update(item.id, { lease: { holder: 'poller', until: clock + 60_000 } })
+  expect((await h.engine.checkReplies()).checked).toBe(1)
+  expect(h.store.get(item.id)!.state).not.toBe('waiting-info')
+})
+
+test('an expired lease does not hold back the poller', async () => {
+  let clock = 1_700_000_000_000
+  const h = queueHarness(dir, { now: () => clock })
+  const item = await parkedItem(h)
+  h.answer(async () => ({ replies: [{ id: 'r1', author: 'Ploy', authorId: '', text: 'The login page', images: [] }], lastId: 'r1' }))
+  await h.store.update(item.id, { lease: { holder: 'grok', until: clock + 60_000 } })
+  clock += 60_001
+  expect((await h.engine.checkReplies()).resumed).toBe(1)
+})
+
+test('limits are listed for anyone and changed only by a human; claim and release go through the routes', async () => {
+  const h = queueHarness(dir)
+  const item = await parkedItem(h)
+  const app = appOf(h)
+  expect((await (await send(app, '/api/queue/limits')).json()).limits).toMatchObject({ say: 5, resume: 3, repost: 2 })
+  const put = (body: unknown) => send(app, '/api/queue/limits', { method: 'PUT', body: JSON.stringify(body) })
+  expect((await put({ actor: 'grok', action: 'say', limit: 50 })).status).toBe(403)
+  expect((await put({ actor: 'human', action: 'land', limit: 5 })).status).toBe(400)
+  const changed = await put({ actor: 'human', action: 'say', limit: 7 })
+  expect((await changed.json()).limits.say).toBe(7)
+  expect((await post(app, `/api/queue/${item.id}/claim`, { actor: 'grok', ms: 60_000 })).status).toBe(200)
+  const blocked = await post(app, `/api/queue/${item.id}/say`, { text: 'from the browser' })
+  expect(blocked.status).toBe(423)
+  expect((await post(app, `/api/queue/${item.id}/release`, { actor: 'human' })).status).toBe(423)
+  expect((await post(app, `/api/queue/${item.id}/release`, { actor: 'grok' })).status).toBe(200)
+  expect((await post(app, `/api/queue/${item.id}/limits/reset`, { actor: 'grok', why: 'x' })).status).toBe(403)
+  expect((await post(app, `/api/queue/${item.id}/limits/reset`, { actor: 'human', why: 'checked' })).status).toBe(200)
+})

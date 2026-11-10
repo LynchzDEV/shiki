@@ -57,6 +57,7 @@ export type AppConfig = {
   pickAskTo: string | null
   pickNonePhrases: string[]
   pickKeepPhrases: string[]
+  cardLimits: Record<string, number>
 }
 
 export type PublicSecretsView = {
@@ -217,6 +218,10 @@ const readUserId = (raw: unknown): string | null => (typeof raw === 'string' && 
 const readNonePhrases = (raw: unknown): string[] => (Array.isArray(raw)
   ? raw.filter((entry): entry is string => typeof entry === 'string').map(entry => entry.trim()).filter(entry => entry.length >= MIN_NONE_PHRASE_LENGTH && entry.length <= MAX_NONE_PHRASE_LENGTH).slice(0, MAX_NONE_PHRASES)
   : [])
+export const MAX_CARD_LIMIT = 100
+const readCardLimits = (raw: unknown): Record<string, number> => (raw !== null && typeof raw === 'object' && !Array.isArray(raw)
+  ? Object.fromEntries(Object.entries(raw).filter(([action, limit]) => /^[a-z]{1,20}$/.test(action) && Number.isInteger(limit) && (limit as number) >= 0 && (limit as number) <= MAX_CARD_LIMIT))
+  : {})
 const readQueueParallel = (raw: unknown): number => wholeIn(raw, MAX_QUEUE_PARALLEL, 1)
 
 export async function readConfig(): Promise<AppConfig> {
@@ -234,6 +239,7 @@ export async function readConfig(): Promise<AppConfig> {
     pickAskTo: readUserId(raw.pickAskTo),
     pickNonePhrases: readNonePhrases(raw.pickNonePhrases),
     pickKeepPhrases: readNonePhrases(raw.pickKeepPhrases),
+    cardLimits: readCardLimits(raw.cardLimits),
   }
 }
 
