@@ -85,3 +85,34 @@ describe('shiki messages', () => {
     expect(h.calls).toEqual([])
   })
 })
+
+describe('shiki studio overlay', () => {
+  test('show prints each overridden step; an empty overlay says so', async () => {
+    const h = harness(() => Response.json({ flowId: 'fixstack--fixstack', overlay: { nodes: { how: { title: 'How', instructions: 'Keep NOW.\nFix the bug.' } } } }))
+    expect(await main(['studio', 'overlay', 'show', 'fixstack--fixstack'], h.deps)).toBe(0)
+    expect(h.calls.map(call => `${call.method} ${call.path}`)).toEqual(['GET /api/studio/flow-overlays/fixstack--fixstack'])
+    expect(h.out()).toContain('how:\n  title: How\n  instructions:\n    Keep NOW.\n    Fix the bug.')
+    const empty = harness(() => Response.json({ flowId: 'x', overlay: { nodes: {} } }))
+    expect(await main(['studio', 'overlay', 'show', 'x'], empty.deps)).toBe(0)
+    expect(empty.out()).toContain('No overrides')
+  })
+
+  test('set sends the file as instructions for one step; clear sends one step or none', async () => {
+    await writeFile(join(dir, 'how.md'), 'Keep NOW.')
+    const h = harness(() => Response.json({ overlay: { nodes: {} } }))
+    expect(await main(['studio', 'overlay', 'set', 'fixstack--fixstack', 'how', '--file', 'how.md', '--title', 'How', '--as', 'human'], h.deps)).toBe(0)
+    expect(await main(['studio', 'overlay', 'clear', 'fixstack--fixstack', 'how'], h.deps)).toBe(0)
+    expect(await main(['studio', 'overlay', 'clear', 'fixstack--fixstack', '--why', 'back to plugin text'], h.deps)).toBe(0)
+    expect(h.calls).toEqual([
+      { method: 'PUT', path: '/api/studio/flow-overlays/fixstack--fixstack', body: { actor: 'human', why: 'cli', nodeId: 'how', instructions: 'Keep NOW.', title: 'How' } },
+      { method: 'DELETE', path: '/api/studio/flow-overlays/fixstack--fixstack', body: { actor: 'human', why: 'cli', nodeId: 'how' } },
+      { method: 'DELETE', path: '/api/studio/flow-overlays/fixstack--fixstack', body: { actor: 'human', why: 'back to plugin text' } },
+    ])
+  })
+
+  test('set with neither --file nor --title is a usage error', async () => {
+    const h = harness()
+    expect(await main(['studio', 'overlay', 'set', 'f', 'how'], h.deps)).toBe(2)
+    expect(h.calls).toEqual([])
+  })
+})

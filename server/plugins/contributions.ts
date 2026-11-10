@@ -6,6 +6,7 @@ import { chatProfileDirs } from '../chat-profile'
 import { draftRevision, validateWorkflow, type WorkflowRevision } from '../workflows'
 import { workerProfileDirs } from '../worker-profile'
 import { errorMessage } from './errors'
+import { overlaid, readFlowOverlay, type FlowOverlay } from './flow-overlays'
 import { PluginBusyError, withPluginLock } from './locks'
 import type { PluginContributions, SettingField } from './manifest'
 import { getSetting } from './settings'
@@ -184,7 +185,7 @@ async function maxAttemptsOf(pluginId: string, setting: (id: string, key: string
   return MAX_ATTEMPTS.test(value) ? Number(value) : null
 }
 
-export async function pluginFlows(plugins: InstalledPlugin[], folderOf: (id: string) => string = pluginFolder, setting: (id: string, key: string) => Promise<string | null> = getSetting): Promise<PluginFlow[]> {
+export async function pluginFlows(plugins: InstalledPlugin[], folderOf: (id: string) => string = pluginFolder, setting: (id: string, key: string) => Promise<string | null> = getSetting, overlayOf: (flowId: string) => Promise<FlowOverlay | null> = readFlowOverlay): Promise<PluginFlow[]> {
   const flows: PluginFlow[] = []
   for (const plugin of plugins) {
     if (!plugin.enabled) continue
@@ -192,8 +193,10 @@ export async function pluginFlows(plugins: InstalledPlugin[], folderOf: (id: str
     for (const path of plugin.contributes?.flows ?? []) {
       try {
         const graph = JSON.parse(await readFile(join(folderOf(plugin.id), path), 'utf8'))
-        const nodes = maxVisits === null || !Array.isArray(graph.nodes) ? graph.nodes : graph.nodes.map((node: Record<string, unknown>) => ({ ...node, maxVisits }))
-        const named = { ...graph, nodes, id: `${plugin.id}--${graph.id}`, name: `${plugin.name}: ${graph.name}`.slice(0, 120) }
+        const id = `${plugin.id}--${graph.id}`
+        const visits = maxVisits === null || !Array.isArray(graph.nodes) ? graph.nodes : graph.nodes.map((node: Record<string, unknown>) => ({ ...node, maxVisits }))
+        const nodes = Array.isArray(visits) ? overlaid(id, visits, await overlayOf(id)) : visits
+        const named = { ...graph, nodes, id, name: `${plugin.name}: ${graph.name}`.slice(0, 120) }
         flows.push({ ...draftRevision(named), createdAt: 0, plugin: plugin.id })
       } catch (error) {
         console.error(`[plugins] ${plugin.id} flow ${path} is not usable:`, errorMessage(error))

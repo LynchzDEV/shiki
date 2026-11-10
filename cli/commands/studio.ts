@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises'
 import { segment } from '../client'
 import { arg, emit, flag, listOpt, oneOf, records, SESSION_OPTIONS, sessionBody, stringOpt, textArg, UsageError, type Command, type Context } from '../command'
 import { cell, keyValue, relativeAge, table } from '../format'
+import { CHANGE_OPTIONS, fileOption } from './messages'
+import { actorOf, whyOf } from './queue'
 
 const LABEL_MAX = 120
 const STEP_OUTCOMES = ['pass', 'fail', 'blocked'] as const
@@ -101,6 +103,14 @@ function decisionVerb(verb: string, summary: string): Command {
   }
 }
 
+const overlayPath = (ctx: Context): string => `/api/studio/flow-overlays/${segment(arg(ctx, 'flowId'))}`
+
+function overlayText(value: unknown): string {
+  const nodes = Object.entries((((value ?? {}) as Record<string, unknown>).overlay as { nodes?: Record<string, Record<string, unknown>> } | undefined)?.nodes ?? {})
+  if (nodes.length === 0) return 'No overrides: every step uses the plugin\'s own text.\n'
+  return `${nodes.map(([id, node]) => [`${id}:`, ...(typeof node.title === 'string' ? [`  title: ${node.title}`] : []), ...(typeof node.instructions === 'string' ? ['  instructions:', ...node.instructions.split('\n').map(line => `    ${line}`)] : [])].join('\n')).join('\n')}\n`
+}
+
 export const studioCommands: Command[] = [
   { path: ['workflows'], summary: 'Saved workflows (* marks the default)', run: async (ctx) => emit(ctx, await ctx.client.get('/api/studio/workflows'), workflowsText) },
   {
@@ -172,5 +182,31 @@ export const studioCommands: Command[] = [
     args: ['runId', 'nodeId'],
     summary: 'Remind the session about a waiting step (the server only accepts this from the browser)',
     run: async (ctx) => emit(ctx, await ctx.client.post(stepPath(ctx, '/remind')), keyValue),
+  },
+  {
+    path: ['studio', 'overlay', 'show'],
+    args: ['flowId'],
+    summary: 'Show the local step text overrides for a plugin flow',
+    run: async (ctx) => emit(ctx, await ctx.client.get(overlayPath(ctx)), overlayText),
+  },
+  {
+    path: ['studio', 'overlay', 'set'],
+    args: ['flowId', 'nodeId'],
+    options: { file: { type: 'string', description: 'file holding the step instructions', placeholder: 'FILE' }, title: { type: 'string', description: 'new step title', placeholder: 'TEXT' }, ...CHANGE_OPTIONS },
+    summary: 'Override one plugin flow step\'s instructions or title; new runs use it (human only)',
+    run: async (ctx) => {
+      const instructions = await fileOption(ctx, false)
+      const title = stringOpt(ctx, 'title')
+      if (instructions === undefined && title === undefined) throw new UsageError('give --file, --title or both')
+      const body = { actor: actorOf(ctx), why: whyOf(ctx), nodeId: arg(ctx, 'nodeId'), ...(instructions === undefined ? {} : { instructions }), ...(title === undefined ? {} : { title }) }
+      emit(ctx, await ctx.client.put(overlayPath(ctx), body), overlayText)
+    },
+  },
+  {
+    path: ['studio', 'overlay', 'clear'],
+    args: ['flowId', 'nodeId?'],
+    options: CHANGE_OPTIONS,
+    summary: 'Drop one step\'s override, or all of a flow\'s overrides (human only)',
+    run: async (ctx) => emit(ctx, await ctx.client.del(overlayPath(ctx), { actor: actorOf(ctx), why: whyOf(ctx), ...(ctx.args.nodeId === undefined ? {} : { nodeId: ctx.args.nodeId }) }), overlayText),
   },
 ]

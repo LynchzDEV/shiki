@@ -5,12 +5,16 @@ import { auditSettings } from '../audit-log'
 import { requireLocal } from '../auth'
 import { actorSchema, HUMAN } from '../card-toolbox'
 import { isMessageName, listMessages, MAX_MESSAGE, resetMessage, setMessage } from '../messages'
+import { clearOverlay, FLOW_ID, overlayNodeOf, readFlowOverlay, setOverlayNode } from '../plugins/flow-overlays'
 import { QueueRefusal } from '../queue-refusal'
 
 type Status = { status?: number | string }
 
 const changeSchema = z.object({ actor: actorSchema, why: z.string().trim().min(1).max(1000).optional() })
 const messageSchema = changeSchema.extend({ text: z.string().max(MAX_MESSAGE * 2) })
+const overlaySetSchema = changeSchema.extend({ nodeId: z.string().min(1).max(64) }).passthrough()
+const overlayClearSchema = changeSchema.extend({ nodeId: z.string().min(1).max(64).optional() })
+const OVERLAY_RULE = 'Send { actor, nodeId, instructions?, title? }: actor is a short lowercase name such as human'
 
 export async function humanChange<T>(set: Status, change: { actor: string; why?: string | undefined; action: string; params: unknown }, work: () => Promise<T>): Promise<T | { error: string }> {
   const line = { actor: change.actor, action: change.action, why: change.why ?? 'cli', params: change.params }
@@ -53,5 +57,20 @@ export function humanSettingsRoutes() {
       const input = parsedBody(changeSchema, body, set, 'Send { actor }: actor is a short lowercase name such as human')
       if ('error' in input) return input
       return humanChange(set, { ...input, action: 'message-reset', params: { name } }, async () => { await resetMessage(name); return { ok: true } })
+    })
+    .get('/api/studio/flow-overlays/:flowId', async ({ params, set }) => {
+      if (!FLOW_ID.test(params.flowId)) { set.status = 400; return { error: `Not a flow id: ${params.flowId}` } }
+      return { flowId: params.flowId, overlay: (await readFlowOverlay(params.flowId)) ?? { nodes: {} } }
+    })
+    .put('/api/studio/flow-overlays/:flowId', ({ params, body, set }) => {
+      const input = parsedBody(overlaySetSchema, body, set, OVERLAY_RULE)
+      if ('error' in input) return input
+      const { actor, why, nodeId, ...node } = input
+      return humanChange(set, { actor, why, action: 'overlay-set', params: { flowId: params.flowId, nodeId, node } }, async () => ({ flowId: params.flowId, overlay: await setOverlayNode(params.flowId, nodeId, overlayNodeOf(node)) }))
+    })
+    .delete('/api/studio/flow-overlays/:flowId', ({ params, body, set }) => {
+      const input = parsedBody(overlayClearSchema, body, set, 'Send { actor, nodeId? }: actor is a short lowercase name such as human')
+      if ('error' in input) return input
+      return humanChange(set, { ...input, action: 'overlay-clear', params: { flowId: params.flowId, nodeId: input.nodeId ?? null } }, async () => ({ flowId: params.flowId, overlay: await clearOverlay(params.flowId, input.nodeId) }))
     })
 }

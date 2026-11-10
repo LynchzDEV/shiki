@@ -417,6 +417,26 @@ identify who is answering:
 (the chat or terminal that owns the run) and
 .BI \-\-flow\-version " N"
 (the whole\-number version being answered).
+.TP
+.BI "shiki studio overlay show " flowId
+The local step text overrides for a plugin flow (for example
+.BR fixstack\-\-fixstack ),
+kept in
+.IR flow\-overlays/<flowId>.json .
+.TP
+.BI "shiki studio overlay set " "flowId nodeId" " \fR[\fB\-\-file\fR \fIFILE\fR] [\fB\-\-title\fR \fITEXT\fR] [\fB\-\-as\fR \fINAME\fR] [\fB\-\-why\fR \fITEXT\fR]"
+Override one step's instructions (the text of
+.IR FILE )
+or title. Only instructions and title can be overridden: checks, setup,
+edges, agents and land stages are refused, because they run commands or
+change routing. The flow keeps its plugin identity (automate, status map,
+land env). New runs use the override; runs already going keep their copy.
+An unknown step id in the file is logged and skipped. Human only; every
+change is written to
+.IR queue\-audit/_settings.jsonl .
+.TP
+.BI "shiki studio overlay clear " flowId " \fR[\fInodeId\fR] [\fB\-\-as\fR \fINAME\fR] [\fB\-\-why\fR \fITEXT\fR]"
+Drop one step's override, or all of the flow's. Human only.
 .SH TERMINALS
 .TP
 .B shiki terminals

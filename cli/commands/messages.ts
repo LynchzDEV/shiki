@@ -6,15 +6,15 @@ import { arg, emit, expandHome, records, stringOpt, UsageError, type Command, ty
 import { cell, table } from '../format'
 import { actorOf, whyOf } from './queue'
 
-const CHANGE_OPTIONS: Record<string, OptionSpec> = {
+export const CHANGE_OPTIONS: Record<string, OptionSpec> = {
   as: { type: 'string', description: 'who is changing it; only human may (default: $SKD_ACTOR, then human)', placeholder: 'NAME' },
   why: { type: 'string', description: 'why, kept in the settings audit log (default: cli)', placeholder: 'TEXT' },
 }
 
-export async function fileOption(ctx: Context): Promise<string> {
+export async function fileOption(ctx: Context, required = true): Promise<string | undefined> {
   const file = stringOpt(ctx, 'file')
-  if (file === undefined) throw new UsageError('--file is required')
-  return readFile(resolve(ctx.cwd, expandHome(file)), 'utf8')
+  if (file === undefined && required) throw new UsageError('--file is required')
+  return file === undefined ? undefined : readFile(resolve(ctx.cwd, expandHome(file)), 'utf8')
 }
 
 function listText(value: unknown): string {
