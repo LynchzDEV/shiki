@@ -114,6 +114,6 @@ Deploying (`shiki queue land`, `shiki queue done`), removing a card, and editing
 
 Refused calls (`409`, `423`, `429`) exit with code 1 and are logged, but only `ok` actions count toward a limit.
 
-**6. Check the result.** `shiki queue show <id>` again: the state moved as expected and the log line says `ok`. Then read the ClickUp thread to see what the owner sees.
+**6. Check the result.** `shiki queue show <id>` again: the log line says `ok` and the state moved as expected (`pick`, `resume` and `requeue`: `queued`, then `building` once it starts; `repost`: still `waiting-pick` with a new ask; `stop`: `failed`). If you stop for any reason, a refusal included, release your claim. Then read the ClickUp thread to see what the owner sees.
 
 Limits (ok actions per card in 24 hours, `shiki queue limits` to list): note 10, resume 3, repost 2, say 5, pick 3, requeue 3, reread 5, answer 5, stop 3.
