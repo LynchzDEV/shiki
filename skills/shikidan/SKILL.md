@@ -43,6 +43,8 @@ description: Use when the user wants to set up, start, check, configure or opera
 | Build queue | `shiki queue list`, `shiki queue add <source> <externalId> --repo <dir>`, `shiki queue report <id>`, `shiki queue requeue <id>` (any `<id>` may be a unique prefix of 4+ characters) |
 | ClickUp design pick, operator | `shiki queue pick <id> <option>\|none\|keep [--feedback TEXT] [--note TEXT]` (`keep`, alias `now`/`nochange`, keeps the current design), `shiki queue say <id> <text>`, `shiki queue reread <id>`, `shiki queue repost <id>`, `shiki queue ask-to [userId\|--clear]`, `shiki queue none-phrases [phrase...\|--clear]`, `shiki queue keep-phrases [phrase...\|--clear]` |
 | Fix a stuck card (card toolbox) | `shiki queue show <id>`, `shiki queue history <id>`, `shiki queue claim\|release <id>`, `shiki queue resume <id> --at <step> [--note TEXT]`, `shiki queue note <id> <text>\|--file F`, `shiki queue answer\|stop <id>`, `shiki queue limits [action n]`, `shiki queue limits reset <id>`. See section 6. |
+| Card doctor (suggests a fix for a pick reply) | `shiki doctor <id>`, `shiki doctor show <id>`, `shiki doctor apply\|dismiss <id> --as <you>`. See section 7. |
+| Human settings | `shiki messages list\|show\|set\|reset` (ClickUp texts), `shiki studio overlay show\|set\|clear` (plugin flow step text). See section 8. |
 | Plugins | `shiki marketplace add <url>`, `shiki plugin catalog`, `shiki plugin add <git url>`, `shiki plugin list`, `shiki plugin settings <id>` |
 | Terminals and history | `shiki terminals`, `shiki terminal new`, `shiki history` |
 
@@ -117,3 +119,20 @@ Refused calls (`409`, `423`, `429`) exit with code 1 and are logged, but only `o
 **6. Check the result.** `shiki queue show <id>` again: the log line says `ok` and the state moved as expected (`pick`, `resume` and `requeue`: `queued`, then `building` once it starts; `repost`: still `waiting-pick` with a new ask; `stop`: `failed`). If you stop for any reason, a refusal included, release your claim. Then read the ClickUp thread to see what the owner sees.
 
 Limits (ok actions per card in 24 hours, `shiki queue limits` to list): note 10, resume 3, repost 2, say 5, pick 3, requeue 3, reread 5, answer 5, stop 3.
+
+## 7. The card doctor
+
+When the owner's ClickUp reply to a pick ask is "not understood", the doctor reads the owner's replies since the ask and suggests one fix. It only suggests; nothing runs until someone applies it, and the actor `doctor` can never apply.
+
+- **How it reads.** One run with no tools (no shell, edits, web or sub-agents) in a fresh empty folder, never the card's worktree. Each reply is wrapped as untrusted data. Plain code checks the answer (intent, an option on the card, a reply id it was given, a quote from that reply, confidence at least 0.6); anything off becomes `unknown`.
+- **What it can suggest.** A fixed map, never the model: pick → `queue pick <option>`; reject → `queue pick none --feedback <the owner's full reply>`; keep → `queue resume --at <keep step>` (fixstack: `how`) with the confirm-keep text and the owner's reply as a wrapped note. Question, off-topic and unknown give no actions and a reason.
+- **Use it.** `shiki doctor show <id>` prints the intent, confidence, the deciding reply id, the reason and the exact `shiki queue` commands apply would run. Read the ClickUp reply yourself and check they match. Then `shiki doctor apply <id> --as <you> --why "..."` (it runs those commands through the toolbox as you, so claims, limits and the audit log apply) or `shiki doctor dismiss <id> --as <you> --why "..."`. Never apply a suggestion you have not read.
+- **Refusals.** `409` on apply means the suggestion is not proposed any more, or the card moved or was re-asked since the doctor looked (it is then marked stale): read the card again and fix it with the toolbox. `shiki doctor <id>` asks again on demand; at most 3 readings per card in 24 hours (`429` after that), one at a time, and none while someone else holds the card (`423`).
+- **Its files.** `~/.config/shikidan/doctor/playbook.md` (what the doctor is told) and `doctor/flows.json` (`{ "<flowId>": { "keepStep": "<step>" } }`) are edited by a human only. The doctor never writes them; neither should you to fix one card.
+
+## 8. Human settings: messages and flow overlays
+
+These change every card, so they are for a human (`--as human`; anyone else gets `403`). Each change, refused ones included, is a line in `queue-audit/_settings.jsonl`.
+
+- **Messages** are the fixed texts Shikidan posts in a ClickUp pick thread: `ack`, `clarify` (`{options}`), `confirm-none`, `confirm-keep`, `confirm-pick` (`{option}`), `ask-header` (`{host}`) and `recommended`. `shiki messages list` and `shiki messages show <name>` read them; `shiki messages set <name> --file F --as human` replaces one, `shiki messages reset <name> --as human` goes back to the default. Slots are filled from the card, never from a reply. An empty file or one over 2000 characters falls back to the default.
+- **Flow overlays** change a plugin flow step's instructions or title on this machine only, for example `shiki studio overlay set fixstack--fixstack how --file how.md --as human`. Checks, setup, edges, agents and land stages can't be overlaid (they run commands or change routing). New runs use it; running ones keep their copy. `shiki studio overlay show <flowId>` and `shiki studio overlay clear <flowId> [nodeId] --as human`.
