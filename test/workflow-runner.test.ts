@@ -1516,6 +1516,18 @@ test('resumeAt moves a failed run back to a step with a note: same run, earlier 
   expect(runner.list().filter(run => run.label === 'line')).toHaveLength(1)
 })
 
+test('resumeAt restarts a finished run at an earlier step', async () => {
+  const store = await build(() => ({ cmd: '/bin/echo', args: [report('pass')], env: {} }))
+  const step = (id: string) => ({ id, title: id.toUpperCase(), instructions: `Do ${id}`, maxVisits: 1 })
+  await store.save({ ...classicWorkflow(), id: 'line', entry: 'ask', nodes: [step('ask'), step('how')], edges: [{ source: 'ask', target: 'how', outcome: 'pass' }] })
+  const started = await runner.start({ workflowId: 'line', cwd: repo, request: 'Make it', label: 'line' })
+  expect((await finished(started.id)).status).toBe('done')
+  await runner.resumeAt(started.id, 'how', 'again')
+  const done = await finished(started.id)
+  expect(done.status).toBe('done')
+  expect(done.attempts.map(attempt => attempt.nodeId)).toEqual(['ask', 'how', 'how'])
+})
+
 test('a queue card waiting on a pick resumes at a later step of the same run, which sees the earlier attempt as evidence', async () => {
   let calls = 0
   const picking = JSON.stringify({ type: 'result', result: `SKD_RESULT ${JSON.stringify({ outcome: 'blocked', summary: 'Pick a design', evidence: ['pick: A,B | visualizer/login'] })}` })
