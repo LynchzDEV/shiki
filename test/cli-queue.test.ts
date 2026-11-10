@@ -275,6 +275,15 @@ describe('shiki queue', () => {
     expect(await main(['queue', 'reread', 'a1'], refused.deps)).toBe(1)
   })
 
+  test('repost posts to the item and says it asked again', async () => {
+    const h = harness(() => Response.json({ item: { id: 'a1', state: 'waiting-pick' } }))
+    expect(await main(['queue', 'repost', 'a1'], h.deps)).toBe(0)
+    expect(routesOf(h.calls)).toEqual(['POST /api/queue/a1/repost'])
+    expect(h.out()).toBe('Asked again in ClickUp.\n')
+    const refused = harness(() => Response.json({ error: 'It is not waiting on a pick' }, { status: 409 }))
+    expect(await main(['queue', 'repost', 'a1'], refused.deps)).toBe(1)
+  })
+
   test('a refused requeue prints the server message and exits 1', async () => {
     const h = harness(() => Response.json({ error: 'It is building now' }, { status: 409 }))
     expect(await main(['queue', 'requeue', 'a1'], h.deps)).toBe(1)

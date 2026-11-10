@@ -35,7 +35,7 @@ afterAll(async () => {
   await rm(plain, { recursive: true, force: true })
 })
 
-type Engine = Pick<QueueEngine, 'add' | 'requeue' | 'pick' | 'say' | 'reread' | 'checkReplies' | 'remove' | 'stop' | 'move' | 'checkedAt' | 'subscribeChecks'>
+type Engine = Pick<QueueEngine, 'add' | 'requeue' | 'pick' | 'say' | 'reread' | 'repost' | 'checkReplies' | 'remove' | 'stop' | 'move' | 'checkedAt' | 'subscribeChecks'>
 type RunLookup = NonNullable<Parameters<typeof queueRoutes>[3]>
 
 function engine(items: ReturnType<typeof store>, over: Partial<QueueEngine> = {}): Engine {
@@ -46,6 +46,7 @@ function engine(items: ReturnType<typeof store>, over: Partial<QueueEngine> = {}
     pick: async (id, choice) => { if (found(id).state !== 'waiting-pick') throw new QueueRefusal('It is queued now', 409); return items.update(id, { state: 'queued', questions: [choice.option, choice.tester ?? '', choice.note ?? ''] }) },
     say: async id => found(id),
     reread: async id => { if (found(id).state !== 'waiting-pick') throw new QueueRefusal('It is not waiting on a ClickUp pick', 409); return found(id) },
+    repost: async id => { if (found(id).state !== 'waiting-pick') throw new QueueRefusal('It is not waiting on a pick', 409); return found(id) },
     checkReplies: async () => ({ checked: 2, resumed: 1 }),
     remove: async id => { found(id); await items.remove(id) },
     stop: async id => {
@@ -656,6 +657,19 @@ test('POST reread returns the item and maps the engine refusals', async () => {
   expect(ok.status).toBe(200)
   expect((await ok.json()).item.id).toBe(a.id)
   expect((await post(app, '/api/queue/nope/reread')).status).toBe(404)
+})
+
+test('POST repost returns the item, maps refusals, and a failed ask is a 502', async () => {
+  const items = store()
+  const a = await items.add({ ...newItem, externalId: '1' }, 'end')
+  const app = new Elysia().use(queueRoutes(items, engine(items)))
+  const idle = await post(app, `/api/queue/${a.id}/repost`)
+  expect([idle.status, (await idle.json()).error]).toEqual([409, 'It is not waiting on a pick'])
+  await items.update(a.id, { state: 'waiting-pick' })
+  expect((await post(app, `/api/queue/${a.id}/repost`)).status).toBe(200)
+  const failing = new Elysia().use(queueRoutes(items, engine(items, { repost: async () => { throw new SourceFailure('ClickUp is down') } })))
+  const down = await post(failing, `/api/queue/${a.id}/repost`)
+  expect([down.status, (await down.json()).error]).toEqual([502, 'ClickUp is down'])
 })
 
 test('a route accepts a unique id prefix and refuses an ambiguous one', async () => {

@@ -72,6 +72,7 @@ export type QueueEngine = {
   answer(id: string, text: string): Promise<QueueItem>
   say(id: string, text: string): Promise<QueueItem>
   reread(id: string): Promise<QueueItem>
+  repost(id: string): Promise<QueueItem>
   startStage(id: string, stage: string): Promise<QueueItem>
   refreshPreflight(id: string, stage: string): Promise<QueueItem>
   retryStage(id: string): Promise<QueueItem>
@@ -637,6 +638,19 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
     return found(store, id)
   })
 
+  const repost = (id: string): Promise<QueueItem> => serial(async () => {
+    const item = found(store, id)
+    if (item.state !== 'waiting-pick' || item.pick === undefined) throw new QueueRefusal('It is not waiting on a pick', 409)
+    if (item.worktree === null) throw new QueueRefusal('It has no workspace', 409)
+    if (runningInStudio(item)) throw new QueueRefusal('It is running in Studio now', 409)
+    await asker!.close(item)
+    const { ask: _old, ...pick } = item.pick
+    await asker!.ask(await store.update(id, { pick }))
+    const ask = found(store, id).pick?.ask
+    if (ask?.error !== undefined) throw new SourceFailure(ask.error)
+    return found(store, id)
+  })
+
   async function recover(): Promise<void> {
     await serial(async () => {
       await land.recover()
@@ -675,6 +689,7 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
     answer,
     say,
     reread,
+    repost,
     checkedAt: () => lastCheckedAt,
     preparing: () => preparingId,
     paused,

@@ -244,6 +244,12 @@ export const queueCommands: Command[] = [
     run: async (ctx) => emit(ctx, await ctx.client.post(itemPath(ctx, '/say'), { text: arg(ctx, 'text') }), sayText),
   },
   {
+    path: ['queue', 'repost'],
+    args: ['id'],
+    summary: 'Publish the mockups again and post a fresh ClickUp pick ask, closing the old one',
+    run: async (ctx) => emit(ctx, await ctx.client.post(itemPath(ctx, '/repost'), {}), () => 'Asked again in ClickUp.\n'),
+  },
+  {
     path: ['queue', 'reread'],
     args: ['id'],
     summary: 'Read the ClickUp replies to the open pick again from the ask',

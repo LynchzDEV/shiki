@@ -15,7 +15,7 @@ import { eventStreamResponse, type RunEvents } from '../run-events'
 import { MAX_NONE_PHRASE_LENGTH, MAX_NONE_PHRASES, MIN_NONE_PHRASE_LENGTH, MAX_PUBLISH_KEEP_DAYS, MAX_QUEUE_PARALLEL, MAX_REPLY_POLL_MINUTES, MAX_USER_ID_LENGTH, readConfig, writeConfig, type AppConfig } from '../secrets'
 
 type Status = { status?: number | string }
-type QueueEngineRoutes = Pick<QueueEngine, 'add' | 'requeue' | 'pick' | 'unpublish' | 'checkReplies' | 'answer' | 'say' | 'reread' | 'remove' | 'stop' | 'move' | 'checkedAt' | 'subscribeChecks' | 'startStage' | 'refreshPreflight' | 'retryStage' | 'markDone' | 'landLog' | 'report'> & Partial<Pick<QueueEngine, 'preparing' | 'paused' | 'kick'>>
+type QueueEngineRoutes = Pick<QueueEngine, 'add' | 'requeue' | 'pick' | 'unpublish' | 'checkReplies' | 'answer' | 'say' | 'reread' | 'repost' | 'remove' | 'stop' | 'move' | 'checkedAt' | 'subscribeChecks' | 'startStage' | 'refreshPreflight' | 'retryStage' | 'markDone' | 'landLog' | 'report'> & Partial<Pick<QueueEngine, 'preparing' | 'paused' | 'kick'>>
 export type QueueRunLookup = { get(id: string): QueueStepRun | undefined; subscribe(listener: () => void): () => void }
 const NO_RUNS: QueueRunLookup = { get: () => undefined, subscribe: () => () => {} }
 
@@ -191,6 +191,15 @@ export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: 
       }
     })
     .post('/api/queue/:id/reread', ({ params, set }) => refusing(set, async () => ({ item: cleaned(await engine.reread(params.id)) })))
+    .post('/api/queue/:id/repost', async ({ params, set }) => {
+      try {
+        return await refusing(set, async () => ({ item: cleaned(await engine.repost(params.id)) }))
+      } catch (error) {
+        if (!(error instanceof SourceFailure)) throw error
+        set.status = 502
+        return { error: error.message }
+      }
+    })
     .get('/queue/:id/files/*', ({ params }) => mockupResponse(store.get(params.id)?.worktree ?? null, params['*']))
     .post('/api/queue/:id/land/retry', ({ params, set }) => refusing(set, async () => ({ item: cleaned(await engine.retryStage(params.id)) }), explainMissing))
     .post('/api/queue/:id/land/done', ({ params, set }) => refusing(set, async () => ({ item: cleaned(await engine.markDone(params.id)) }), explainMissing))

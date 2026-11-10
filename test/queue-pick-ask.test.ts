@@ -709,3 +709,42 @@ test('the acknowledged ids are kept per ask and capped at the newest 50', async 
   expect(acked).toHaveLength(50)
   expect(acked.at(-1)).toBe('c159')
 })
+
+test('repost resolves the old ask, publishes again and posts a fresh ask with a new cursor and no acknowledgements', async () => {
+  const h = await parked()
+  h.replies.set('1', async () => h.from(PALM, 'c8', 'ขอดูก่อนนะ'))
+  await h.engine.checkReplies()
+  expect(h.store.get(h.id)!.pick!.ask!.acked).toEqual(['c8'])
+  const item = await h.engine.repost(h.id)
+  expect(h.resolved).toEqual([{ id: '1', ref: 'ref-1' }])
+  expect(h.published).toHaveLength(2)
+  expect(asks(h)).toHaveLength(2)
+  expect(item.pick!.ask).toMatchObject({ ref: 'ref-2', since: 'c2', ownerName: 'Kan' })
+  expect(item.pick!.ask!.acked).toBeUndefined()
+  expect(item.lastSeenId).toBe('c2')
+})
+
+test('repost asks a waiting pick that was never asked, even when the pick is kept in Shikidan', async () => {
+  const h = await parked({ deps: { pickIn: async () => 'shikidan' } })
+  expect(asks(h)).toEqual([])
+  const item = await h.engine.repost(h.id)
+  expect(asks(h)).toHaveLength(1)
+  expect(item.pick!.ask).toMatchObject({ ref: 'ref-1' })
+  expect(h.resolved).toEqual([])
+})
+
+test('repost refuses an item that is not waiting on a pick, and an unknown id', async () => {
+  const h = await parked()
+  const idle = await h.engine.add({ ...add, externalId: '2' })
+  expect(await refusalOf(h.engine.repost(idle.id))).toEqual([409, 'It is not waiting on a pick'])
+  expect(await refusalOf(h.engine.repost('nope'))).toEqual([404, 'No queue item nope'])
+})
+
+test('repost reports a failed publish or post as a SourceFailure and leaves the error on the ask', async () => {
+  const h = await parked()
+  h.deps.publish = async () => { throw new Error('Publishing is down') }
+  const error = await refusal(h.engine.repost(h.id))
+  expect(error).toBeInstanceOf(SourceFailure)
+  expect((error as Error).message).toBe('Publishing is down')
+  expect(h.store.get(h.id)!.pick!.ask).toMatchObject({ ref: '', error: 'Publishing is down' })
+})
