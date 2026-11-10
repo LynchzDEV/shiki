@@ -1179,23 +1179,39 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
       const run = runs.get(id)
       if (!run) throw new Error('Run not found')
       if (LIVE_STATUSES.has(run.status) || run.status === 'done') throw new Error('Only failed, blocked or stopped runs can be retried')
-      if (run.versions[0]?.state !== 'approved') throw new RunActionError('Approve the flow before retrying', 409)
-      if (workspaceBusy(run.cwd, id) || deps.manager.listJobs().some(job => job.workflowRunId === id && job.status === 'running')) throw new Error('Workspace still has running work')
-      if (run.attempts.some(attempt => processAlive(attempt.checkPid))) throw new Error('The interrupted acceptance process may still be running; inspect it before retrying')
-      for (const attempt of run.attempts) attempt.families ??= authorFamilies(run, attempt)
-      await reresolve(run)
-      delete run.unavailable
-      interrupt(run)
-      run.budgetFrom = run.attempts.length
-      if (!deps.manager.claimWorkspace(run.cwd, run.id)) throw new Error('Workspace already has running work')
-      const taken = claimPaths(run)
-      if (taken) { deps.manager.releaseWorkspace(run.cwd, run.id); throw new Error(`Another run owns ${taken}`) }
-      run.status = 'running'; run.error = null; run.dismissedAt = null
-      if (note !== undefined) run.request = `${run.request}\n\n${note}`
-      if (run.chatId) run.reportedAt = null
-      await advance(run)
-      return structuredClone(run)
+      return relaunch(run, note)
     })
+  }
+  async function resumeAt(id: string, nodeId: string, note?: string): Promise<WorkflowRun> {
+    return exclusive(id, async () => {
+      const run = runs.get(id)
+      if (!run) throw new Error('Run not found')
+      if (LIVE_STATUSES.has(run.status)) throw new Error('Only done, failed, blocked or stopped runs can be resumed at a step')
+      const node = run.workflow.nodes.find(node => node.id === nodeId)
+      if (!node) throw new RunActionError(`No step ${nodeId} in this flow`, 404)
+      if (node.kind === 'join') throw new RunActionError('A join cannot be resumed at; pick a step on one of its paths', 409)
+      if (run.sections.length || run.tokens.length !== 1) throw new RunActionError('Wait for the parallel paths to join before resuming at a step', 409)
+      return relaunch(run, note, nodeId)
+    })
+  }
+  async function relaunch(run: WorkflowRun, note: string | undefined, nodeId?: string): Promise<WorkflowRun> {
+    if (run.versions[0]?.state !== 'approved') throw new RunActionError('Approve the flow before retrying', 409)
+    if (workspaceBusy(run.cwd, run.id) || deps.manager.listJobs().some(job => job.workflowRunId === run.id && job.status === 'running')) throw new Error('Workspace still has running work')
+    if (run.attempts.some(attempt => processAlive(attempt.checkPid))) throw new Error('The interrupted acceptance process may still be running; inspect it before retrying')
+    for (const attempt of run.attempts) attempt.families ??= authorFamilies(run, attempt)
+    await reresolve(run)
+    delete run.unavailable
+    interrupt(run)
+    if (nodeId !== undefined) Object.assign(run.tokens[0]!, { nodeId, state: 'ready', attempt: null })
+    run.budgetFrom = run.attempts.length
+    if (!deps.manager.claimWorkspace(run.cwd, run.id)) throw new Error('Workspace already has running work')
+    const taken = claimPaths(run)
+    if (taken) { deps.manager.releaseWorkspace(run.cwd, run.id); throw new Error(`Another run owns ${taken}`) }
+    run.status = 'running'; run.error = null; run.dismissedAt = null
+    if (note !== undefined) run.request = `${run.request}\n\n${note}`
+    if (run.chatId) run.reportedAt = null
+    await advance(run)
+    return structuredClone(run)
   }
   async function recover(): Promise<void> {
     for (const run of runs.values()) {
@@ -1352,6 +1368,6 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
       await persist(run)
     })
   }
-  return { start, stop, retry, dismiss, recover, approve, reject, propose, pause, resume, onJobSettled, report, waitingStep, remind, markSessionNotified, markReported, get: (id: string) => { const run = runs.get(id); return run ? structuredClone(run) : undefined }, list: () => { followResumedTerminals([...runs.values()]); return [...runs.values()].map(run => structuredClone(run)).sort((a, b) => b.createdAt - a.createdAt) } }
+  return { start, stop, retry, resumeAt, dismiss, recover, approve, reject, propose, pause, resume, onJobSettled, report, waitingStep, remind, markSessionNotified, markReported, get: (id: string) => { const run = runs.get(id); return run ? structuredClone(run) : undefined }, list: () => { followResumedTerminals([...runs.values()]); return [...runs.values()].map(run => structuredClone(run)).sort((a, b) => b.createdAt - a.createdAt) } }
 }
 export type WorkflowRunner = ReturnType<typeof createWorkflowRunner>

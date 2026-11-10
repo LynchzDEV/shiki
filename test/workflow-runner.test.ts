@@ -14,6 +14,8 @@ import type { TerminalRecord } from '../server/terminals'
 import type { Unavailable } from '../server/engine-availability'
 import { recoverGraph, recoveryVerdict } from '../server/queue-recover'
 import { mcUrl, writeConfig } from '../server/secrets'
+import { cardToolbox } from '../server/card-toolbox'
+import { queueHarness } from './support/queue-harness'
 
 let dir: string, repo: string, manager: JobManager, runner: WorkflowRunner, settledRuns: WorkflowRun[]
 let down: (engine: string) => Unavailable | null = () => null
@@ -1493,6 +1495,71 @@ test('a join conflict takes the fail edge, keeps the unjoined branch and the fix
   expect(done.attempts.map(attempt => attempt.nodeId).slice(-3)).toEqual(['join', 'fix', 'review'])
   expect(done.status).toBe('done')
   expect(await readFile(join(repo, 'same.txt'), 'utf8')).toBe('a\n')
+})
+
+test('resumeAt moves a finished run back to a step with a note: same run, earlier attempts as evidence, fresh budget', async () => {
+  const store = await build()
+  const step = (id: string) => ({ id, title: id.toUpperCase(), instructions: `Do ${id}`, maxVisits: 1 })
+  await store.save({ ...classicWorkflow(), id: 'line', entry: 'ask', nodes: [step('ask'), step('how'), step('build')], edges: [{ source: 'ask', target: 'how', outcome: 'pass' }, { source: 'how', target: 'build', outcome: 'pass' }] })
+  const started = await runner.start({ workflowId: 'line', cwd: repo, request: 'Make it', label: 'line' })
+  expect((await finished(started.id)).status).toBe('done')
+  const resumed = await runner.resumeAt(started.id, 'how', 'Operator note from grok: keep NOW; fix the switcher')
+  expect(resumed.id).toBe(started.id)
+  const done = await finished(started.id)
+  expect(done.status).toBe('done')
+  expect(done.attempts.map(attempt => attempt.nodeId)).toEqual(['ask', 'how', 'build', 'how', 'build'])
+  const again = assignmentOf(done.attempts[3]!.prompt)
+  expect(again.request).toBe('Make it\n\nOperator note from grok: keep NOW; fix the switcher')
+  expect(again.upstreamEvidence.map((input: { node: string }) => input.node)).toEqual(['ask', 'how', 'build'])
+  expect(runner.list().filter(run => run.label === 'line')).toHaveLength(1)
+})
+
+test('a queue card waiting on a pick resumes at a later step of the same run, which sees the earlier attempt as evidence', async () => {
+  let calls = 0
+  const picking = JSON.stringify({ type: 'result', result: `SKD_RESULT ${JSON.stringify({ outcome: 'blocked', summary: 'Pick a design', evidence: ['pick: A,B | visualizer/login'] })}` })
+  const store = await build()
+  const step = (id: string) => ({ id, title: id.toUpperCase(), instructions: `Do ${id}`, maxVisits: 2 })
+  await store.save({ ...classicWorkflow(), id: 'card', entry: 'ask', nodes: [step('ask'), step('how'), step('build')], edges: [{ source: 'ask', target: 'how', outcome: 'pass' }, { source: 'how', target: 'build', outcome: 'pass' }] })
+  const h = queueHarness(dir, { runner: { start: (input, context) => runner.start(input, context), get: id => runner.get(id), retry: (id, note) => runner.retry(id, note), resumeAt: (id, nodeId, note) => runner.resumeAt(id, nodeId, note) }, prepareWorktree: async () => ({ worktree: repo }) })
+  runner = createWorkflowRunner({ manager, resolver: () => ({ cmd: '/bin/echo', args: [calls++ === 0 ? picking : report()], env: {} }), store, base: dir, requireApproval: async () => false, onRunSettled: run => { void h.engine.onRunSettled(run) } })
+  const card = await h.engine.add({ source: 'clickup-board', externalId: '6ea3', repo, flowId: 'card' })
+  const cardState = async (state: string) => { for (let i = 0; i < 200 && h.store.get(card.id)!.state !== state; i++) await Bun.sleep(20); return h.store.get(card.id)! }
+  const parked = await cardState('waiting-pick')
+  expect(parked.pick?.options).toEqual(['A', 'B'])
+  const runId = parked.runIds[0]!
+  const toolbox = cardToolbox({ store: h.store, engine: h.engine, auditDir: join(dir, 'audit'), secrets: async () => [] })
+  await toolbox.perform(card.id, 'resume', { at: 'build', note: 'keep current design; fix: switcher on top on every page' }, { actor: 'grok', why: 'Palm: keep NOW, bug fix only' })
+  expect(h.store.get(card.id)).toMatchObject({ state: 'building', currentRunId: runId, runIds: [runId] })
+  const ready = await cardState('ready')
+  expect(ready.runIds).toEqual([runId])
+  const run = runner.get(runId)!
+  expect(run.status).toBe('done')
+  expect(run.attempts.map(attempt => attempt.nodeId)).toEqual(['ask', 'build'])
+  const assignment = assignmentOf(run.attempts[1]!.prompt)
+  expect(assignment.request).toContain('Operator note from grok: keep current design; fix: switcher on top on every page')
+  expect(assignment.upstreamEvidence.map((input: { node: string; outcome: { outcome: string } }) => [input.node, input.outcome.outcome])).toEqual([['ask', 'blocked']])
+  expect(h.store.get(card.id)!.answerPaths.some(path => path.endsWith('operator-note-1.md'))).toBe(true)
+})
+
+test('resumeAt refuses a run that is still going', async () => {
+  await build(() => ({ cmd: '/bin/sleep', args: ['5'], env: {} }))
+  const started = await runner.start({ cwd: repo, request: 'Wait', label: 'slow', graph: withoutSession() }, { startedByUser: true })
+  await until(started.id, run => run.tokens.some(token => token.state === 'working'))
+  await expect(runner.resumeAt(started.id, 'plan')).rejects.toThrow('Only done, failed, blocked or stopped runs can be resumed at a step')
+})
+
+test('resumeAt refuses an unknown step, a join, and a run with open parallel paths', async () => {
+  await homeConfig()
+  await build()
+  const graph = forked({ a: { checks: writes('same.txt', 'a') }, b: { checks: writes('same.txt', 'b') } })
+  const started = await runner.start({ cwd: repo, request: 'Write the same file', label: 'fork', graph }, { startedByUser: true })
+  const blocked = await finished(started.id)
+  expect(blocked.sections).toHaveLength(1)
+  await expect(runner.resumeAt(started.id, 'nope')).rejects.toMatchObject({ status: 404, message: 'No step nope in this flow' })
+  await expect(runner.resumeAt(started.id, 'join')).rejects.toMatchObject({ status: 409 })
+  await expect(runner.resumeAt(started.id, 'a')).rejects.toMatchObject({ status: 409, message: 'Wait for the parallel paths to join before resuming at a step' })
+  await expect(runner.resumeAt('missing', 'a')).rejects.toThrow('Run not found')
+  expect(runner.get(started.id)!.status).toBe('blocked')
 })
 
 test('a join conflict with no fail edge blocks the run, keeps the paths and joins once the user resolves it', async () => {

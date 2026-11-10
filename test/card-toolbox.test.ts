@@ -280,3 +280,38 @@ test('note writes an operator note marked with the actor, adds it to the answers
   await h.store.update(item.id, { state: 'landed' })
   expect(await refusal(toolbox.perform(item.id, 'note', { text: 'late' }, human))).toMatchObject({ status: 409, message: 'It is landed now' })
 })
+
+test('resume refuses a bad step id, a runner that cannot resume, and a building card', async () => {
+  const h = queueHarness(dir)
+  const item = await parkedItem(h)
+  const toolbox = toolboxOf(h)
+  expect(await refusal(toolbox.perform(item.id, 'resume', { at: '../how' }, human))).toMatchObject({ status: 400 })
+  expect(await refusal(toolbox.perform(item.id, 'resume', { at: 'how' }, human))).toMatchObject({ status: 409, message: 'It has no run to resume' })
+  await h.store.update(item.id, { state: 'building' })
+  expect(await refusal(toolbox.perform(item.id, 'resume', { at: 'how' }, human))).toMatchObject({ status: 409, message: 'It is building now' })
+  expect(h.store.get(item.id)!.resumeAt).toBeUndefined()
+})
+
+test('resume parks the card with resumeAt, and a resumeAt that fails fails the card instead of starting over', async () => {
+  const resumedAt: Array<[string, string, string | undefined]> = []
+  const h = queueHarness(dir)
+  const item = await parkedItem(h)
+  h.runs.set('run-1', { ...h.runs.get('run-1')!, workflow: { nodes: [{ id: 'plan', title: 'Plan', maxVisits: 1 }, { id: 'how', title: 'How', maxVisits: 1 }] as never } })
+  const restarted = h.restart({ resumeAt: async (id, nodeId, note) => { resumedAt.push([id, nodeId, note]); throw new Error('Workspace still has running work') } })
+  const toolbox = cardToolbox({ store: restarted.store, engine: restarted.engine, auditDir: auditDir(), secrets: async () => [] })
+  expect(await refusal(toolbox.perform(item.id, 'resume', { at: 'nope' }, human))).toMatchObject({ status: 400, message: 'No step nope in its flow; steps: plan, how' })
+  await toolbox.perform(item.id, 'resume', { at: 'how', note: 'fix the switcher' }, { actor: 'grok', why: 'bug fix only' })
+  expect(resumedAt).toEqual([['run-1', 'how', 'Operator note from grok: fix the switcher']])
+  expect(restarted.store.get(item.id)).toMatchObject({ state: 'failed', error: 'Could not resume at how: Workspace still has running work' })
+  expect(restarted.store.get(item.id)!.resumeAt).toBeUndefined()
+  expect(h.started).toHaveLength(1)
+})
+
+test('a card parked to resume at a step keeps it across a restart, and loses it with its resume run', async () => {
+  const h = queueHarness(dir)
+  const item = await parkedItem(h)
+  await h.store.update(item.id, { state: 'queued', resumeRunId: 'run-1', resumeAt: { node: 'how', note: 'n' }, lease: { holder: 'grok', until: 5 } })
+  expect(h.restart().store.get(item.id)).toMatchObject({ resumeRunId: 'run-1', resumeAt: { node: 'how', note: 'n' }, lease: { holder: 'grok', until: 5 } })
+  await h.store.update(item.id, { state: 'building' })
+  expect(h.store.get(item.id)!.resumeAt).toBeUndefined()
+})

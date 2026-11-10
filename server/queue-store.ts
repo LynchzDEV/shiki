@@ -21,6 +21,7 @@ export type LandStageState = {
 }
 export type LandRecover = { stage: string; attempts: number; runId?: string; reason: string; asked?: true; answers?: string }
 export type LandProgress = { stage: string; stages: Record<string, LandStageState>; message?: string; plan: LandStage[]; plugin?: string; runId?: string; recover?: LandRecover }
+export type ResumeAt = { node: string; note?: string }
 export type CardLease = { holder: string; until: number }
 export type ActionKey = { key: string; action: string; paramsHash: string; result: unknown }
 export type BuildRecover = { runId: string; attempts: number; recoveryRunId?: string; asked?: true; openBiz?: string[]; addedRepos?: string[]; note?: string }
@@ -32,7 +33,7 @@ export type QueueItem = {
   createdAt: number; updatedAt: number; repos?: string[]; repoReruns?: number
   realBaseline?: Record<string, string>; realChanged?: string[]; pick?: QueuePick; land?: LandProgress; autoPicks?: number; resumeRunId?: string
   askedIn?: 'shikidan'; recoverRebuilds?: number; recoverBuild?: BuildRecover; syncedStatus?: string; published?: Published
-  lease?: CardLease; actionKeys?: ActionKey[]; limitsResetAt?: number
+  lease?: CardLease; actionKeys?: ActionKey[]; limitsResetAt?: number; resumeAt?: ResumeAt
 }
 
 export type NewQueueItem = Pick<QueueItem, 'source' | 'externalId' | 'title' | 'url' | 'repo' | 'flowId' | 'repos'>
@@ -96,6 +97,7 @@ function isItem(value: unknown): value is QueueItem {
     && (item.lease === undefined || isLease(item.lease))
     && (item.actionKeys === undefined || (Array.isArray(item.actionKeys) && item.actionKeys.every(isActionKey)))
     && (item.limitsResetAt === undefined || typeof item.limitsResetAt === 'number')
+    && (item.resumeAt === undefined || (isRecord(item.resumeAt) && isText((item.resumeAt as Record<string, unknown>).node) && ((item.resumeAt as Record<string, unknown>).note === undefined || isText((item.resumeAt as Record<string, unknown>).note))))
 }
 
 const isLease = (value: unknown): boolean => isRecord(value) && isText((value as Record<string, unknown>).holder) && typeof (value as Record<string, unknown>).until === 'number'
@@ -180,6 +182,7 @@ export function createQueueStore(path: string, clock: () => number = Date.now): 
       if ('lease' in patch && patch.lease === undefined) delete next.lease
       if (next.state !== 'waiting-info' || ('askedIn' in patch && patch.askedIn === undefined)) delete next.askedIn
       if (('resumeRunId' in patch && patch.resumeRunId === undefined) || !RESUMABLE.has(next.state)) delete next.resumeRunId
+      if (next.resumeRunId === undefined || ('resumeAt' in patch && patch.resumeAt === undefined)) delete next.resumeAt
       await save(items.map(item => (item.id === id ? next : item)))
       return next
     },

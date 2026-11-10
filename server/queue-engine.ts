@@ -21,6 +21,7 @@ export type QueueRunner = {
   start(input: { cwd: string; request: string; label: string; workflowId?: string; graph?: unknown }, context: { startedByUser: boolean }): Promise<{ id: string }>
   get(id: string): RunView | undefined
   retry?(id: string, note?: string): Promise<{ id: string }>
+  resumeAt?(id: string, nodeId: string, note?: string): Promise<{ id: string }>
   stop?(id: string): Promise<unknown>
 }
 
@@ -57,6 +58,8 @@ export type AddOptions = { background?: boolean }
 
 export type RequeueOptions = { fresh?: boolean }
 
+export type ResumeChoice = { at: string; note?: string; actor: string }
+
 export type QueueEngine = {
   add(input: AddInput, options?: AddOptions): Promise<QueueItem>
   kick(): Promise<void>
@@ -73,6 +76,7 @@ export type QueueEngine = {
   answer(id: string, text: string): Promise<QueueItem>
   say(id: string, text: string): Promise<QueueItem>
   note(id: string, text: string, actor: string): Promise<QueueItem>
+  resume(id: string, choice: ResumeChoice): Promise<QueueItem>
   reread(id: string): Promise<QueueItem>
   repost(id: string): Promise<QueueItem>
   startStage(id: string, stage: string): Promise<QueueItem>
@@ -93,6 +97,7 @@ export type QueuePause = { reason: string; until: number }
 const MAX_RUN_LABEL = 120
 const POLLER = 'poller'
 const NOTE_FILE = /^operator-note-\d+\.md$/
+const RESUMABLE_AT: ReadonlySet<QueueItem['state']> = new Set(['failed', 'ready', 'waiting-pick', 'waiting-info'])
 const NO_NOTES: ReadonlySet<QueueItem['state']> = new Set(['landing', 'landed'])
 const MAX_AUTO_PICKS = 2
 const DAY_MS = 24 * 60 * 60_000
@@ -394,14 +399,16 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
   }
 
   async function resumed(item: QueueItem): Promise<string | null> {
-    if (item.resumeRunId === undefined || deps.runner.retry === undefined || item.worktree === null) return null
+    if (item.resumeRunId === undefined || item.worktree === null) return null
+    if (item.resumeAt === undefined ? deps.runner.retry === undefined : deps.runner.resumeAt === undefined) return null
     const worktree = await restore({ ...item, worktree: item.worktree })
     await refuseLinkedQueueFolders(worktree, item.source)
     await contextIn(item, worktree)
     await answersOf(item)
+    if (item.resumeAt !== undefined) return resumedAt(item, item.resumeRunId, item.resumeAt)
     const pending = item.recoverBuild?.runId === item.resumeRunId ? item.recoverBuild : undefined
     try {
-      const run = await deps.runner.retry(item.resumeRunId, pending?.note)
+      const run = await deps.runner.retry!(item.resumeRunId, pending?.note)
       await store.update(item.id, { state: 'building', currentRunId: run.id, resumeRunId: undefined, error: null, ...(pending === undefined ? {} : { recoverBuild: { runId: pending.runId, attempts: pending.attempts } }) })
       return run.id
     } catch (error) {
@@ -409,6 +416,17 @@ function queueSteps(deps: QueueEngineDeps, land: Land, onPreparing: (id: string 
       await store.update(item.id, { resumeRunId: undefined, recoverBuild: undefined })
       return null
     }
+  }
+
+  async function resumedAt(item: QueueItem, runId: string, at: NonNullable<QueueItem['resumeAt']>): Promise<string> {
+    let run: { id: string }
+    try {
+      run = await deps.runner.resumeAt!(runId, at.node, at.note)
+    } catch (error) {
+      throw new Error(`Could not resume at ${at.node}: ${message(error)}`)
+    }
+    await store.update(item.id, { state: 'building', currentRunId: run.id, resumeRunId: undefined, error: null })
+    return run.id
   }
 
   async function settleIfDone(runId: string): Promise<void> {
@@ -655,6 +673,23 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
     return writeNote(item, text, actor)
   })
 
+  const resume = (id: string, choice: ResumeChoice): Promise<QueueItem> => serial(async () => {
+    const item = found(store, id)
+    if (!RESUMABLE_AT.has(item.state)) throw stateRefusal(item.state)
+    if (runningInStudio(item)) throw new QueueRefusal('It is running in Studio now', 409)
+    const runId = item.runIds.at(-1)
+    if (runId === undefined || deps.runner.resumeAt === undefined) throw new QueueRefusal('It has no run to resume', 409)
+    const nodes = deps.runner.get(runId)?.workflow?.nodes
+    if (nodes !== undefined && !nodes.some(node => node.id === choice.at)) throw new QueueRefusal(`No step ${choice.at} in its flow; steps: ${nodes.map(node => node.id).join(', ')}`, 400)
+    if (choice.note !== undefined) await writeNote(item, choice.note, choice.actor)
+    const note = choice.note === undefined ? undefined : `Operator note from ${oneLine(choice.actor)}: ${choice.note}`
+    await store.update(id, { state: 'queued', error: null, currentRunId: null, pick: undefined, land: undefined, questions: [], resumeRunId: runId, resumeAt: { node: choice.at, ...(note === undefined ? {} : { note }) }, recoverBuild: undefined })
+    await asker!.close(item)
+    await store.toFront(id)
+    await startNext()
+    return found(store, id)
+  })
+
   const reread = (id: string): Promise<QueueItem> => serial(async () => {
     const item = found(store, id)
     if (!isAsked(item)) throw new QueueRefusal('It is not waiting on a ClickUp pick', 409)
@@ -718,6 +753,7 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
     answer,
     say,
     note,
+    resume,
     reread,
     repost,
     checkedAt: () => lastCheckedAt,
