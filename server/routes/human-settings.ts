@@ -22,7 +22,7 @@ const OVERLAY_RULE = 'Send { actor, nodeId, instructions?, title? }: actor is a 
 export async function humanChange<T>(set: Status, change: { actor: string; why?: string | undefined; action: string; params: unknown }, work: () => Promise<T>): Promise<T | { error: string }> {
   const line = { actor: change.actor, action: change.action, why: change.why ?? 'cli', params: change.params }
   try {
-    if (change.actor !== HUMAN) throw new QueueRefusal(`Only a human can change ${change.action.split('-')[0]}s`, 403)
+    if (change.actor !== HUMAN) throw new QueueRefusal(`Only a human can change ${change.action.startsWith('doctor-auto') ? 'doctor auto-apply' : `${change.action.split('-')[0]}s`}`, 403)
     const result = await work()
     await auditSettings({ ...line, result: 'ok' })
     return result
