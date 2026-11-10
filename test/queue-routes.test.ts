@@ -188,6 +188,7 @@ const found = (items: ReturnType<typeof store>, id: string) => items.get(id)!
 test('requeue maps the engine refusals to 404 and 409 and rethrows anything else', async () => {
   const items = store()
   const a = await items.add(newItem, 'end')
+  await items.update(a.id, { state: 'failed' })
   const refusing = (error: Error) => new Elysia().use(queueRoutes(items, engine(items, { requeue: async () => { throw error } })))
   const busy = await post(refusing(new QueueRefusal('It is queued now', 409)), `/api/queue/${a.id}/requeue`)
   expect(busy.status).toBe(409)
@@ -550,6 +551,7 @@ test('POST pick takes none with feedback and refuses the other combinations', as
   expect((await post(app, url, { option: 'none', feedback: '  \n ' })).status).toBe(400)
   expect((await post(app, url, { option: 'B', feedback: 'x' })).status).toBe(400)
   expect((await post(app, url, { option: 'none', feedback: 'x'.repeat(4001) })).status).toBe(400)
+  await items.update(parked.id, { state: 'waiting-pick' })
   expect((await post(app, url, { option: 'none', feedback: 'x'.repeat(4000) })).status).toBe(200)
 })
 

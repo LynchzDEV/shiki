@@ -3,8 +3,9 @@ import { z } from 'zod'
 
 import { requireLocal, type GuardContext } from '../auth'
 import { peerAddress, trustedHostRequest } from '../local-access'
+import { cardToolbox, type ActionMeta, type ActionName, type CardShow, type CardToolbox } from '../card-toolbox'
 import { QueueRefusal, SourceFailure, type QueueEngine } from '../queue-engine'
-import { cleanPickSummary, normalPickOption, NO_PICK } from '../queue-prompts'
+import { cleanPickSummary } from '../queue-prompts'
 import type { QueueItem, QueueStore } from '../queue-store'
 import { resolveQueueId } from '../queue-id'
 import { mockupResponse } from '../queue-mockups'
@@ -12,6 +13,7 @@ import { queueStep, type QueueStep, type QueueStepRun } from '../queue-step'
 import { listFolderRepos, resolveQueueFolder } from '../queue-folder'
 import { queueTree, type QueueTree } from '../queue-tree'
 import { eventStreamResponse, type RunEvents } from '../run-events'
+import { QUEUE_STATES } from '../workflows'
 import { MAX_NONE_PHRASE_LENGTH, MAX_NONE_PHRASES, MIN_NONE_PHRASE_LENGTH, MAX_PUBLISH_KEEP_DAYS, MAX_QUEUE_PARALLEL, MAX_REPLY_POLL_MINUTES, MAX_USER_ID_LENGTH, readConfig, writeConfig, type AppConfig } from '../secrets'
 
 type Status = { status?: number | string }
@@ -27,13 +29,17 @@ const addSchema = z.object({
   flowId: z.string().min(1).max(200).nullable().optional(),
   position: z.enum(['end', 'next']).optional(),
 })
-const oneLineText = (max: number) => z.string().max(max).refine(text => !/[\r\n]/.test(text))
-const pickAnswerSchema = z.object({ id: oneLineText(16).pipe(z.string().min(1)), label: oneLineText(200), answer: z.string().max(1000), useDefault: z.boolean().optional() })
-  .refine(entry => entry.useDefault === true || entry.answer.trim() !== '')
-const pickSchema = z.object({ option: z.string().min(1).max(16), tester: oneLineText(200).optional(), note: z.string().max(4000).optional(), answers: z.array(pickAnswerSchema).max(20).optional(), feedback: z.string().max(4000).optional() })
+const ACTOR_RULE = 'actor is a short lowercase name such as human, grok or doctor'
+const doSchema = z.object({
+  params: z.unknown().optional(),
+  actor: z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/),
+  why: z.string().trim().min(1).max(1000),
+  key: z.string().regex(/^[\w.:-]{1,100}$/).optional(),
+  expect: z.enum(QUEUE_STATES).optional(),
+})
+const DO_RULE = `Send { params, actor, why }: ${ACTOR_RULE}, why is 1 to 1000 characters, key (letters, digits, . : _ -) and expect (a queue state) are optional`
 const confirmSchema = z.object({ confirm: z.literal(true) })
-const answerSchema = z.object({ text: z.string().trim().min(1).max(8000) })
-const saySchema = z.object({ text: z.string().trim().min(1).max(4000) })
+const FROM_BROWSER: ActionMeta = { actor: 'human', why: 'browser' }
 const moveSchema = z.object({ to: z.number().int().min(0) })
 const whole = (max: number, rule: string) => z.number({ error: rule }).int({ error: rule }).min(1, { error: rule }).max(max, { error: rule }).optional()
 const USER_ID_RULE = `pickAskTo must be a ClickUp user id of 1 to ${MAX_USER_ID_LENGTH} digits, or null`
@@ -65,12 +71,14 @@ async function refusing<T>(set: Status, work: () => Promise<T>, explain: (error:
   }
 }
 
-async function requeueItem(store: QueueStore, engine: QueueEngineRoutes, id: string, body: unknown, set: Status) {
-  const item = store.get(id)
-  if (item === undefined) { set.status = 404; return { error: NO_ITEM } }
-  if (item.state === 'building') { set.status = 409; return { error: 'It is building now' } }
-  const fresh = (body as { fresh?: unknown } | null)?.fresh === true
-  return refusing(set, async () => ({ item: cleaned(await engine.requeue(id, { fresh })) }))
+async function fromSource<T>(set: Status, work: () => Promise<T>): Promise<T | { error: string }> {
+  try {
+    return await work()
+  } catch (error) {
+    if (!(error instanceof SourceFailure)) throw error
+    set.status = 502
+    return { error: error.message }
+  }
 }
 
 async function addItem(engine: QueueEngineRoutes, body: unknown, set: Status) {
@@ -113,6 +121,8 @@ function itemsChecksAndRuns(store: QueueStore, engine: QueueEngineRoutes, runs: 
 }
 
 const cleaned = (item: QueueItem): QueueItem => (item.pick === undefined ? item : { ...item, pick: { ...item.pick, summary: cleanPickSummary(item.pick.summary) } })
+const isShow = (value: unknown): value is CardShow => value !== null && typeof value === 'object' && 'item' in value && 'history' in value
+const shownCleaned = (value: unknown): unknown => (isShow(value) ? { ...value, item: cleaned(value.item) } : value)
 
 function withStep(item: QueueItem, runs: QueueRunLookup, preparing: string | null): QueueItem & { step?: QueueStep; preparing?: true } {
   if (item.state === 'queued' && item.id === preparing) return { ...item, preparing: true }
@@ -132,7 +142,11 @@ async function requireLocalExceptMockupAssets(context: GuardContext): Promise<vo
   return requireLocal(context)
 }
 
-export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: () => Promise<QueueTree> = () => queueTree(store.list()), runs: QueueRunLookup = NO_RUNS, onSettings: (settings: QueueSettings) => void = () => {}) {
+export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: () => Promise<QueueTree> = () => queueTree(store.list()), runs: QueueRunLookup = NO_RUNS, onSettings: (settings: QueueSettings) => void = () => {}, toolbox: CardToolbox = cardToolbox({ store, engine })) {
+  const act = (id: string, action: ActionName, raw: unknown, set: Status, explain?: (error: unknown) => string) => fromSource(set, () => refusing(set, async () => {
+    await toolbox.perform(id, action, raw ?? {}, FROM_BROWSER)
+    return { item: cleaned(store.get(id)!) }
+  }, explain))
   let settings: QueueSettings = { parallel: 1, replyPollMinutes: 2, publishKeepDays: 14, pickAskTo: null, pickNonePhrases: [], pickKeepPhrases: [] }
   const settingsListeners = new Set<() => void>()
   const readSettings = async (): Promise<QueueSettings> => { settings = settingsOf(await readConfig()); return settings }
@@ -170,42 +184,28 @@ export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: 
       if (!parsed.success) { set.status = 400; return { error: 'to must be a position from 0' } }
       return refusing(set, async () => { await engine.move(params.id, parsed.data.to); return { items: store.list().map(cleaned) } }, conflictOrMissing)
     })
-    .post('/api/queue/:id/pick', ({ params, body, set }) => {
-      const parsed = pickSchema.safeParse(body)
-      if (!parsed.success) { set.status = 400; return { error: 'option is required; tester is at most 200 characters and note at most 4000; each answer needs an id, a label and an answer, at most 20; feedback is at most 4000' } }
-      const option = normalPickOption(parsed.data.option)
-      const { feedback } = parsed.data
-      if (option === NO_PICK && (feedback ?? '').trim() === '') { set.status = 400; return { error: 'Say what should change' } }
-      if (option !== NO_PICK && feedback !== undefined) { set.status = 400; return { error: 'Feedback is only for none of these' } }
-      return refusing(set, async () => ({ item: cleaned(await engine.pick(params.id, { ...parsed.data, option })) }))
-    })
+    .post('/api/queue/:id/pick', ({ params, body, set }) => act(params.id, 'pick', body, set))
     .post('/api/queue/:id/unpublish', ({ params, set }) => refusing(set, async () => ({ item: cleaned(await engine.unpublish(params.id)) }), conflictOrMissing))
-    .post('/api/queue/:id/answer', ({ params, body, set }) => {
-      const parsed = answerSchema.safeParse(body)
-      if (!parsed.success) { set.status = 400; return { error: 'Write an answer of 1 to 8000 characters' } }
-      return refusing(set, async () => ({ item: cleaned(await engine.answer(params.id, parsed.data.text)) }))
+    .post('/api/queue/:id/answer', ({ params, body, set }) => act(params.id, 'answer', body, set))
+    .post('/api/queue/:id/say', ({ params, body, set }) => act(params.id, 'say', body, set))
+    .post('/api/queue/:id/reread', ({ params, set }) => act(params.id, 'reread', {}, set))
+    .post('/api/queue/:id/repost', ({ params, set }) => act(params.id, 'repost', {}, set))
+    .post('/api/queue/:id/do/:action', ({ params, body, set }) => {
+      const parsed = doSchema.safeParse(body)
+      if (!parsed.success) { set.status = 400; return { error: DO_RULE } }
+      const { params: raw, ...meta } = parsed.data
+      return fromSource(set, () => refusing(set, async () => {
+        const result = await toolbox.perform(params.id, params.action, raw ?? {}, meta)
+        const item = store.get(params.id)
+        return { result: shownCleaned(result), item: item === undefined ? null : cleaned(item) }
+      }))
     })
-    .post('/api/queue/:id/say', async ({ params, body, set }) => {
-      const parsed = saySchema.safeParse(body)
-      if (!parsed.success) { set.status = 400; return { error: 'Write a message of 1 to 4000 characters' } }
-      try {
-        return await refusing(set, async () => ({ item: cleaned(await engine.say(params.id, parsed.data.text)) }))
-      } catch (error) {
-        if (!(error instanceof SourceFailure)) throw error
-        set.status = 502
-        return { error: error.message }
-      }
-    })
-    .post('/api/queue/:id/reread', ({ params, set }) => refusing(set, async () => ({ item: cleaned(await engine.reread(params.id)) })))
-    .post('/api/queue/:id/repost', async ({ params, set }) => {
-      try {
-        return await refusing(set, async () => ({ item: cleaned(await engine.repost(params.id)) }))
-      } catch (error) {
-        if (!(error instanceof SourceFailure)) throw error
-        set.status = 502
-        return { error: error.message }
-      }
-    })
+    .get('/api/queue/:id/show', ({ params, set }) => refusing(set, async () => shownCleaned(await toolbox.perform(params.id, 'show', {}, { actor: 'human', why: 'show' }))))
+    .get('/api/queue/:id/history', ({ params, query, set }) => refusing(set, async () => {
+      const lines = await toolbox.history(params.id, query.limit === undefined ? undefined : Number.parseInt(query.limit, 10) || undefined)
+      if (lines.length === 0 && store.get(params.id) === undefined) throw new QueueRefusal(`No queue item ${params.id}`, 404)
+      return { history: lines }
+    }))
     .get('/queue/:id/files/*', ({ params }) => mockupResponse(store.get(params.id)?.worktree ?? null, params['*']))
     .post('/api/queue/:id/land/retry', ({ params, set }) => refusing(set, async () => ({ item: cleaned(await engine.retryStage(params.id)) }), explainMissing))
     .post('/api/queue/:id/land/done', ({ params, set }) => refusing(set, async () => ({ item: cleaned(await engine.markDone(params.id)) }), explainMissing))
@@ -216,7 +216,7 @@ export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: 
     .post('/api/queue/:id/land/:stage/preflight', ({ params, set }) => refusing(set, async () => ({ item: cleaned(await engine.refreshPreflight(params.id, params.stage)) }), explainMissing))
     .get('/api/queue/:id/land/:stage/log', ({ params, set }) => refusing(set, async () => text(await engine.landLog(params.id, params.stage), 'text/plain'), explainMissing))
     .get('/api/queue/:id/report', ({ params, set }) => refusing(set, async () => text(await engine.report(params.id), 'text/markdown'), explainMissing))
-    .post('/api/queue/:id/requeue', ({ params, body, set }) => requeueItem(store, engine, params.id, body, set))
-    .post('/api/queue/:id/stop', ({ params, set }) => refusing(set, async () => ({ item: cleaned(await engine.stop(params.id)) }), conflictOrMissing))
+    .post('/api/queue/:id/requeue', ({ params, body, set }) => act(params.id, 'requeue', body, set))
+    .post('/api/queue/:id/stop', ({ params, set }) => act(params.id, 'stop', {}, set, conflictOrMissing))
     .delete('/api/queue/:id', ({ params, set }) => refusing(set, async () => { await engine.remove(params.id); return { ok: true } }, conflictOrMissing))
 }

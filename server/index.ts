@@ -36,6 +36,7 @@ import { defaultRuntimes } from './plugins/runtimes'
 import { getSetting } from './plugins/settings'
 import { isWorktreeOf, prepareWorktree } from './job-worktrees'
 import { getInstalled } from './plugins/store'
+import { cardToolbox } from './card-toolbox'
 import { createQueueEngine, type QueueEngine } from './queue-engine'
 import { cardImageFiles, writeQueueContext } from './queue-files'
 import { pluginSource } from './queue-source'
@@ -350,7 +351,7 @@ export async function createApp(): Promise<Elysia> {
     .use(modelsRoutes)
     .use(providersRoutes)
     .use(pluginsRoutes())
-    .use(queueRoutes(queueStore, queueEngine, () => queueTree(queueStore.list()), { get: id => workflowRunner.get(id), subscribe: runEvents.subscribe }, settings => sweepRepliesEvery(settings.replyPollMinutes)))
+    .use(queueRoutes(queueStore, queueEngine, () => queueTree(queueStore.list()), { get: id => workflowRunner.get(id), subscribe: runEvents.subscribe }, settings => sweepRepliesEvery(settings.replyPollMinutes), cardToolbox({ store: queueStore, engine: queueEngine, runs: { get: id => workflowRunner.get(id) } })))
 
   await defaultRuntimes()
 
