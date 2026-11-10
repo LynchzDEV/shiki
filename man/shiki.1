@@ -865,8 +865,8 @@ When the owner's ClickUp reply to a pick ask is not understood, the card
 doctor reads the owner's replies since the ask and suggests a fix. It only
 suggests: nothing runs until a person applies it.
 .PP
-The reading is one run with no tools (no shell, edits, web or sub-agents)
-in a fresh empty folder, on the
+The reading is one run with its shell, file, web, skill and sub-agent
+tools denied, in a fresh empty folder, on the
 .B plan
 role (or claude sonnet when that role cannot enforce a deny list). Each
 reply is passed wrapped as untrusted data. Its answer is checked in plain

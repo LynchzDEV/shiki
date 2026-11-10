@@ -19,7 +19,7 @@ export const DOCTOR_INTENTS = ['pick', 'reject', 'keep', 'question', 'off-topic'
 export type DoctorIntent = typeof DOCTOR_INTENTS[number]
 export const DIAGNOSES_PER_DAY = 3
 export const MIN_CONFIDENCE = 0.6
-export const DOCTOR_DENIED_TOOLS = ['Bash', 'Edit', 'Write', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Task', 'Agent', 'MultiEdit', 'Skill']
+export const DOCTOR_DENIED_TOOLS = ['Bash', 'Edit', 'Write', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Task', 'Agent', 'MultiEdit', 'Skill', 'Read', 'Glob', 'Grep']
 const DENY_ENGINES = new Set(['claude', 'glm'])
 const MAX_REPLIES = 10
 const MAX_REPLY_IN_PROMPT = 4000
@@ -44,7 +44,7 @@ Intents:
 
 Pick the single reply that decides it (usually the newest that says anything about the choice) and give its id as replyId. If you quote, copy the words exactly from that reply. Confidence is your honest probability from 0 to 1 that the intent is right.`
 
-const DOCTOR_INSTRUCTIONS = `Classify the owner's replies in the run request by following its playbook. Read only what the request gives you; there is nothing to do in this folder. ${UNTRUSTED_RULE} End with SKD_RESULT pass and exactly one evidence item in the form: doctor: {"intent":"pick|reject|keep|question|off-topic|unknown","option":"<letter, only for pick>","replyId":"<id of the deciding reply>","quote":"<optional exact words from it>","confidence":<0 to 1>}`
+const DOCTOR_INSTRUCTIONS = `Classify the owner's replies in the run request by following its playbook. Read only what the request gives you; there is nothing to read or do in this folder. ${UNTRUSTED_RULE} End with SKD_RESULT pass and exactly one evidence item in the form: doctor: {"intent":"pick|reject|keep|question|off-topic|unknown","option":"<letter, only for pick>","replyId":"<id of the deciding reply>","quote":"<optional exact words from it>","confidence":<0 to 1>}`
 
 export type DoctorAgent = { role: string; engine?: string; model?: string }
 export type DoctorVerdict = { intent: DoctorIntent; option?: string; replyId: string; confidence: number; reason?: string }
@@ -78,6 +78,7 @@ const doctorLine = z.object({
   confidence: z.number().finite(),
 })
 
+const attribute = (id: string): string => id.replace(/[^\w.-]/g, '_')
 const unknown = (reason: string, replyId = ''): DoctorVerdict => ({ intent: 'unknown', replyId, confidence: 0, reason })
 
 export function doctorVerdict(run: RunView, given: { options: readonly string[]; replies: readonly SourceReply[] }): DoctorVerdict {
@@ -93,7 +94,7 @@ export function doctorVerdict(run: RunView, given: { options: readonly string[];
   const parsed = doctorLine.safeParse(raw)
   if (!parsed.success) return unknown('the doctor line is not in the expected shape')
   const answer = parsed.data
-  const reply = given.replies.find(entry => entry.id === answer.replyId)
+  const reply = given.replies.find(entry => attribute(entry.id) === answer.replyId)
   if (reply === undefined) return unknown('the doctor named a reply it was not given')
   if (answer.confidence < 0 || answer.confidence > 1) return unknown('the doctor confidence is not between 0 and 1', reply.id)
   const option = answer.option === undefined ? undefined : given.options.find(entry => entry.toLowerCase() === answer.option!.toLowerCase())
@@ -105,7 +106,6 @@ export function doctorVerdict(run: RunView, given: { options: readonly string[];
   return { intent: answer.intent, ...(option === undefined ? {} : { option }), replyId: reply.id, confidence: answer.confidence }
 }
 
-const attribute = (id: string): string => id.replace(/[^\w.-]/g, '_')
 export const untrustedReply = (reply: SourceReply): string => `<untrusted_reply id="${attribute(reply.id)}">${reply.text.replace(/<\/?untrusted_reply/gi, '&lt;untrusted_reply')}</untrusted_reply>`
 
 const NO_ACTION: Record<'question' | 'off-topic' | 'unknown', string> = {
