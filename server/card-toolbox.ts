@@ -33,7 +33,7 @@ export const HUMAN: Actor = 'human'
 export const MIN_LEASE_MS = 60_000
 export const MAX_LEASE_MS = 4 * 60 * 60_000
 
-export type ToolboxEngine = Pick<QueueEngine, 'pick' | 'say' | 'repost' | 'reread' | 'requeue' | 'answer' | 'stop'>
+export type ToolboxEngine = Pick<QueueEngine, 'pick' | 'say' | 'repost' | 'reread' | 'requeue' | 'answer' | 'stop'> & Partial<Pick<QueueEngine, 'note'>>
 export type ToolboxRun = {
   id: string; status: string; error: string | null; currentNodeId: string
   attempts: ReadonlyArray<{ nodeId: string; number: number; status: string; result: { outcome: string; summary: string } | null }>
@@ -105,6 +105,12 @@ function pickParams(raw: unknown) {
   return { ...choice, option }
 }
 
+const MAX_NOTE = 20_000
+function unavailable<F>(work: F | undefined, what: string): F {
+  if (work === undefined) throw new QueueRefusal(`${what} are not available`, 409)
+  return work
+}
+
 const noParams = parsed(z.object({}), 'This action takes no params')
 const requeueParams = (raw: unknown): { fresh: boolean } => ({ fresh: (raw as { fresh?: unknown } | null)?.fresh === true })
 
@@ -112,6 +118,7 @@ function table(deps: Required<Pick<ToolboxDeps, 'engine'>> & { show(item: QueueI
   const { engine } = deps
   const actions: Array<ToolboxAction<never>> = [
     { name: 'show', traits: { readOnly: true }, params: noParams, allowedIn: ANY_STATE, run: item => deps.show(item) },
+    { name: 'note', traits: {}, params: parsed(z.object({ text: z.string().trim().min(1).max(MAX_NOTE) }), `Write a note of 1 to ${MAX_NOTE} characters`), allowedIn: QUEUE_STATES.filter(state => state !== 'landing' && state !== 'landed'), run: (item, params: { text: string }, meta) => unavailable(engine.note, 'Notes')(item.id, params.text, meta.actor) },
     { name: 'repost', traits: { openWorld: true }, params: noParams, allowedIn: ['waiting-pick'], notAllowed: 'It is not waiting on a pick', run: item => engine.repost(item.id) },
     { name: 'say', traits: { openWorld: true, doctor: false }, params: parsed(z.object({ text: z.string().trim().min(1).max(4000) }), 'Write a message of 1 to 4000 characters'), allowedIn: ANY_STATE, run: (item, params: { text: string }) => engine.say(item.id, params.text) },
     { name: 'pick', traits: {}, params: pickParams, allowedIn: ['waiting-pick'], run: (item, params: ReturnType<typeof pickParams>) => engine.pick(item.id, params) },

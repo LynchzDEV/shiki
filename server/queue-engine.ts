@@ -72,6 +72,7 @@ export type QueueEngine = {
   checkReplies(): Promise<{ checked: number; resumed: number }>
   answer(id: string, text: string): Promise<QueueItem>
   say(id: string, text: string): Promise<QueueItem>
+  note(id: string, text: string, actor: string): Promise<QueueItem>
   reread(id: string): Promise<QueueItem>
   repost(id: string): Promise<QueueItem>
   startStage(id: string, stage: string): Promise<QueueItem>
@@ -91,6 +92,8 @@ export type QueuePause = { reason: string; until: number }
 
 const MAX_RUN_LABEL = 120
 const POLLER = 'poller'
+const NOTE_FILE = /^operator-note-\d+\.md$/
+const NO_NOTES: ReadonlySet<QueueItem['state']> = new Set(['landing', 'landed'])
 const MAX_AUTO_PICKS = 2
 const DAY_MS = 24 * 60 * 60_000
 const DEFAULT_KEEP_DAYS = 14
@@ -629,6 +632,29 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
     return found(store, id)
   }
 
+  const restoreWorktree = worktreeRestorer(deps)
+  async function writeNote(item: QueueItem, text: string, actor: string): Promise<QueueItem> {
+    if (item.worktree === null) throw new QueueRefusal('It has no workspace', 409)
+    try {
+      const worktree = await restoreWorktree({ ...item, worktree: item.worktree })
+      await refuseLinkedQueueFolders(worktree, item.source)
+      const number = item.answerPaths.filter(path => NOTE_FILE.test(basename(path))).length + 1
+      const markdown = `# Operator note\n\nFrom: ${oneLine(actor)}\n\n${text}\n`
+      const path = await deps.writeContext(item.source, { name: `operator-note-${number}`, markdown }, worktree)
+      await backUpAnswers(deps.backupDir(item.id), path, markdown)
+      return await store.update(item.id, { worktree, answerPaths: [...item.answerPaths, path] })
+    } catch (error) {
+      if (error instanceof WorktreeGone) throw new QueueRefusal(error.message, 409)
+      throw error
+    }
+  }
+
+  const note = (id: string, text: string, actor: string): Promise<QueueItem> => serial(async () => {
+    const item = found(store, id)
+    if (NO_NOTES.has(item.state)) throw stateRefusal(item.state)
+    return writeNote(item, text, actor)
+  })
+
   const reread = (id: string): Promise<QueueItem> => serial(async () => {
     const item = found(store, id)
     if (!isAsked(item)) throw new QueueRefusal('It is not waiting on a ClickUp pick', 409)
@@ -691,6 +717,7 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
     checkReplies,
     answer,
     say,
+    note,
     reread,
     repost,
     checkedAt: () => lastCheckedAt,

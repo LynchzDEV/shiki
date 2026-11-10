@@ -262,3 +262,21 @@ test('limits are listed for anyone and changed only by a human; claim and releas
   expect((await post(app, `/api/queue/${item.id}/limits/reset`, { actor: 'grok', why: 'x' })).status).toBe(403)
   expect((await post(app, `/api/queue/${item.id}/limits/reset`, { actor: 'human', why: 'checked' })).status).toBe(200)
 })
+
+test('note writes an operator note marked with the actor, adds it to the answers, backs it up, and the next fresh run reads it', async () => {
+  const h = queueHarness(dir)
+  const item = await parkedItem(h)
+  const toolbox = toolboxOf(h)
+  await toolbox.perform(item.id, 'note', { text: 'Keep the current design; fix the switcher.' }, { actor: 'grok', why: 'extra detail from Palm' })
+  await toolbox.perform(item.id, 'note', { text: 'Second note' }, human)
+  const paths = h.store.get(item.id)!.answerPaths
+  expect(paths.map(path => path.split('/').at(-1))).toEqual(['operator-note-1.md', 'operator-note-2.md'])
+  expect(await readFile(paths[0]!, 'utf8')).toBe('# Operator note\n\nFrom: grok\n\nKeep the current design; fix the switcher.\n')
+  await rm(paths[0]!)
+  await toolbox.perform(item.id, 'requeue', { fresh: true }, human)
+  expect(await readFile(paths[0]!, 'utf8')).toContain('fix the switcher')
+  expect(h.started.at(-1)!.request).toContain(paths[0]!)
+  expect(await refusal(toolbox.perform(item.id, 'note', { text: ' ' }, human))).toMatchObject({ status: 400 })
+  await h.store.update(item.id, { state: 'landed' })
+  expect(await refusal(toolbox.perform(item.id, 'note', { text: 'late' }, human))).toMatchObject({ status: 409, message: 'It is landed now' })
+})
