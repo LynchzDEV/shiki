@@ -747,6 +747,94 @@ one, publish the mockups again and post a fresh ask (mention, link, options,
 how to answer). Replies are read from the new ask on. It works whether or not
 auto asking is on.
 .TP
+.BI "shiki queue answer " "id text"
+Answer the questions of an item waiting for your answer in Shikidan;
+.I \-
+reads the answer from stdin.
+.TP
+.BI "shiki queue stop " id
+Stop the run of a building or landing item.
+.TP
+.BI "shiki queue show " id
+Everything about an item: state, error and questions, its pick, its last
+run and every step of it, who holds its lease, and its last 10 logged
+actions.
+.TP
+.BI "shiki queue history " id " \fR[\fB\-\-limit\fR \fIN\fR]"
+The item's audit log, newest last (default 50 lines): when, who, which
+action, ok, refused, failed or replayed, the why and the error.
+.TP
+.BI "shiki queue note " "id \fR[\fItext\fR | \fB\-\-file\fR \fIFILE\fR]"
+Add an operator note to an item, marked with who wrote it. It is saved
+next to the item's answers and the next fresh run reads it. The CLI reads
+.B \-\-file
+itself and sends only the text.
+.TP
+.BI "shiki queue resume " id " \fB\-\-at\fR \fISTEP\fR [\fB\-\-note\fR \fITEXT\fR]"
+Continue a failed, ready or waiting item's last run from step
+.I STEP
+(a step id from
+.BR "shiki queue show" ),
+inside the same run, so the step sees everything the run already did.
+.B \-\-note
+is appended to the run's request and kept as an operator note. An open
+ClickUp pick ask is closed. Runs with open parallel paths cannot be resumed
+at a step.
+.TP
+.BI "shiki queue claim " id " \fR[\fB\-\-for\fR \fIDURATION\fR]"
+Hold an item for 1 minute to 4 hours (default
+.BR 30m ;
+also
+.BR 90s ,
+.BR 2h ).
+While it is held, every toolbox action from anyone else, the browser
+included, is refused, and the reply poller leaves the item alone. An
+expired claim can be taken by anyone.
+.TP
+.BI "shiki queue release " id
+Let go of an item you claimed.
+.TP
+.BI "shiki queue limits " "\fR[\fIaction n\fR]"
+How many ok actions one item may take per action in 24 hours (defaults:
+note 10, resume 3, repost 2, say 5, pick 3, requeue 3, reread 5, answer 5,
+stop 3); with
+.I action n
+set one, 0 to 100, as a human only. An item over its limit is refused and
+shows up in
+.B shiki attention
+as needing a human.
+.TP
+.BI "shiki queue limits reset " id
+Clear an item's used-up limits and that attention entry. Human only.
+.PP
+.BR pick ,
+.BR say ,
+.BR repost ,
+.BR reread ,
+.BR requeue ,
+.BR answer ,
+.BR stop ,
+.B note
+and
+.B resume
+are the card toolbox. Each one is checked (lease, state, limit) and
+written to the item's audit log in
+.IR queue\-audit/<id>.jsonl ,
+which is kept when the item is removed. They take
+.BI \-\-why " TEXT"
+(kept in the log, default
+.IR cli ),
+.BI \-\-as " NAME"
+(who is acting: default
+.BR $SKD_ACTOR ,
+then
+.IR human ),
+.BI \-\-key " KEY"
+(repeating a call with the same key and arguments returns the first result
+without doing it again; other arguments under that key are refused) and
+.BI \-\-expect " STATE"
+(refuse unless the item is in that state).
+.TP
 .BI "shiki queue remove " id
 Remove an item that is not building.
 .TP

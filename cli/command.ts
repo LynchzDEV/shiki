@@ -19,6 +19,7 @@ export type Context = {
   values: OptionValues
   json: boolean
   cwd: string
+  env: Record<string, string | undefined>
   pollMs: number
   out(text: string): void
   err(text: string): void

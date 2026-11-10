@@ -114,21 +114,23 @@ function unavailable<F>(work: F | undefined, what: string): F {
 const noParams = parsed(z.object({}), 'This action takes no params')
 const requeueParams = (raw: unknown): { fresh: boolean } => ({ fresh: (raw as { fresh?: unknown } | null)?.fresh === true })
 
+const entry = <P>(action: ToolboxAction<P>): ToolboxAction<unknown> => action as unknown as ToolboxAction<unknown>
+
 function table(deps: Required<Pick<ToolboxDeps, 'engine'>> & { show(item: QueueItem): Promise<CardShow> }): Map<string, ToolboxAction<unknown>> {
   const { engine } = deps
-  const actions: Array<ToolboxAction<never>> = [
-    { name: 'show', traits: { readOnly: true }, params: noParams, allowedIn: ANY_STATE, run: item => deps.show(item) },
-    { name: 'note', traits: {}, params: parsed(z.object({ text: z.string().trim().min(1).max(MAX_NOTE) }), `Write a note of 1 to ${MAX_NOTE} characters`), allowedIn: QUEUE_STATES.filter(state => state !== 'landing' && state !== 'landed'), run: (item, params: { text: string }, meta) => unavailable(engine.note, 'Notes')(item.id, params.text, meta.actor) },
-    { name: 'resume', traits: {}, params: parsed(z.object({ at: z.string().regex(/^[\w.-]{1,100}$/), note: z.string().trim().min(1).max(4000).optional() }), 'at is the id of a step in the card\'s flow; note is 1 to 4000 characters'), allowedIn: ['failed', 'ready', 'waiting-pick', 'waiting-info'], run: (item, params: { at: string; note?: string }, meta) => unavailable(engine.resume, 'Resumes')(item.id, { ...params, actor: meta.actor }) },
-    { name: 'repost', traits: { openWorld: true }, params: noParams, allowedIn: ['waiting-pick'], notAllowed: 'It is not waiting on a pick', run: item => engine.repost(item.id) },
-    { name: 'say', traits: { openWorld: true, doctor: false }, params: parsed(z.object({ text: z.string().trim().min(1).max(4000) }), 'Write a message of 1 to 4000 characters'), allowedIn: ANY_STATE, run: (item, params: { text: string }) => engine.say(item.id, params.text) },
-    { name: 'pick', traits: {}, params: pickParams, allowedIn: ['waiting-pick'], run: (item, params: ReturnType<typeof pickParams>) => engine.pick(item.id, params) },
-    { name: 'requeue', traits: {}, traitsFor: (params: { fresh: boolean }) => ({ destructive: params.fresh, doctor: !params.fresh }), params: requeueParams, allowedIn: ['failed', 'ready', 'waiting-info', 'waiting-pick'], run: (item, params: { fresh: boolean }) => engine.requeue(item.id, params) },
-    { name: 'reread', traits: {}, params: noParams, allowedIn: ['waiting-pick', 'waiting-info'], notAllowed: 'It is not waiting on a ClickUp pick', run: item => engine.reread(item.id) },
-    { name: 'answer', traits: {}, params: parsed(z.object({ text: z.string().trim().min(1).max(8000) }), 'Write an answer of 1 to 8000 characters'), allowedIn: ['waiting-info'], notAllowed: 'It is not waiting for your answer', run: (item, params: { text: string }) => engine.answer(item.id, params.text) },
-    { name: 'stop', traits: { destructive: true, doctor: false }, params: noParams, allowedIn: ['building', 'landing'], run: item => engine.stop(item.id) },
+  const actions: Array<ToolboxAction<unknown>> = [
+    entry({ name: 'show', traits: { readOnly: true }, params: noParams, allowedIn: ANY_STATE, run: item => deps.show(item) }),
+    entry({ name: 'note', traits: {}, params: parsed(z.object({ text: z.string().trim().min(1).max(MAX_NOTE) }), `Write a note of 1 to ${MAX_NOTE} characters`), allowedIn: QUEUE_STATES.filter(state => state !== 'landing' && state !== 'landed'), run: (item, params: { text: string }, meta) => unavailable(engine.note, 'Notes')(item.id, params.text, meta.actor) }),
+    entry({ name: 'resume', traits: {}, params: parsed(z.object({ at: z.string().regex(/^[\w.-]{1,100}$/), note: z.string().trim().min(1).max(4000).optional() }), 'at is the id of a step in the card\'s flow; note is 1 to 4000 characters'), allowedIn: ['failed', 'ready', 'waiting-pick', 'waiting-info'], run: (item, params: { at: string; note?: string }, meta) => unavailable(engine.resume, 'Resumes')(item.id, { ...params, actor: meta.actor }) }),
+    entry({ name: 'repost', traits: { openWorld: true }, params: noParams, allowedIn: ['waiting-pick'], notAllowed: 'It is not waiting on a pick', run: item => engine.repost(item.id) }),
+    entry({ name: 'say', traits: { openWorld: true, doctor: false }, params: parsed(z.object({ text: z.string().trim().min(1).max(4000) }), 'Write a message of 1 to 4000 characters'), allowedIn: ANY_STATE, run: (item, params: { text: string }) => engine.say(item.id, params.text) }),
+    entry({ name: 'pick', traits: {}, params: pickParams, allowedIn: ['waiting-pick'], run: (item, params: ReturnType<typeof pickParams>) => engine.pick(item.id, params) }),
+    entry({ name: 'requeue', traits: {}, traitsFor: (params: { fresh: boolean }) => ({ destructive: params.fresh, doctor: !params.fresh }), params: requeueParams, allowedIn: ['failed', 'ready', 'waiting-info', 'waiting-pick'], run: (item, params: { fresh: boolean }) => engine.requeue(item.id, params) }),
+    entry({ name: 'reread', traits: {}, params: noParams, allowedIn: ['waiting-pick', 'waiting-info'], notAllowed: 'It is not waiting on a ClickUp pick', run: item => engine.reread(item.id) }),
+    entry({ name: 'answer', traits: {}, params: parsed(z.object({ text: z.string().trim().min(1).max(8000) }), 'Write an answer of 1 to 8000 characters'), allowedIn: ['waiting-info'], notAllowed: 'It is not waiting for your answer', run: (item, params: { text: string }) => engine.answer(item.id, params.text) }),
+    entry({ name: 'stop', traits: { destructive: true, doctor: false }, params: noParams, allowedIn: ['building', 'landing'], run: item => engine.stop(item.id) }),
   ]
-  return new Map(actions.map(action => [action.name, action as unknown as ToolboxAction<unknown>]))
+  return new Map(actions.map(action => [action.name, action]))
 }
 
 function redacted(value: unknown, secrets: ReadonlyArray<string | null>): unknown {
@@ -192,7 +194,11 @@ export function cardToolbox(deps: ToolboxDeps): CardToolbox {
   }
 
   const leaseOf = (item: QueueItem): CardLease | null => (live(item.lease, now()) ? item.lease : null)
-  const show = async (item: QueueItem): Promise<CardShow> => ({ item, run: runOf(item), lease: leaseOf(item), history: await history(item.id, SHOW_HISTORY) })
+  const summary = (run: ToolboxRun | null): ToolboxRun | null => (run === null ? null : {
+    id: run.id, status: run.status, error: run.error, currentNodeId: run.currentNodeId,
+    attempts: run.attempts.map(attempt => ({ nodeId: attempt.nodeId, number: attempt.number, status: attempt.status, result: attempt.result === null ? null : { outcome: attempt.result.outcome, summary: attempt.result.summary } })),
+  })
+  const show = async (item: QueueItem): Promise<CardShow> => ({ item, run: summary(runOf(item)), lease: leaseOf(item), history: await history(item.id, SHOW_HISTORY) })
   const actions = table({ engine, show })
 
   const found = (id: string): QueueItem => {

@@ -161,7 +161,7 @@ describe('shiki queue', () => {
     for (const option of ['keep', 'now', 'nochange']) {
       const h = harness(() => Response.json({ item: { id: 'a1' } }))
       expect(await main(['queue', 'pick', 'a1', option, '--note', 'bug only'], h.deps)).toBe(0)
-      expect(h.calls).toEqual([{ method: 'POST', path: '/api/queue/a1/pick', body: { option, note: 'bug only' } }])
+      expect(h.calls).toEqual([{ method: 'POST', path: '/api/queue/a1/do/pick', body: { params: { option, note: 'bug only' }, actor: 'human', why: 'cli' } }])
     }
   })
 
@@ -234,7 +234,7 @@ describe('shiki queue', () => {
   test('requeue, remove and check hit their routes', async () => {
     const requeue = harness(() => Response.json({ item: { id: 'a1' } }))
     expect(await main(['queue', 'requeue', 'a1'], requeue.deps)).toBe(0)
-    expect(routesOf(requeue.calls)).toEqual(['POST /api/queue/a1/requeue'])
+    expect(routesOf(requeue.calls)).toEqual(['POST /api/queue/a1/do/requeue'])
 
     const remove = harness()
     expect(await main(['queue', 'remove', 'a1'], remove.deps)).toBe(0)
@@ -250,7 +250,7 @@ describe('shiki queue', () => {
     const h = harness(() => Response.json({ item: { id: 'a1' } }))
     expect(await main(['queue', 'requeue', 'a1'], h.deps)).toBe(0)
     expect(await main(['queue', 'requeue', 'a1', '--fresh'], h.deps)).toBe(0)
-    expect(h.calls.map(call => call.body)).toEqual([{}, { fresh: true }])
+    expect(h.calls.map(call => call.body)).toEqual([{ params: {}, actor: 'human', why: 'cli' }, { params: { fresh: true }, actor: 'human', why: 'cli' }])
   })
 
   test('an id with a slash stays one path segment', async () => {
@@ -262,16 +262,16 @@ describe('shiki queue', () => {
   test('pick sends the option with the optional tester and note', async () => {
     const h = harness(() => Response.json({ item: { id: 'a1' } }))
     expect(await main(['queue', 'pick', 'a1', 'B', '--tester', 'Ploy', '--note', 'wide'], h.deps)).toBe(0)
-    expect(h.calls).toEqual([{ method: 'POST', path: '/api/queue/a1/pick', body: { option: 'B', tester: 'Ploy', note: 'wide' } }])
+    expect(h.calls).toEqual([{ method: 'POST', path: '/api/queue/a1/do/pick', body: { params: { option: 'B', tester: 'Ploy', note: 'wide' }, actor: 'human', why: 'cli' } }])
     const bare = harness(() => Response.json({ item: { id: 'a1' } }))
     expect(await main(['queue', 'pick', 'a1', 'A'], bare.deps)).toBe(0)
-    expect(bare.calls[0]!.body).toEqual({ option: 'A' })
+    expect(bare.calls[0]!.body?.params).toEqual({ option: 'A' })
   })
 
   test('pick none sends the feedback and the help names --feedback', async () => {
     const h = harness(() => Response.json({ item: { id: 'a1' } }))
     expect(await main(['queue', 'pick', 'a1', 'none', '--feedback', 'overlay, not push'], h.deps)).toBe(0)
-    expect(h.calls[0]!.body).toEqual({ option: 'none', feedback: 'overlay, not push' })
+    expect(h.calls[0]!.body?.params).toEqual({ option: 'none', feedback: 'overlay, not push' })
     const help = harness()
     expect(await main(['queue', 'pick', '--help'], help.deps)).toBe(0)
     expect(help.out()).toContain('--feedback <TEXT>')
@@ -280,7 +280,7 @@ describe('shiki queue', () => {
   test('say sends the text and tells whether it landed in the thread or on the card', async () => {
     const thread = harness(() => Response.json({ item: { id: 'a1', state: 'waiting-pick', pick: { ask: { ref: 'r1' } } } }))
     expect(await main(['queue', 'say', 'a1', 'ขอถามก่อนครับ'], thread.deps)).toBe(0)
-    expect(thread.calls).toEqual([{ method: 'POST', path: '/api/queue/a1/say', body: { text: 'ขอถามก่อนครับ' } }])
+    expect(thread.calls).toEqual([{ method: 'POST', path: '/api/queue/a1/do/say', body: { params: { text: 'ขอถามก่อนครับ' }, actor: 'human', why: 'cli' } }])
     expect(thread.out()).toBe('Said in the ClickUp thread.\n')
     const card = harness(() => Response.json({ item: { id: 'a1', state: 'queued' } }))
     expect(await main(['queue', 'say', 'a1', 'hi'], card.deps)).toBe(0)
@@ -293,7 +293,7 @@ describe('shiki queue', () => {
   test('reread posts to the item and prints its state', async () => {
     const h = harness(() => Response.json({ item: { id: 'a1', state: 'waiting-pick' } }))
     expect(await main(['queue', 'reread', 'a1'], h.deps)).toBe(0)
-    expect(routesOf(h.calls)).toEqual(['POST /api/queue/a1/reread'])
+    expect(routesOf(h.calls)).toEqual(['POST /api/queue/a1/do/reread'])
     expect(h.out()).toBe('Re-read from the ask. It is waiting-pick.\n')
     const refused = harness(() => Response.json({ error: 'It is not waiting on a ClickUp pick' }, { status: 409 }))
     expect(await main(['queue', 'reread', 'a1'], refused.deps)).toBe(1)
@@ -302,7 +302,7 @@ describe('shiki queue', () => {
   test('repost posts to the item and says it asked again', async () => {
     const h = harness(() => Response.json({ item: { id: 'a1', state: 'waiting-pick' } }))
     expect(await main(['queue', 'repost', 'a1'], h.deps)).toBe(0)
-    expect(routesOf(h.calls)).toEqual(['POST /api/queue/a1/repost'])
+    expect(routesOf(h.calls)).toEqual(['POST /api/queue/a1/do/repost'])
     expect(h.out()).toBe('Asked again in ClickUp.\n')
     const refused = harness(() => Response.json({ error: 'It is not waiting on a pick' }, { status: 409 }))
     expect(await main(['queue', 'repost', 'a1'], refused.deps)).toBe(1)
@@ -431,5 +431,81 @@ describe('shiki queue with several repos', () => {
     expect(await main(['queue', 'land', 'zz', 'prod', '--yes'], h.deps)).not.toBe(0)
     expect(h.calls.every((call) => call.method === 'GET')).toBe(true)
     expect(h.err()).toContain('no queue item zz')
+  })
+})
+
+describe('shiki queue card toolbox', () => {
+  test('mutating commands act as --as, then $SKD_ACTOR, then human, and pass --why, --key and --expect', async () => {
+    const h = harness(() => Response.json({ result: { state: 'queued' }, item: { id: 'a1', state: 'queued' } }))
+    expect(await main(['queue', 'repost', 'a1', '--as', 'grok', '--why', 'round 2 mockups', '--key', 'k1', '--expect', 'waiting-pick'], h.deps)).toBe(0)
+    h.deps.env.SKD_ACTOR = 'doctor'
+    expect(await main(['queue', 'stop', 'a1'], h.deps)).toBe(0)
+    expect(h.calls.map(call => [call.path, call.body])).toEqual([
+      ['/api/queue/a1/do/repost', { params: {}, actor: 'grok', why: 'round 2 mockups', key: 'k1', expect: 'waiting-pick' }],
+      ['/api/queue/a1/do/stop', { params: {}, actor: 'doctor', why: 'cli' }],
+    ])
+  })
+
+  test('resume needs --at and sends the step and note', async () => {
+    const h = harness(() => Response.json({ result: { state: 'building' }, item: { id: 'a1' } }))
+    expect(await main(['queue', 'resume', 'a1'], h.deps)).toBe(2)
+    expect(await main(['queue', 'resume', 'a1', '--at', 'how', '--note', 'keep NOW; fix switcher z-index', '--as', 'grok', '--why', 'Palm: bug fix only'], h.deps)).toBe(0)
+    expect(h.calls).toEqual([{ method: 'POST', path: '/api/queue/a1/do/resume', body: { params: { at: 'how', note: 'keep NOW; fix switcher z-index' }, actor: 'grok', why: 'Palm: bug fix only' } }])
+    expect(h.out()).toBe('Resuming at how.\n')
+  })
+
+  test('note sends text or the contents of --file, never a path', async () => {
+    const file = join(configDir, 'palm-notes.md')
+    await Bun.write(file, 'switcher on top on every page\n')
+    const h = harness(() => Response.json({ result: {}, item: { id: 'a1' } }), configDir)
+    expect(await main(['queue', 'note', 'a1', '--file', 'palm-notes.md', '--as', 'grok'], h.deps)).toBe(0)
+    expect(await main(['queue', 'note', 'a1', 'inline text'], h.deps)).toBe(0)
+    expect(await main(['queue', 'note', 'a1'], h.deps)).toBe(2)
+    expect(await main(['queue', 'note', 'a1', 'both', '--file', 'palm-notes.md'], h.deps)).toBe(2)
+    expect(h.calls.map(call => call.body?.params)).toEqual([{ text: 'switcher on top on every page\n' }, { text: 'inline text' }])
+  })
+
+  test('claim parses --for, release and limits reset name the actor', async () => {
+    const h = harness((call) => (call.path.endsWith('/claim') ? Response.json({ lease: { holder: 'grok', until: 1_700_000_000_000 } }) : Response.json({ ok: true })))
+    expect(await main(['queue', 'claim', 'a1', '--as', 'grok', '--for', '2h'], h.deps)).toBe(0)
+    expect(h.out()).toBe('Claimed by grok until 2023-11-14T22:13:20Z.\n')
+    expect(await main(['queue', 'claim', 'a1', '--for', 'soon'], h.deps)).toBe(2)
+    expect(await main(['queue', 'release', 'a1', '--as', 'grok'], h.deps)).toBe(0)
+    expect(await main(['queue', 'limits', 'reset', 'a1', '--why', 'checked the thread'], h.deps)).toBe(0)
+    expect(h.calls.map(call => [call.path, call.body])).toEqual([
+      ['/api/queue/a1/claim', { actor: 'grok', ms: 7_200_000 }],
+      ['/api/queue/a1/release', { actor: 'grok' }],
+      ['/api/queue/a1/limits/reset', { actor: 'human', why: 'checked the thread' }],
+    ])
+  })
+
+  test('limits lists, and sets one action only with a valid number', async () => {
+    const h = harness(() => Response.json({ limits: { say: 5, resume: 3 } }))
+    expect(await main(['queue', 'limits'], h.deps)).toBe(0)
+    expect(h.out()).toBe('Most ok actions per card in 24 hours:\n  say 5\n  resume 3\n')
+    expect(await main(['queue', 'limits', 'say', '8'], h.deps)).toBe(0)
+    expect(await main(['queue', 'limits', 'land', '8'], h.deps)).toBe(2)
+    expect(await main(['queue', 'limits', 'say', '101'], h.deps)).toBe(2)
+    expect(h.calls.map(call => `${call.method} ${call.path} ${JSON.stringify(call.body ?? null)}`)).toEqual(['GET /api/queue/limits null', 'PUT /api/queue/limits {"actor":"human","action":"say","limit":8}'])
+  })
+
+  test('show prints the card, its run steps, its lease and recent actions; an unknown card prints the 404', async () => {
+    const shown = { item: { id: 'a1', title: 'Login copy', state: 'waiting-pick', questions: [], pick: { options: ['A', 'B'], ask: { ref: 'r1' } } }, run: { id: 'run-1', status: 'blocked', currentNodeId: 'how', attempts: [{ number: 0, nodeId: 'how', status: 'settled', result: { outcome: 'blocked', summary: 'Pick a design' } }] }, lease: { holder: 'grok', until: 1_700_000_000_000 }, history: [{ at: 1_700_000_000_000, actor: 'grok', action: 'repost', result: 'ok', why: 'round 2' }] }
+    const h = harness(() => Response.json(shown))
+    expect(await main(['queue', 'show', 'a1'], h.deps)).toBe(0)
+    expect(routesOf(h.calls)).toEqual(['GET /api/queue/a1/show'])
+    expect(h.out()).toBe('Login copy (a1)\nState: waiting-pick  Run: run-1 (blocked) at how\nLease: grok until 2023-11-14T22:13:20Z\nPick: A, B (asked in ClickUp)\nSteps:\n  #0 how settled blocked: Pick a design\nRecent actions:\n  2023-11-14T22:13:20Z  grok repost ok: round 2\n')
+    const missing = harness(() => Response.json({ error: 'No queue item bogus' }, { status: 404 }))
+    expect(await main(['queue', 'show', 'bogus'], missing.deps)).toBe(1)
+    expect(missing.err()).toBe('Error: No queue item bogus\n')
+  })
+
+  test('history asks for --limit lines and prints each with its error', async () => {
+    const h = harness(() => Response.json({ history: [{ at: 1_700_000_000_000, actor: 'human', action: 'pick', result: 'refused', why: 'browser', error: 'It is queued now' }] }))
+    expect(await main(['queue', 'history', 'a1', '--limit', '5'], h.deps)).toBe(0)
+    expect(h.out()).toBe('2023-11-14T22:13:20Z  human pick refused: browser (It is queued now)\n')
+    const empty = harness(() => Response.json({ history: [] }))
+    expect(await main(['queue', 'history', 'a1'], empty.deps)).toBe(0)
+    expect(empty.out()).toBe('No actions logged for this card yet.\n')
   })
 })

@@ -1,6 +1,6 @@
 # Card toolbox (card doctor, step 1)
 
-Status: plan, not built. 2026-11-10.
+Status: steps 1 to 5 built 2026-11-10; step 6 (fresh-agent docs test) not run yet. Where the build differs from the plan below, **As built** at the end says how and why.
 Research: [docs/research/card-doctor.md](../research/card-doctor.md).
 
 ## Goal
@@ -54,7 +54,7 @@ export type ActionTraits = {
 export type ToolboxAction<P> = {
   name: ActionName
   traits: ActionTraits
-  params: (raw: unknown) => P                         // throws ToolboxRefusal 400 on bad input
+  params: (raw: unknown) => P                         // throws QueueRefusal 400 on bad input
   allowedIn: readonly QueueState[]                    // checked against fresh state at execute time
   run(item: QueueItem, params: P, meta: ActionMeta): Promise<unknown>
 }
@@ -62,11 +62,11 @@ export type ToolboxAction<P> = {
 export type ActionMeta = { actor: Actor; why: string; key?: string; expect?: QueueState }
 
 export type AuditLine = {
-  at: number; cardId: string; actor: Actor; action: ActionName; why: string
+  at: number; cardId: string; actor: Actor; action: ActionName | 'claim' | 'release' | 'limits-reset'; why: string
   params: unknown                                      // redacted
   before: { state: QueueState; node: string | null }
   after: { state: QueueState; node: string | null } | null
-  result: 'ok' | 'refused' | 'failed'; error?: string; key?: string; prev: string   // sha256 of the previous line
+  result: 'ok' | 'refused' | 'failed' | 'replayed'; error?: string; key?: string; prev: string   // sha256 of the previous line
 }
 
 export type CardLease = { holder: Actor; until: number }
@@ -79,7 +79,7 @@ export function cardToolbox(deps: ToolboxDeps): {
 }
 ```
 
-`perform` in order, all inside `serial`:
+`perform` in order, all inside the toolbox's own serial lane (see As built):
 
 1. Load the card fresh (`store.get`). 404 if gone.
 2. Lease: if another actor holds an unexpired lease, refuse 423 and name the holder. No lease means anyone may act.
@@ -163,3 +163,22 @@ The docs are tested by giving a fresh sonnet agent only AGENTS.md and the skill,
 
 - Should limits apply to `human` too? Plan: yes, with a human-only reset, so a looping script running as `human` still stops.
 - Should `resume` be allowed on a `ready` card whose branch is already pushed? Plan: yes. Landing only happens through the human `land` command anyway.
+
+## As built
+
+Deviations from the plan above, each the smallest change that kept the build working:
+
+- **Own lane.** `perform` runs in a serial lane of the toolbox, not the engine's `serial`. The engine methods it wraps take the engine lane themselves, so sharing it would deadlock. The engine still re-checks state inside its lane, so a card that moves between the toolbox check and the engine call is still refused.
+- **Order.** Params are parsed first (a 400 needs no other check), then lease, key, expect, allowed states, limit. Read-only `show` skips the lease, key and limit checks and writes no audit line.
+- **One refusal class.** `QueueRefusal` (status widened to 400, 403, 404, 409, 423, 429) instead of a new `ToolboxRefusal`, so the existing route error mapping covers the toolbox.
+- **Traits.** Static per action, plus `traitsFor(params)` for `requeue`, whose `--fresh` makes it destructive and not a doctor action.
+- **Engine messages kept.** `repost`, `reread` and `answer` refuse a wrong state with the engine's old wording ("It is not waiting on a pick"), not "It is <state> now".
+- **Idempotency.** The stored result is the after snapshot `{ state, node }`, not the item (the item holds `actionKeys`). Only `ok` runs store a key; a replay writes an audit line with result `replayed`, which does not count toward limits.
+- **Audit also covers** `claim`, `release` and `limits-reset`.
+- **Limits reset** sets `QueueItem.limitsResetAt`; only `ok` lines after it (and inside 24 hours) count. The 429 raises a separate attention entry, key `queue-limit:<id>`, so the normal queue-alert sweep does not clear it; reset clears it, and so does removing the card. `cardLimits` is read by `readConfig` so other config writes keep it. `PUT /api/queue/limits` and the reset need actor `human` (403 otherwise).
+- **Leases** last 1 minute to 4 hours. Only the holder may release a live lease.
+- **Poller.** It skips a card whose live lease is held by anyone but `poller`, both when choosing cards and again before applying a reply. It writes no audit lines and limits do not gate it.
+- **note.** Written as `operator-note-<n>.md` and backed up like answers. It reaches the next fresh run through the answers list; a resumed or retried run sees only a note given to `resume --note`.
+- **resume.** Checks the step against the run's flow before parking the card (400 with the list of steps), uses the card's last run (`runIds.at(-1)`), and moves the card to the front of the queue like a pick. `resumeAt` is stored as `{ node, note }` and dropped with `resumeRunId`. A failed `runner.resumeAt` fails the card with the reason instead of starting a fresh build. The runner also refuses a join step.
+- **CLI.** Every toolbox command posts to `/do/:action`, because the browser routes hard-code actor `human`. `--why` defaults to `cli`. `shiki queue answer` and `shiki queue stop` were added, since they had no CLI command. `Context` gained `env` for `$SKD_ACTOR`.
+- **Docs.** AGENTS.md step 1 uses `shiki run show <runId>`, the real command.

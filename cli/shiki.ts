@@ -201,6 +201,7 @@ async function dispatch(argv: string[], deps: MainDeps): Promise<number> {
     values: parsed.values,
     json: parsed.values.json === true,
     cwd: deps.cwd ?? process.cwd(),
+    env: deps.env,
     pollMs: deps.pollMs ?? DEFAULT_POLL_MS,
     out: deps.stdout,
     err: deps.stderr,

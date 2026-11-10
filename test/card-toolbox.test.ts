@@ -77,7 +77,7 @@ test('show returns the card, its run and its last 10 audit lines, and writes non
   const h = queueHarness(dir)
   const item = await parkedItem(h)
   const run = { id: 'run-1', status: 'blocked', error: null, currentNodeId: 'plan', attempts: [{ nodeId: 'plan', number: 0, status: 'settled', result: { outcome: 'blocked', summary: 'Need info' } }] }
-  const toolbox = toolboxOf(h, { runs: { get: id => (id === 'run-1' ? run : undefined) } })
+  const toolbox = toolboxOf(h, { runs: { get: id => (id === 'run-1' ? { ...run, request: 'big', attempts: run.attempts.map(attempt => ({ ...attempt, prompt: 'x'.repeat(1000) })) } : undefined) } })
   for (let n = 0; n < 12; n += 1) await refusal(toolbox.perform(item.id, 'pick', { option: 'A' }, human))
   const shown = await toolbox.perform(item.id, 'show', {}, human) as { item: { id: string }; run: unknown; history: AuditLine[] }
   expect(shown.item.id).toBe(item.id)

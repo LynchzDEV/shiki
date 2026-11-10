@@ -1,8 +1,10 @@
+import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 import { segment } from '../client'
-import { arg, emit, expandHome, flag, records, stringOpt, UsageError, type Command, type Context } from '../command'
+import { arg, countOpt, emit, expandHome, flag, records, stringOpt, UsageError, type Command, type Context, type OptionSpec } from '../command'
 import { cell, table } from '../format'
+import { readEnv } from '../../server/env'
 import { repoNamesProblem } from '../../server/repo-names'
 
 type Json = Record<string, unknown>
@@ -149,6 +151,85 @@ async function landStage(ctx: Context): Promise<void> {
   emit(ctx, await ctx.client.post(itemPath(ctx, `/land/${segment(stage)}/start`), { confirm: true }), () => `Started ${stage}.\n`)
 }
 
+const TOOLBOX_OPTIONS: Record<string, OptionSpec> = {
+  why: { type: 'string', description: 'why you are doing this, kept in the card\'s audit log (default: cli)', placeholder: 'TEXT' },
+  as: { type: 'string', description: 'who is acting (default: $SKD_ACTOR, then human)', placeholder: 'NAME' },
+  key: { type: 'string', description: 'idempotency key: repeating the same call with it returns the first result', placeholder: 'KEY' },
+  expect: { type: 'string', description: 'refuse unless the card is in this state', placeholder: 'STATE' },
+}
+const LIMITED_ACTIONS = ['note', 'resume', 'repost', 'say', 'pick', 'requeue', 'reread', 'answer', 'stop']
+const DURATION = /^(\d+)(s|m|h)$/
+const UNIT_MS: Record<string, number> = { s: 1000, m: 60_000, h: 3_600_000 }
+
+const actorOf = (ctx: Context): string => stringOpt(ctx, 'as') ?? readEnv('ACTOR', ctx.env) ?? 'human'
+const whyOf = (ctx: Context): string => stringOpt(ctx, 'why') ?? 'cli'
+
+function perform(ctx: Context, action: string, params: Json): Promise<unknown> {
+  const key = stringOpt(ctx, 'key')
+  const expect = stringOpt(ctx, 'expect')
+  return ctx.client.post(itemPath(ctx, `/do/${action}`), { params, actor: actorOf(ctx), why: whyOf(ctx), ...(key === undefined ? {} : { key }), ...(expect === undefined ? {} : { expect }) })
+}
+
+function durationMs(ctx: Context): number {
+  const text = stringOpt(ctx, 'for') ?? '30m'
+  const match = DURATION.exec(text)
+  if (match === null) throw new UsageError('--for is a duration such as 90s, 30m or 2h')
+  return Number(match[1]) * UNIT_MS[match[2]!]!
+}
+
+async function noteText(ctx: Context): Promise<string> {
+  const file = stringOpt(ctx, 'file')
+  const given = ctx.args.text
+  if ((file === undefined) === (given === undefined)) throw new UsageError('give the note as text or with --file, not both')
+  if (given !== undefined) return given === '-' ? (await ctx.stdin()).trimEnd() : given
+  return readFile(resolve(ctx.cwd, expandHome(file!)), 'utf8')
+}
+
+const when = (at: unknown): string => (typeof at === 'number' ? new Date(at).toISOString().replace(/\.\d+Z$/, 'Z') : '-')
+
+function historyLine(line: Json): string {
+  const tail = typeof line.error === 'string' ? `${cell(line.why)} (${line.error})` : cell(line.why)
+  return `${when(line.at)}  ${cell(line.actor)} ${cell(line.action)} ${cell(line.result)}: ${tail}`
+}
+
+function historyText(value: unknown): string {
+  const lines = records(value, 'history')
+  return lines.length === 0 ? 'No actions logged for this card yet.\n' : `${lines.map(historyLine).join('\n')}\n`
+}
+
+function showText(value: unknown): string {
+  const item = (field(value, 'item') ?? {}) as Json
+  const run = field(value, 'run') as Json | null
+  const lease = field(value, 'lease') as Json | null
+  const lines = [
+    `${cell(item.title)} (${cell(item.id)})`,
+    `State: ${cell(item.state)}${run === null ? '' : `  Run: ${cell(run.id)} (${cell(run.status)}) at ${cell(run.currentNodeId)}`}`,
+    `Lease: ${lease === null ? 'none' : `${cell(lease.holder)} until ${when(lease.until)}`}`,
+    ...(typeof item.error === 'string' && item.error !== '' ? [`Error: ${item.error}`] : []),
+    ...(Array.isArray(item.questions) && item.questions.length > 0 ? [`Questions: ${item.questions.map(String).join(' / ')}`] : []),
+    ...(field(item, 'pick') === undefined ? [] : [`Pick: ${(field(field(item, 'pick'), 'options') as unknown[] | undefined ?? []).map(String).join(', ')}${field(field(field(item, 'pick'), 'ask'), 'ref') === undefined ? '' : ' (asked in ClickUp)'}`]),
+    ...(run === null ? [] : ['Steps:', ...records(run, 'attempts').map(attempt => `  #${cell(attempt.number)} ${cell(attempt.nodeId)} ${cell(attempt.status)}${field(attempt.result, 'outcome') === undefined ? '' : ` ${cell(field(attempt.result, 'outcome'))}: ${cell(field(attempt.result, 'summary'))}`}`)]),
+    'Recent actions:',
+    ...records(value, 'history').map(line => `  ${historyLine(line)}`),
+  ]
+  return `${lines.join('\n')}\n`
+}
+
+function limitsText(value: unknown): string {
+  const limits = field(value, 'limits')
+  const rows = limits !== null && typeof limits === 'object' ? Object.entries(limits as Json) : []
+  return `Most ok actions per card in 24 hours:\n${rows.map(([action, limit]) => `  ${action} ${cell(limit)}`).join('\n')}\n`
+}
+
+async function limits(ctx: Context): Promise<void> {
+  const action = ctx.args.action
+  const given = ctx.args.n
+  if (action === undefined) return emit(ctx, await ctx.client.get('/api/queue/limits'), limitsText)
+  if (!LIMITED_ACTIONS.includes(action)) throw new UsageError(`action must be one of ${LIMITED_ACTIONS.join(', ')}`)
+  if (given === undefined || !/^\d+$/.test(given) || Number(given) > 100) throw new UsageError('n must be a whole number from 0 to 100')
+  emit(ctx, await ctx.client.put('/api/queue/limits', { actor: actorOf(ctx), action, limit: Number(given) }), limitsText)
+}
+
 export const queueCommands: Command[] = [
   {
     path: ['queue', 'list'],
@@ -227,9 +308,9 @@ export const queueCommands: Command[] = [
   {
     path: ['queue', 'requeue'],
     args: ['id'],
-    options: { fresh: { type: 'boolean', description: 'start a new run instead of resuming the failed one' } },
+    options: { fresh: { type: 'boolean', description: 'start a new run instead of resuming the failed one' }, ...TOOLBOX_OPTIONS },
     summary: 'Put a failed, ready or waiting item back in line; a failed item resumes its last run',
-    run: async (ctx) => emit(ctx, await ctx.client.post(itemPath(ctx, '/requeue'), flag(ctx, 'fresh') ? { fresh: true } : {}), () => 'Back in the queue.\n'),
+    run: async (ctx) => emit(ctx, await perform(ctx, 'requeue', flag(ctx, 'fresh') ? { fresh: true } : {}), () => 'Back in the queue.\n'),
   },
   {
     path: ['queue', 'pick'],
@@ -238,30 +319,114 @@ export const queueCommands: Command[] = [
       tester: { type: 'string', description: 'who to tag when the build is ready', placeholder: 'NAME' },
       note: { type: 'string', description: 'a note for the next run', placeholder: 'TEXT' },
       feedback: { type: 'string', description: 'what should change, only with none', placeholder: 'TEXT' },
+      ...TOOLBOX_OPTIONS,
     },
     summary: 'Choose a design variant, none, or keep (also now, nochange: the current design stays) for an item waiting on a pick',
     run: async (ctx) => {
       const body = { option: arg(ctx, 'option'), ...optionalText(ctx, 'tester'), ...optionalText(ctx, 'note'), ...optionalText(ctx, 'feedback') }
-      emit(ctx, await ctx.client.post(itemPath(ctx, '/pick'), body), () => `Picked ${arg(ctx, 'option')}. Back in the queue.\n`)
+      emit(ctx, await perform(ctx, 'pick', body), () => `Picked ${arg(ctx, 'option')}. Back in the queue.\n`)
     },
   },
   {
     path: ['queue', 'say'],
     args: ['id', 'text'],
+    options: TOOLBOX_OPTIONS,
     summary: 'Write a message in the ClickUp pick thread, or on the card when no pick is open',
-    run: async (ctx) => emit(ctx, await ctx.client.post(itemPath(ctx, '/say'), { text: arg(ctx, 'text') }), sayText),
+    run: async (ctx) => emit(ctx, await perform(ctx, 'say', { text: arg(ctx, 'text') }), sayText),
   },
   {
     path: ['queue', 'repost'],
     args: ['id'],
+    options: TOOLBOX_OPTIONS,
     summary: 'Publish the mockups again and post a fresh ClickUp pick ask, closing the old one',
-    run: async (ctx) => emit(ctx, await ctx.client.post(itemPath(ctx, '/repost'), {}), () => 'Asked again in ClickUp.\n'),
+    run: async (ctx) => emit(ctx, await perform(ctx, 'repost', {}), () => 'Asked again in ClickUp.\n'),
   },
   {
     path: ['queue', 'reread'],
     args: ['id'],
+    options: TOOLBOX_OPTIONS,
     summary: 'Read the ClickUp replies to the open pick again from the ask',
-    run: async (ctx) => emit(ctx, await ctx.client.post(itemPath(ctx, '/reread'), {}), (value) => `Re-read from the ask. It is ${cell(field(field(value, 'item'), 'state'))}.\n`),
+    run: async (ctx) => emit(ctx, await perform(ctx, 'reread', {}), (value) => `Re-read from the ask. It is ${cell(field(field(value, 'item'), 'state'))}.\n`),
+  },
+  {
+    path: ['queue', 'answer'],
+    args: ['id', 'text'],
+    options: TOOLBOX_OPTIONS,
+    summary: 'Answer the questions of an item waiting for your answer in Shikidan (text - reads stdin)',
+    run: async (ctx) => emit(ctx, await perform(ctx, 'answer', { text: arg(ctx, 'text') === '-' ? (await ctx.stdin()).trimEnd() : arg(ctx, 'text') }), () => 'Answered. Back in the queue.\n'),
+  },
+  {
+    path: ['queue', 'stop'],
+    args: ['id'],
+    options: TOOLBOX_OPTIONS,
+    summary: 'Stop the run of a building or landing item',
+    run: async (ctx) => emit(ctx, await perform(ctx, 'stop', {}), () => 'Stopped.\n'),
+  },
+  {
+    path: ['queue', 'show'],
+    args: ['id'],
+    summary: 'Show everything about an item: state, run and its steps, lease and the last 10 logged actions',
+    run: async (ctx) => emit(ctx, await ctx.client.get(itemPath(ctx, '/show')), showText),
+  },
+  {
+    path: ['queue', 'history'],
+    args: ['id'],
+    options: { limit: { type: 'string', description: 'how many lines, newest last (default 50)', placeholder: 'N' } },
+    summary: 'Show the audit log of an item: who did what, why and how it went',
+    run: async (ctx) => emit(ctx, await ctx.client.get(itemPath(ctx, '/history'), { limit: String(countOpt(ctx, 'limit') ?? 50) }), historyText),
+  },
+  {
+    path: ['queue', 'note'],
+    args: ['id', 'text?'],
+    options: { file: { type: 'string', description: 'read the note from this file', placeholder: 'FILE' }, ...TOOLBOX_OPTIONS },
+    summary: 'Add an operator note to an item; the next fresh run reads it (text - reads stdin)',
+    run: async (ctx) => emit(ctx, await perform(ctx, 'note', { text: await noteText(ctx) }), () => 'Note added.\n'),
+  },
+  {
+    path: ['queue', 'resume'],
+    args: ['id'],
+    options: {
+      at: { type: 'string', description: 'id of the step of its last run to continue from (see shiki queue show)', placeholder: 'STEP' },
+      note: { type: 'string', description: 'a note for that step, also kept as an operator note file', placeholder: 'TEXT' },
+      ...TOOLBOX_OPTIONS,
+    },
+    summary: 'Continue a failed, ready or waiting item\'s last run from a chosen step, keeping everything it already did',
+    run: async (ctx) => {
+      const at = stringOpt(ctx, 'at')
+      if (at === undefined) throw new UsageError('give the step with --at STEP')
+      emit(ctx, await perform(ctx, 'resume', { at, ...optionalText(ctx, 'note') }), () => `Resuming at ${at}.\n`)
+    },
+  },
+  {
+    path: ['queue', 'claim'],
+    args: ['id'],
+    options: { for: { type: 'string', description: 'how long, 1m to 4h (default 30m)', placeholder: 'DURATION' }, why: TOOLBOX_OPTIONS.why!, as: TOOLBOX_OPTIONS.as! },
+    summary: 'Hold an item so only you can act on it until you release it or the time runs out',
+    run: async (ctx) => {
+      const ms = durationMs(ctx)
+      emit(ctx, await ctx.client.post(itemPath(ctx, '/claim'), { actor: actorOf(ctx), ms, ...optionalText(ctx, 'why') }), (value) => `Claimed by ${cell(field(field(value, 'lease'), 'holder'))} until ${when(field(field(value, 'lease'), 'until'))}.\n`)
+    },
+  },
+  {
+    path: ['queue', 'release'],
+    args: ['id'],
+    options: { why: TOOLBOX_OPTIONS.why!, as: TOOLBOX_OPTIONS.as! },
+    summary: 'Let go of an item you claimed',
+    run: async (ctx) => emit(ctx, await ctx.client.post(itemPath(ctx, '/release'), { actor: actorOf(ctx), ...optionalText(ctx, 'why') }), () => 'Released.\n'),
+  },
+  {
+    path: ['queue', 'limits'],
+    args: ['action?', 'n?'],
+    options: { as: TOOLBOX_OPTIONS.as! },
+    summary: 'Show how many ok actions a card may take per action in 24 hours; with action and n, set one (human only)',
+    run: limits,
+  },
+  {
+    path: ['queue', 'limits', 'reset'],
+    args: ['id'],
+    options: { why: TOOLBOX_OPTIONS.why!, as: TOOLBOX_OPTIONS.as! },
+    summary: 'Clear an item\'s used-up limits and its attention entry (human only)',
+    run: async (ctx) => emit(ctx, await ctx.client.post(itemPath(ctx, '/limits/reset'), { actor: actorOf(ctx), why: whyOf(ctx) }), () => 'Limits reset.\n'),
   },
   {
     path: ['queue', 'remove'],
