@@ -136,7 +136,7 @@ export function doctorPlan(verdict: DoctorVerdict, context: { reply: SourceReply
 export function doctorGraph(agent: DoctorAgent): Workflow {
   return workflowSchema.parse({
     id: 'card-doctor', name: 'Card doctor', entry: 'diagnose', edges: [],
-    nodes: [{ id: 'diagnose', title: 'Diagnose', kind: 'task', maxVisits: 1, agent, denyTools: DOCTOR_DENIED_TOOLS, instructions: DOCTOR_INSTRUCTIONS }],
+    nodes: [{ id: 'diagnose', title: 'Diagnose', kind: 'task', maxVisits: 1, agent, denyTools: DOCTOR_DENIED_TOOLS, toolless: true, instructions: DOCTOR_INSTRUCTIONS }],
   })
 }
 

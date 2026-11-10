@@ -110,6 +110,7 @@ export type CreateJobParams = {
   coreRules?: string
   mcpServers?: import('./workflows').WorkflowNode['mcpServers']
   disallowedTools?: string[]
+  toolless?: true
   purpose?: JobPurpose
   chatId?: string
   chatTurn?: string
@@ -753,7 +754,7 @@ export function createJobManager(options: JobManagerOptions = {}): JobManager {
     try {
       spawnSpec = await resolver({
         engine: params.engine,
-        ...(params.purpose === 'workflow-design' ? { readOnly: true } : {}),
+        ...(params.purpose === 'workflow-design' || params.toolless ? { readOnly: true } : {}),
         prompt: params.prompt,
         connection: params.connection,
         coreRules: params.coreRules,

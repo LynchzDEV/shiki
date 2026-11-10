@@ -169,7 +169,7 @@ function guardChange(run: WorkflowRun, next: WorkflowRevision): void {
     const before = run.workflow.nodes.find(node => node.id === id)!
     const after = next.nodes.find(node => node.id === id)
     if (!after) throw new Error(`${before.title} already ran and cannot be removed`)
-    const frozen = (node: WorkflowNode) => JSON.stringify([node.kind, node.instructions, node.agent, node.checks, node.setup ?? [], node.denyTools ?? []])
+    const frozen = (node: WorkflowNode) => JSON.stringify([node.kind, node.instructions, node.agent, node.checks, node.setup ?? [], node.denyTools ?? [], node.toolless ?? false])
     if (frozen(after) !== frozen(before)) throw new Error(`${before.title} already ran, so its kind, instructions, agent, checks, setup and deny list cannot change`)
   }
   for (const token of run.tokens) if (!next.nodes.some(node => node.id === token.nodeId)) throw new Error(`${title(token.nodeId)} is in progress and cannot be removed`)
@@ -595,7 +595,7 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
   function stepJob(run: WorkflowRun, node: WorkflowNode, attempt: WorkflowAttempt, token: WorkflowToken, prompt: string): CreateJobParams {
     const agent = run.agents[node.id]!
     const chat = run.chatId ? { chatId: run.chatId, ...(run.chatTurn ? { chatTurn: run.chatTurn } : {}), reason: `Studio · ${run.workflow.name} · ${node.title}` } : {}
-    return { engine: agent.engine, model: agent.model ?? undefined, connection: agent.connection, cwd: token.workspace, ...(token.workspace === run.cwd ? {} : { baseRepo: run.cwd }), label: run.chatId ? node.title : run.label, prompt, ...chat, coreRules: node.kind === 'implement' ? `${run.policy.coreRules}\n\n${run.policy.implementationRules}` : run.policy.coreRules, mcpServers: node.mcpServers, ...(node.denyTools?.length ? { disallowedTools: node.denyTools } : {}), workflowRunId: run.id, workflowNodeId: node.id, workflowAttempt: attempt.number, terminalId: run.terminalId }
+    return { engine: agent.engine, model: agent.model ?? undefined, connection: agent.connection, cwd: token.workspace, ...(token.workspace === run.cwd ? {} : { baseRepo: run.cwd }), label: run.chatId ? node.title : run.label, prompt, ...chat, coreRules: node.kind === 'implement' ? `${run.policy.coreRules}\n\n${run.policy.implementationRules}` : run.policy.coreRules, mcpServers: node.mcpServers, ...(node.denyTools?.length ? { disallowedTools: node.denyTools } : {}), ...(node.toolless ? { toolless: true as const } : {}), workflowRunId: run.id, workflowNodeId: node.id, workflowAttempt: attempt.number, terminalId: run.terminalId }
   }
   function lastWords(output: string): string {
     const words = output.slice(-LAST_WORDS_CHARS).trim()

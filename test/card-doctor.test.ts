@@ -354,8 +354,10 @@ test('a card that is not waiting on a ClickUp pick, or with no owner replies, is
 test('with the real workflow runner the doctor graph runs in its own empty repo under $HOME, settles, and the folder is removed', async () => {
   const home = await mkdtemp(join(homedir(), 'skd-doctor-runs-'))
   const prompts: string[] = []
-  const resolver: EngineResolver = ({ prompt }) => {
+  const readOnly: unknown[] = []
+  const resolver: EngineResolver = ({ prompt, readOnly: noTools }) => {
     prompts.push(prompt)
+    readOnly.push(noTools)
     return { cmd: '/bin/echo', args: [JSON.stringify({ type: 'result', result: `SKD_RESULT ${JSON.stringify({ outcome: 'pass', summary: 'classified', evidence: [pickB] })}` })], env: {} }
   }
   let settled: (run: RunView) => Promise<void> = async () => {}
@@ -370,7 +372,8 @@ test('with the real workflow runner the doctor graph runs in its own empty repo 
     const run = runner.get(runId!)!
     expect(run.status).toBe('done')
     expect(run.cwd.startsWith(home)).toBe(true)
-    expect(run.workflow.nodes.map(node => [node.id, node.denyTools])).toEqual([['diagnose', DOCTOR_DENIED_TOOLS]])
+    expect(run.workflow.nodes.map(node => [node.id, node.denyTools, node.toolless])).toEqual([['diagnose', DOCTOR_DENIED_TOOLS, true]])
+    expect(readOnly).toEqual([true])
     expect(prompts[0]).toContain(JSON.stringify('<untrusted_reply id="c9">เอา B</untrusted_reply>').slice(1, -1))
     expect(s.doctor.show(item.id)).toMatchObject({ intent: 'pick', option: 'B', actions: [{ action: 'pick', params: { option: 'B' } }] })
     expect(s.h.store.get(item.id)!.runIds).toEqual(['run-1'])
