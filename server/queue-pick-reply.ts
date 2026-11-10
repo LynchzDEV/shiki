@@ -1,9 +1,10 @@
-export type PickReply = { kind: 'pick'; option: string; note: string } | { kind: 'none'; feedback: string } | { kind: 'unclear' }
+export type PickReply = { kind: 'pick'; option: string; note: string } | { kind: 'none'; feedback: string } | { kind: 'keep'; note: string } | { kind: 'unclear' }
 
 export type Person = { id: string; username: string }
 export type CardPeople = { creator: Person | null; assignees: Person[]; me: Person }
 
 const NONE_WORDS = ['ไม่เอาสักแบบ', 'ไม่เอาซักแบบ', 'ไม่เอาซักช้อยส์', 'ไม่เอาสักช้อยส์', 'ไม่เอาเลย', 'ไม่ชอบสักแบบ', 'ไม่ชอบเลย', 'none', 'neither']
+const KEEP_WORDS = ['เหมือน NOW', 'เหมือนเดิม', 'แบบเดิม', 'ไม่ต้องปรับ UI', 'keep now', 'keep', 'no change']
 const FILLERS = /แบบ|เอา|ข้อ|เลือก|ตัว|option|ครับ|ค่ะ|คะ|นะ|จ้า/gi
 const NOISE = /[\s\p{P}]/gu
 const EDGE_PUNCTUATION = /^[\s\p{P}]+|[\s\p{P}]+$/gu
@@ -18,8 +19,11 @@ function phraseRegex(word: string): RegExp {
   return new RegExp(`^[\\s\\p{P}]*${escaped(word)}(?:เลย)?${after}`, 'iu')
 }
 
-const nonePhrases = (extra: readonly string[]): RegExp[] =>
-  [...NONE_WORDS, ...extra].sort((a, b) => b.length - a.length).map(phraseRegex)
+const phrasesOf = (words: readonly string[], extra: readonly string[]): RegExp[] =>
+  [...words, ...extra].sort((a, b) => b.length - a.length).map(phraseRegex)
+
+const matchedBy = (phrases: readonly RegExp[], line: string): RegExpExecArray | undefined =>
+  phrases.map(phrase => phrase.exec(line)).find(found => found !== null) ?? undefined
 
 const namesAnOption = (line: string, options: readonly string[]): boolean => {
   const tokens = line.replace(FILLERS, ' ').toLowerCase().split(/[\s\p{P}]+/u)
@@ -31,14 +35,20 @@ const noneWith = (text: string, rest: string): PickReply => {
   return { kind: 'none', feedback: feedback === '' ? text.trim() : feedback }
 }
 
-export function parsePickReply(text: string, options: readonly string[], extraNonePhrases: readonly string[] = []): PickReply {
+export function parsePickReply(text: string, options: readonly string[], extraNonePhrases: readonly string[] = [], extraKeepPhrases: readonly string[] = []): PickReply {
   const lines = text.split('\n')
   const at = lines.findIndex(line => line.trim() !== '')
   if (at === -1) return { kind: 'unclear' }
   const first = lines[at]!
   const after = lines.slice(at + 1)
-  const matched = namesAnOption(first, options) ? undefined : nonePhrases(extraNonePhrases).map(phrase => phrase.exec(first)).find(found => found !== null)
-  if (matched !== undefined && matched !== null) return noneWith(text, [first.slice(matched[0].length), ...after].join('\n'))
+  const keeps = phrasesOf(KEEP_WORDS, extraKeepPhrases)
+  const guarded = namesAnOption(first, options)
+  const none = guarded ? undefined : matchedBy(phrasesOf(NONE_WORDS, extraNonePhrases), first)
+  if (none !== undefined) {
+    const rest = first.slice(none[0].length)
+    return matchedBy(keeps, rest) === undefined ? noneWith(text, [rest, ...after].join('\n')) : { kind: 'unclear' }
+  }
+  if (!guarded && (matchedBy(keeps, first) !== undefined || first.replace(EDGE_PUNCTUATION, '').toLowerCase() === 'now')) return { kind: 'keep', note: text.trim() }
   if (first.replace(EDGE_PUNCTUATION, '').toLowerCase() === 'no') return noneWith(text, after.join('\n'))
   const left = first.replace(FILLERS, '').replace(NOISE, '').toLowerCase()
   const option = options.find(id => id.toLowerCase() === left)

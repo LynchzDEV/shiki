@@ -209,6 +209,39 @@ test('a variant named none is a bad pick line', async () => {
   expect(h.store.get(h.item.id)).toMatchObject({ state: 'failed', error: 'Bad pick line: none is reserved for "none of these"' })
 })
 
+const keepPick = async (option: string, note?: string) => {
+  const h = await parkedPick()
+  await h.engine.pick(h.item.id, { option, ...(note === undefined ? {} : { note }) })
+  return { h, file: await readFile(join(h.store.get(h.item.id)!.worktree!, '.shikidan', 'queue', 'clickup-board', 'pick.md'), 'utf8') }
+}
+
+test('keep writes the note and a section saying to keep the NOW screen, without new mockups', async () => {
+  const { h, file } = await keepPick('keep', 'login button is broken')
+  expect(file).toBe('# Design pick\n\nOption: keep\nTester: (not set)\nNote: login button is broken\n\n## Keep the current design\nKeep the current UI (the NOW screen) unchanged. Fix only the bug described in the note and on the card. Do not build new mockups.\n')
+  expect(h.store.get(h.item.id)!.state).toBe('queued')
+})
+
+for (const alias of ['now', 'NoChange', 'KEEP']) {
+  test(`${alias} is taken as keep`, async () => {
+    expect((await keepPick(alias)).file).toContain('Option: keep\nTester: (not set)\nNote: (none)\n')
+  })
+}
+
+test('keep refuses feedback, and nothing else changes for a variant that is not an option', async () => {
+  const h = await parkedPick()
+  await expect(h.engine.pick(h.item.id, { option: 'keep', feedback: 'x' })).rejects.toMatchObject({ message: 'Feedback is only for none of these', status: 400 })
+  await expect(h.engine.pick(h.item.id, { option: 'Z' })).rejects.toMatchObject({ message: 'Not an option: Z', status: 409 })
+  expect(h.store.get(h.item.id)!.state).toBe('waiting-pick')
+})
+
+for (const name of ['Keep', 'Now', 'NoChange']) {
+  test(`a variant named ${name} is a bad pick line`, async () => {
+    const h = await building()
+    await h.block('run-1', [`pick: A,${name} | visualizer/login`])
+    expect(h.store.get(h.item.id)).toMatchObject({ state: 'failed', error: `Bad pick line: ${name} is reserved for "keep the current design"` })
+  })
+}
+
 const FLOW = { plugin: 'fixstack' }
 
 test('with autoPick on, a pick with a recommendation is taken and the card goes back to building', async () => {

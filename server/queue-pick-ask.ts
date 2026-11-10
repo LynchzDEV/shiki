@@ -1,6 +1,6 @@
 import type { PickChoice, QueueEngineDeps } from './queue-engine'
 import { parsePickReply, pickOwner, type CardPeople, type Person, type PickReply } from './queue-pick-reply'
-import { cleanPickSummary, NO_PICK } from './queue-prompts'
+import { cleanPickSummary, KEEP_PICK, NO_PICK } from './queue-prompts'
 import { message } from './queue-replies'
 import type { SourceReplies, SourceReply } from './queue-source'
 import type { PickAsk, QueueItem, QueuePick } from './queue-store'
@@ -45,10 +45,15 @@ export function askLines(pick: QueuePick, host: string): string[] {
   return [`รบกวนช่วยเลือกหน่อยครับว่าจะให้เป็นแบบไหนครับ https://${host}`, ...options]
 }
 
-const choiceOf = (verdict: Exclude<PickReply, { kind: 'unclear' }>): PickChoice =>
-  verdict.kind === 'pick' ? { option: verdict.option, note: verdict.note } : { option: NO_PICK, feedback: verdict.feedback }
+const choiceOf = (verdict: Exclude<PickReply, { kind: 'unclear' }>): PickChoice => {
+  if (verdict.kind === 'pick') return { option: verdict.option, note: verdict.note }
+  return verdict.kind === 'keep' ? { option: KEEP_PICK, note: verdict.note } : { option: NO_PICK, feedback: verdict.feedback }
+}
 
-const confirmation = (choice: PickChoice): string => (choice.option === NO_PICK ? 'ได้ครับ จะทำแบบใหม่ตามนี้ครับ' : `ได้ครับ ใช้แบบ ${choice.option}`)
+const confirmation = (choice: PickChoice): string => {
+  if (choice.option === NO_PICK) return 'ได้ครับ จะทำแบบใหม่ตามนี้ครับ'
+  return choice.option === KEEP_PICK ? 'รับทราบครับ ใช้แบบเดิม (NOW) ไม่ปรับ UI แก้บั๊กอย่างเดียว' : `ได้ครับ ใช้แบบ ${choice.option}`
+}
 
 export type PickAsker = {
   asksInSource(item: QueueItem, plugin?: string): Promise<boolean>
@@ -164,11 +169,12 @@ export function pickAsker(deps: QueueEngineDeps, steps: PickAskerSteps): PickAsk
     const judged = (reply: SourceReply): boolean => reply.authorId !== '' && (reply.authorId === asked.ownerId || reply.authorId === asked.meId)
     const others = result.replies.filter(reply => !judged(reply))
     if (keepOthers && others.length > 0) await steps.keep(item, worktree, others).catch(error => console.error(`Queue item ${item.id} replies not saved`, error))
-    const extraPhrases = await deps.pickNonePhrases?.() ?? []
+    const extraNone = await deps.pickNonePhrases?.() ?? []
+    const extraKeep = await deps.pickKeepPhrases?.() ?? []
     let decided: { reply: SourceReply; choice: PickChoice } | undefined
     const unclear: SourceReply[] = []
     for (const reply of result.replies.filter(judged).reverse()) {
-      const verdict = parsePickReply(reply.text, item.pick!.options, extraPhrases)
+      const verdict = parsePickReply(reply.text, item.pick!.options, extraNone, extraKeep)
       if (verdict.kind !== 'unclear') { decided = { reply, choice: choiceOf(verdict) }; break }
       unclear.unshift(reply)
     }

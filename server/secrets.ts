@@ -56,6 +56,7 @@ export type AppConfig = {
   publishKeepDays: number
   pickAskTo: string | null
   pickNonePhrases: string[]
+  pickKeepPhrases: string[]
 }
 
 export type PublicSecretsView = {
@@ -232,6 +233,7 @@ export async function readConfig(): Promise<AppConfig> {
     publishKeepDays: wholeIn(raw.publishKeepDays, MAX_PUBLISH_KEEP_DAYS, 14),
     pickAskTo: readUserId(raw.pickAskTo),
     pickNonePhrases: readNonePhrases(raw.pickNonePhrases),
+    pickKeepPhrases: readNonePhrases(raw.pickKeepPhrases),
   }
 }
 

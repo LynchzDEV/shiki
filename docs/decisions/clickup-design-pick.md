@@ -215,6 +215,16 @@ A real reply, "ไม่เอาซักช้อยส์เลย มัน�
 - **`pickAskTo`** (`shiki queue ask-to <userId>`, `--clear`) asks that ClickUp user instead of the card's owner. The username is filled in when the id matches the creator, an assignee or the bot account, and is empty otherwise. Their replies decide the pick, because the ask stores them as `ownerId`.
 - **`pickNonePhrases`** (`shiki queue none-phrases [phrase...]`, `--clear`) adds phrases that mean none of these. They are 3 to 60 characters and match like the built-ins: escaped, case-insensitive, first non-empty line only; the rest of the reply is the feedback. The built-in list also gained ไม่เอาซัก/สักแบบ, ไม่เอาซัก/สักช้อยส์, ไม่เอาเลย, ไม่ชอบสักแบบ and neither, and a bare "no" counts only when it is the whole first line.
 
+## Keep the current design
+
+Owners also answer "keep the current design, it is just a bug fix". `keep` is a reserved pick option next to `none`; `now` and `nochange` (case-insensitive) are aliases the server turns into `keep`, so the API and CLI both take them. No variant can be named keep, now or nochange.
+
+- **`pick.md`** says `Option: keep`, carries the note on the Note line, and adds a section telling the run to keep the NOW screen unchanged and fix only the bug in the note and on the card. There are no new mockups. Feedback stays none-only; the note is optional.
+- **Reply parser.** Keep phrases (`เหมือน NOW`, `เหมือนเดิม`, `แบบเดิม`, `ไม่ต้องปรับ UI`, `keep now`, `keep`, `no change`, plus `pickKeepPhrases` via `shiki queue keep-phrases`) match like none phrases: start of the first non-empty line, not before a Thai vowel or tone mark, and never when an option id is a word on that line. A bare `now` as the whole first line also means keep. The note is the full reply text, nothing stripped.
+- **A none phrase followed by a keep phrase is unclear**, not none (`ไม่เอาสักแบบ เหมือน NOW เลย` contradicts itself). Only the text right after the none phrase counts, so `ไม่ชอบเลย อยากได้แบบเดิม` is still none.
+- **The pick page in the browser is unchanged.** It builds its choices from the item's options plus none, so keep never shows there and nothing in it branches on a keep value.
+- **Confirmation** posted on close: `รับทราบครับ ใช้แบบเดิม (NOW) ไม่ปรับ UI แก้บั๊กอย่างเดียว`.
+
 ## Rollout order
 
 The ClickUp plugin goes first, then core, then fixstack. Core needs `people`, `resolve` and `authorId`. Without them, every ask fails into the `publish-failed` path and the pick falls back to Shikidan.

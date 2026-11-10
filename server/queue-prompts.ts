@@ -128,6 +128,10 @@ export function noPickMarkdown(feedback: string): string {
   return `\n## Feedback on all variants\n${quoted.join('\n')}\n`
 }
 
+export function keepPickMarkdown(): string {
+  return '\n## Keep the current design\nKeep the current UI (the NOW screen) unchanged. Fix only the bug described in the note and on the card. Do not build new mockups.\n'
+}
+
 const pickBody = (line: string): string | null => {
   const body = PICK_LINE.exec(line.replace(BULLET, '').replace(QUOTES, '').trim())?.[1] ?? null
   return body !== null && body.includes('|') ? body : null
@@ -168,6 +172,14 @@ export function cardImagesMarkdown(outcomes: CardImageOutcome[]): string {
 
 const OPTION_ID = /^[A-Z][A-Za-z0-9]{0,15}$/
 export const NO_PICK = 'none'
+export const KEEP_PICK = 'keep'
+const KEEP_ALIASES = ['now', 'nochange']
+const RESERVED_PICKS = [NO_PICK, KEEP_PICK, ...KEEP_ALIASES]
+
+export function normalPickOption(option: string): string {
+  const lowered = option.trim().toLowerCase()
+  return lowered === KEEP_PICK || KEEP_ALIASES.includes(lowered) ? KEEP_PICK : option
+}
 const MOCKUP_ROOT = 'visualizer/'
 const MIN_OPTIONS = 2
 const MAX_OPTIONS = 6
@@ -180,6 +192,8 @@ function pickProblem(options: string[], path: string, recommended: string | null
   const bad = options.find(id => !OPTION_ID.test(id))
   if (bad !== undefined) return `bad option id ${bad}`
   if (options.some(id => id.toLowerCase() === NO_PICK)) return `${NO_PICK} is reserved for "none of these"`
+  const reserved = options.find(id => RESERVED_PICKS.includes(id.toLowerCase()))
+  if (reserved !== undefined) return `${reserved} is reserved for "keep the current design"`
   if (new Set(options).size !== options.length) return 'option ids must be unique'
   if (path.startsWith('/') || !path.startsWith(MOCKUP_ROOT) || path.length === MOCKUP_ROOT.length || path.split('/').includes('..')) return `the folder must be relative and inside ${MOCKUP_ROOT}`
   if (recommended !== null && !options.includes(recommended)) return `recommended ${recommended} is not an option`

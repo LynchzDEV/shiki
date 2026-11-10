@@ -157,6 +157,30 @@ describe('shiki queue', () => {
     }
   })
 
+  test('pick keep and its aliases send the note', async () => {
+    for (const option of ['keep', 'now', 'nochange']) {
+      const h = harness(() => Response.json({ item: { id: 'a1' } }))
+      expect(await main(['queue', 'pick', 'a1', option, '--note', 'bug only'], h.deps)).toBe(0)
+      expect(h.calls).toEqual([{ method: 'POST', path: '/api/queue/a1/pick', body: { option, note: 'bug only' } }])
+    }
+  })
+
+  test('keep-phrases replaces, shows and clears the extra phrases', async () => {
+    const set = harness(() => Response.json({ pickKeepPhrases: ['abc'] }))
+    expect(await main(['queue', 'keep-phrases', 'abc'], set.deps)).toBe(0)
+    expect(set.calls).toEqual([{ method: 'PUT', path: '/api/queue/settings', body: { pickKeepPhrases: ['abc'] } }])
+    expect(set.out()).toBe('Extra "keep the current design" phrases: abc.\n')
+    const show = harness(() => Response.json({ items: [], pickKeepPhrases: [] }))
+    expect(await main(['queue', 'keep-phrases'], show.deps)).toBe(0)
+    expect(show.out()).toBe('No extra "keep the current design" phrases.\n')
+    const cleared = harness(() => Response.json({ pickKeepPhrases: [] }))
+    expect(await main(['queue', 'keep-phrases', '--clear'], cleared.deps)).toBe(0)
+    expect(cleared.calls[0]?.body).toEqual({ pickKeepPhrases: [] })
+    const rejected = harness()
+    expect(await main(['queue', 'keep-phrases', 'ab'], rejected.deps)).toBe(2)
+    expect(rejected.calls).toEqual([])
+  })
+
   test('none-phrases replaces, shows and clears the extra phrases', async () => {
     const set = harness(() => Response.json({ pickNonePhrases: ['abc', 'b cd'] }))
     expect(await main(['queue', 'none-phrases', 'abc', ' b cd '], set.deps)).toBe(0)

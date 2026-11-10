@@ -55,7 +55,32 @@ table.push(
   ['I think none', { kind: 'unclear' }],
 )
 
-for (const [reply, expected] of table) {
+const keep = (note: string): ReturnType<typeof parsePickReply> => ({ kind: 'keep', note })
+const keepTable: Array<[string, ReturnType<typeof parsePickReply>]> = [
+  ['เหมือน NOW เลย แก้บั๊กอย่างเดียว', keep('เหมือน NOW เลย แก้บั๊กอย่างเดียว')],
+  ['เหมือน NOW เลย ไม่ต้องปรับ UI ครับ เป็นแก้บั๊ก', keep('เหมือน NOW เลย ไม่ต้องปรับ UI ครับ เป็นแก้บั๊ก')],
+  ['NOW', keep('NOW')],
+  ['  now. \nแก้บั๊กอย่างเดียว', keep('now. \nแก้บั๊กอย่างเดียว')],
+  ['keep now please', keep('keep now please')],
+  ['Keep', keep('Keep')],
+  ['เหมือนเดิม\nแก้แค่ปุ่ม', keep('เหมือนเดิม\nแก้แค่ปุ่ม')],
+  ['แบบเดิม', keep('แบบเดิม')],
+  ['ไม่ต้องปรับ UI', keep('ไม่ต้องปรับ UI')],
+  ['No change, just the bug', keep('No change, just the bug')],
+  ['A ครับ เหมือน NOW', { kind: 'unclear' }],
+  ['keep A', { kind: 'unclear' }],
+  ['ไม่เอาสักแบบ เหมือน NOW เลย', { kind: 'unclear' }],
+  ['ไม่ชอบเลย อยากได้แบบเดิม', none('อยากได้แบบเดิม')],
+  ['ไม่เอาซักช้อยส์เลย มันควรแสดงผลทับเว็บไปเลย ไม่ใช่ดันออกมา', none('มันควรแสดงผลทับเว็บไปเลย ไม่ใช่ดันออกมา')],
+  ['now what', { kind: 'unclear' }],
+  ['know', { kind: 'unclear' }],
+  ['keeping it', { kind: 'unclear' }],
+  ['เหมือนเดิมเลยนะ', keep('เหมือนเดิมเลยนะ')],
+  ['เหมือนเดิมๆ', keep('เหมือนเดิมๆ')],
+  ['A\nเหมือน NOW', { kind: 'pick', option: 'A', note: 'เหมือน NOW' }],
+]
+
+for (const [reply, expected] of [...table, ...keepTable]) {
   test(`${JSON.stringify(reply)} reads as ${expected.kind}`, () => {
     expect(parsePickReply(reply, OPTIONS)).toEqual(expected)
   })
@@ -125,4 +150,12 @@ test('no creator, or an owner who is the bot account itself, falls back to me', 
   expect(pickOwner({ creator: null, assignees: [], me })).toEqual(me)
   expect(pickOwner({ creator: person('9', 'Palm old name'), assignees: [], me })).toEqual(me)
   expect(pickOwner({ creator: person('1'), assignees: [person('9')], me })).toEqual(me)
+})
+
+test('extra keep phrases match like the built-ins, and a keep phrase after a none phrase stays unclear', () => {
+  const extra = ['ใช้ของเดิม', 'As Is!']
+  expect(parsePickReply('ใช้ของเดิม แก้บั๊กพอ', OPTIONS, [], extra)).toEqual({ kind: 'keep', note: 'ใช้ของเดิม แก้บั๊กพอ' })
+  expect(parsePickReply('as is! thanks', OPTIONS, [], extra)).toEqual({ kind: 'keep', note: 'as is! thanks' })
+  expect(parsePickReply('ใช้ของเดิม', OPTIONS)).toEqual({ kind: 'unclear' })
+  expect(parsePickReply('ขอใหม่ ใช้ของเดิม', OPTIONS, ['ขอใหม่'], extra)).toEqual({ kind: 'unclear' })
 })

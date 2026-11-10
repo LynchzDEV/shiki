@@ -537,6 +537,24 @@ test('the real stuck reply picks none with its feedback', async () => {
   expect(await pickFile(h.store.get(h.id)!)).toContain('> มันควรแสดงผลทับเว็บไปเลย ไม่ใช่ดันออกมา')
 })
 
+test('a keep reply writes keep with the whole reply as the note, confirms in Thai and announces keep', async () => {
+  const h = await parked()
+  h.replies.set('1', async () => h.from(KAN, 'c9', 'เหมือน NOW เลย แก้บั๊กอย่างเดียว'))
+  await h.engine.checkReplies()
+  const file = await pickFile(h.store.get(h.id)!)
+  expect(file).toContain('Option: keep\nTester: (not set)\nNote: เหมือน NOW เลย แก้บั๊กอย่างเดียว\n')
+  expect(file).toContain('## Keep the current design')
+  expect(h.posted.filter(post => post.kind === 'update')).toEqual([{ id: '1', kind: 'update', lines: ['รับทราบครับ ใช้แบบเดิม (NOW) ไม่ปรับ UI แก้บั๊กอย่างเดียว'] }])
+  expect(h.notices).toEqual([{ event: 'picked', replyId: 'c9', option: 'keep', by: 'Kan' }])
+})
+
+test('extra keep phrases from the settings turn a reply into keep', async () => {
+  const h = await parked({ deps: { pickKeepPhrases: async () => ['ใช้ของเดิม'] } })
+  h.replies.set('1', async () => h.from(KAN, 'c9', 'ใช้ของเดิม พอ'))
+  await h.engine.checkReplies()
+  expect(await pickFile(h.store.get(h.id)!)).toContain('Option: keep\n')
+})
+
 const withoutSince = async (h: Awaited<ReturnType<typeof parked>>, postedAt: number) => {
   const { since: _since, ...older } = h.store.get(h.id)!.pick!.ask!
   await h.store.update(h.id, { pick: { ...h.store.get(h.id)!.pick!, ask: { ...older, postedAt } } })

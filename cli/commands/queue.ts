@@ -84,9 +84,9 @@ const askToText = (value: unknown): string => {
   return typeof id === 'string' ? `Design picks are asked to ClickUp user ${id}.\n` : "Design picks are asked to the card's owner (default).\n"
 }
 
-const nonePhrasesText = (value: unknown): string => {
-  const phrases = field(value, 'pickNonePhrases')
-  return Array.isArray(phrases) && phrases.length > 0 ? `Extra "none of these" phrases: ${phrases.map(String).join(', ')}.\n` : 'No extra "none of these" phrases.\n'
+const phrasesText = (key: string, meaning: string) => (value: unknown): string => {
+  const phrases = field(value, key)
+  return Array.isArray(phrases) && phrases.length > 0 ? `Extra "${meaning}" phrases: ${phrases.map(String).join(', ')}.\n` : `No extra "${meaning}" phrases.\n`
 }
 
 async function askTo(ctx: Context): Promise<void> {
@@ -98,13 +98,14 @@ async function askTo(ctx: Context): Promise<void> {
   await putSettings(ctx, { pickAskTo: id ?? null }, askToText)
 }
 
-async function nonePhrases(ctx: Context): Promise<void> {
+const editPhrases = (key: string, meaning: string) => async (ctx: Context): Promise<void> => {
+  const text = phrasesText(key, meaning)
   const clear = flag(ctx, 'clear')
   if (ctx.rest.length > 0 && clear) throw new UsageError('give phrases or --clear, not both')
-  if (ctx.rest.length === 0 && !clear) return emit(ctx, await ctx.client.get('/api/queue'), nonePhrasesText)
+  if (ctx.rest.length === 0 && !clear) return emit(ctx, await ctx.client.get('/api/queue'), text)
   const phrases = ctx.rest.map(phrase => phrase.trim())
   if (phrases.length > MAX_NONE_PHRASES || phrases.some(phrase => phrase.length < MIN_NONE_PHRASE_LENGTH || phrase.length > MAX_NONE_PHRASE_LENGTH)) throw new UsageError(`give at most ${MAX_NONE_PHRASES} phrases of ${MIN_NONE_PHRASE_LENGTH} to ${MAX_NONE_PHRASE_LENGTH} characters`)
-  await putSettings(ctx, { pickNonePhrases: phrases }, nonePhrasesText)
+  await putSettings(ctx, { [key]: phrases }, text)
 }
 
 const putSettings = async (ctx: Context, body: Json, text: (value: unknown) => string): Promise<void> => emit(ctx, await ctx.client.put('/api/queue/settings', body), text)
@@ -208,7 +209,14 @@ export const queueCommands: Command[] = [
     args: ['phrase...'],
     options: { clear: { type: 'boolean', description: 'remove all extra phrases' } },
     summary: 'Replace the extra phrases that mean "none of these" in a ClickUp reply; with no argument, show them',
-    run: nonePhrases,
+    run: editPhrases('pickNonePhrases', 'none of these'),
+  },
+  {
+    path: ['queue', 'keep-phrases'],
+    args: ['phrase...'],
+    options: { clear: { type: 'boolean', description: 'remove all extra phrases' } },
+    summary: 'Replace the extra phrases that mean "keep the current design" in a ClickUp reply; with no argument, show them',
+    run: editPhrases('pickKeepPhrases', 'keep the current design'),
   },
   {
     path: ['queue', 'unpublish'],
@@ -231,7 +239,7 @@ export const queueCommands: Command[] = [
       note: { type: 'string', description: 'a note for the next run', placeholder: 'TEXT' },
       feedback: { type: 'string', description: 'what should change, only with none', placeholder: 'TEXT' },
     },
-    summary: 'Choose a design variant for an item waiting on a pick',
+    summary: 'Choose a design variant, none, or keep (also now, nochange: the current design stays) for an item waiting on a pick',
     run: async (ctx) => {
       const body = { option: arg(ctx, 'option'), ...optionalText(ctx, 'tester'), ...optionalText(ctx, 'note'), ...optionalText(ctx, 'feedback') }
       emit(ctx, await ctx.client.post(itemPath(ctx, '/pick'), body), () => `Picked ${arg(ctx, 'option')}. Back in the queue.\n`)

@@ -633,6 +633,19 @@ becomes the feedback. With
 .B \-\-clear
 the list is emptied; with no argument it prints the list.
 .TP
+.BI "shiki queue keep\-phrases " "\fR[\fIphrase\fR...] [\fB\-\-clear\fR]"
+Replace the extra phrases that read as "keep the current design" in a ClickUp
+pick reply (up to 30 phrases of 3 to 60 characters). They are matched like the
+built-in ones, such as
+.IR "เหมือน NOW" ,
+.I "เหมือนเดิม"
+and
+.IR "keep" :
+case-insensitive, at the start of the first non-empty line, and the whole reply
+becomes the note. With
+.B \-\-clear
+the list is emptied; with no argument it prints the list.
+.TP
 .BI "shiki queue unpublish " id
 Take down an item's published mockups now.
 .TP
@@ -653,6 +666,16 @@ Choose
 with
 .BI \-\-feedback " TEXT"
 to say what should change; the queue then builds new variants from it.
+Choose
+.B keep
+(or its aliases
+.B now
+and
+.BR nochange )
+to keep the current design: no new mockups are built, and the run fixes only
+the bug in
+.BR \-\-note
+and on the card.
 When the flow's plugin has its
 .B autoPick
 setting on, the queue takes the recommended variant itself, alerts

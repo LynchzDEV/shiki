@@ -2,7 +2,7 @@ import { basename, join } from 'node:path'
 
 import type { TaskContext } from './plugins/context-files'
 import { backUpAnswers, dropAnswerBackups, restoreAnswers } from './queue-answers'
-import { agentCouldFix, bizQuestionsOf, blockedSummary, cardImagesMarkdown, NO_PICK, noPickMarkdown, pickOf, repoRequestsOf, runRequest, SETTLED, oneLine, stillOpenMarkdown, techQuestionsOf, type PickAnswer, type RunView } from './queue-prompts'
+import { agentCouldFix, bizQuestionsOf, blockedSummary, cardImagesMarkdown, KEEP_PICK, keepPickMarkdown, normalPickOption, NO_PICK, noPickMarkdown, pickOf, repoRequestsOf, runRequest, SETTLED, oneLine, stillOpenMarkdown, techQuestionsOf, type PickAnswer, type RunView } from './queue-prompts'
 import { adoptionProblem, grantRepos, movedRealRepos, movedText, realRepoStates, reposToOffer, SINGLE_REPO_ASK } from './queue-repo-asks'
 import { cardImagesFolder, importCardImages, refuseLinkedQueueFolders } from './queue-files'
 import { createLand, PICK_FILE, type Land } from './queue-land'
@@ -43,6 +43,7 @@ export type QueueEngineDeps = {
   publishKeepDays?(): Promise<number>
   pickAskTo?(): Promise<string | null>
   pickNonePhrases?(): Promise<string[]>
+  pickKeepPhrases?(): Promise<string[]>
   sweepPublished?(): Promise<void>
   parallel?(): Promise<number>
   now?: () => number
@@ -122,7 +123,7 @@ async function writePick(deps: QueueEngineDeps, item: QueueItem, worktree: strin
   const none = choice.option === NO_PICK
   const tester = oneLine((choice.tester ?? '').slice(0, MAX_TESTER))
   const note = oneLine((choice.note ?? '').slice(0, MAX_NOTE))
-  const markdown = `# Design pick\n\nOption: ${choice.option}\nTester: ${tester || '(not set)'}\nNote: ${note || '(none)'}\n${none ? noPickMarkdown(choice.feedback ?? '') : stillOpenMarkdown(choice.answers ?? [])}`
+  const markdown = `# Design pick\n\nOption: ${choice.option}\nTester: ${tester || '(not set)'}\nNote: ${note || '(none)'}\n${none ? noPickMarkdown(choice.feedback ?? '') : choice.option === KEEP_PICK ? keepPickMarkdown() : stillOpenMarkdown(choice.answers ?? [])}`
   const restored = await worktreeRestorer(deps)({ ...item, worktree })
   await refuseLinkedQueueFolders(restored, item.source)
   const path = await deps.writeContext(item.source, { name: 'pick', markdown }, restored)
@@ -149,12 +150,13 @@ type QueueSteps = {
   paused(): QueuePause | null
 }
 
-async function pickNow(deps: QueueEngineDeps, id: string, choice: PickChoice): Promise<void> {
+async function pickNow(deps: QueueEngineDeps, id: string, asked: PickChoice): Promise<void> {
+  const choice = { ...asked, option: normalPickOption(asked.option) }
   const item = found(deps.store, id)
   if (item.state !== 'waiting-pick' || item.pick === undefined) throw stateRefusal(item.state)
   if (isRunningInStudio(deps, item)) throw new QueueRefusal('It is running in Studio now', 409)
   const none = choice.option === NO_PICK
-  if (!none && !item.pick.options.includes(choice.option)) throw new QueueRefusal(`Not an option: ${choice.option}`, 409)
+  if (!none && choice.option !== KEEP_PICK && !item.pick.options.includes(choice.option)) throw new QueueRefusal(`Not an option: ${choice.option}`, 409)
   if (none && (choice.feedback ?? '').trim() === '') throw new QueueRefusal('Say what should change', 400)
   if (!none && choice.feedback !== undefined) throw new QueueRefusal('Feedback is only for none of these', 400)
   if (item.worktree === null) throw new QueueRefusal('It has no workspace', 409)
@@ -498,10 +500,11 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
     return found(store, id)
   })
 
-  const pick = (id: string, choice: PickChoice): Promise<QueueItem> => serial(async () => {
-    const asked = found(store, id)
+  const pick = (id: string, asked: PickChoice): Promise<QueueItem> => serial(async () => {
+    const choice = { ...asked, option: normalPickOption(asked.option) }
+    const item = found(store, id)
     await pickNow(deps, id, choice)
-    await asker!.close(asked, choice)
+    await asker!.close(item, choice)
     await startNext()
     return found(store, id)
   })

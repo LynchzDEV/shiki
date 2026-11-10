@@ -41,7 +41,7 @@ description: Use when the user wants to set up, start, check, configure or opera
 | Stop, land, mark reviewed | `shiki job kill <id>`, `shiki job land <id>`, `shiki job reviewed <id>` |
 | Workflows | `shiki workflows`, `shiki run start <workflowId> "<request>"`, `shiki runs`, `shiki run show <id>`, `shiki run approve\|reject\|retry\|stop <id>` |
 | Build queue | `shiki queue list`, `shiki queue add <source> <externalId> --repo <dir>`, `shiki queue report <id>`, `shiki queue requeue <id>` (any `<id>` may be a unique prefix of 4+ characters) |
-| ClickUp design pick, operator | `shiki queue pick <id> <option>\|none [--feedback TEXT]`, `shiki queue say <id> <text>`, `shiki queue reread <id>`, `shiki queue repost <id>`, `shiki queue ask-to [userId\|--clear]`, `shiki queue none-phrases [phrase...\|--clear]` |
+| ClickUp design pick, operator | `shiki queue pick <id> <option>\|none\|keep [--feedback TEXT] [--note TEXT]` (`keep`, alias `now`/`nochange`, keeps the current design), `shiki queue say <id> <text>`, `shiki queue reread <id>`, `shiki queue repost <id>`, `shiki queue ask-to [userId\|--clear]`, `shiki queue none-phrases [phrase...\|--clear]`, `shiki queue keep-phrases [phrase...\|--clear]` |
 | Plugins | `shiki marketplace add <url>`, `shiki plugin catalog`, `shiki plugin add <git url>`, `shiki plugin list`, `shiki plugin settings <id>` |
 | Terminals and history | `shiki terminals`, `shiki terminal new`, `shiki history` |
 

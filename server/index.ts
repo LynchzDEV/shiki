@@ -258,6 +258,7 @@ export async function createApp(): Promise<Elysia> {
     publishKeepDays: async () => (await readConfig()).publishKeepDays,
     pickAskTo: async () => (await readConfig()).pickAskTo,
     pickNonePhrases: async () => (await readConfig()).pickNonePhrases,
+    pickKeepPhrases: async () => (await readConfig()).pickKeepPhrases,
     sweepPublished: () => removeLeftovers(publishDir()),
     parallel: async () => (await readConfig()).queueParallel,
   })

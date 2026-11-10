@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { requireLocal, type GuardContext } from '../auth'
 import { peerAddress, trustedHostRequest } from '../local-access'
 import { QueueRefusal, SourceFailure, type QueueEngine } from '../queue-engine'
-import { cleanPickSummary, NO_PICK } from '../queue-prompts'
+import { cleanPickSummary, normalPickOption, NO_PICK } from '../queue-prompts'
 import type { QueueItem, QueueStore } from '../queue-store'
 import { resolveQueueId } from '../queue-id'
 import { mockupResponse } from '../queue-mockups'
@@ -37,16 +37,21 @@ const saySchema = z.object({ text: z.string().trim().min(1).max(4000) })
 const moveSchema = z.object({ to: z.number().int().min(0) })
 const whole = (max: number, rule: string) => z.number({ error: rule }).int({ error: rule }).min(1, { error: rule }).max(max, { error: rule }).optional()
 const USER_ID_RULE = `pickAskTo must be a ClickUp user id of 1 to ${MAX_USER_ID_LENGTH} digits, or null`
-const PHRASES_RULE = `pickNonePhrases must be at most ${MAX_NONE_PHRASES} phrases of ${MIN_NONE_PHRASE_LENGTH} to ${MAX_NONE_PHRASE_LENGTH} characters`
+const phrasesRule = (name: string): string => `${name} must be at most ${MAX_NONE_PHRASES} phrases of ${MIN_NONE_PHRASE_LENGTH} to ${MAX_NONE_PHRASE_LENGTH} characters`
+const phrasesOf = (name: string) => {
+  const rule = phrasesRule(name)
+  return z.array(z.string({ error: rule }).trim().min(MIN_NONE_PHRASE_LENGTH, { error: rule }).max(MAX_NONE_PHRASE_LENGTH, { error: rule }), { error: rule }).max(MAX_NONE_PHRASES, { error: rule }).optional()
+}
 const settingsSchema = z.object({
   parallel: whole(MAX_QUEUE_PARALLEL, `parallel must be a whole number from 1 to ${MAX_QUEUE_PARALLEL}`),
   replyPollMinutes: whole(MAX_REPLY_POLL_MINUTES, `replyPollMinutes must be a whole number from 1 to ${MAX_REPLY_POLL_MINUTES}`),
   publishKeepDays: whole(MAX_PUBLISH_KEEP_DAYS, `publishKeepDays must be a whole number from 1 to ${MAX_PUBLISH_KEEP_DAYS}`),
   pickAskTo: z.string({ error: USER_ID_RULE }).regex(new RegExp(`^\\d{1,${MAX_USER_ID_LENGTH}}$`), { error: USER_ID_RULE }).nullable().optional(),
-  pickNonePhrases: z.array(z.string({ error: PHRASES_RULE }).trim().min(MIN_NONE_PHRASE_LENGTH, { error: PHRASES_RULE }).max(MAX_NONE_PHRASE_LENGTH, { error: PHRASES_RULE }), { error: PHRASES_RULE }).max(MAX_NONE_PHRASES, { error: PHRASES_RULE }).optional(),
-}).refine(body => Object.values(body).some(value => value !== undefined), { error: 'Send parallel, replyPollMinutes, publishKeepDays, pickAskTo or pickNonePhrases' })
-export type QueueSettings = Pick<AppConfig, 'replyPollMinutes' | 'publishKeepDays' | 'pickAskTo' | 'pickNonePhrases'> & { parallel: number }
-const settingsOf = (config: AppConfig): QueueSettings => ({ parallel: config.queueParallel, replyPollMinutes: config.replyPollMinutes, publishKeepDays: config.publishKeepDays, pickAskTo: config.pickAskTo, pickNonePhrases: config.pickNonePhrases })
+  pickNonePhrases: phrasesOf('pickNonePhrases'),
+  pickKeepPhrases: phrasesOf('pickKeepPhrases'),
+}).refine(body => Object.values(body).some(value => value !== undefined), { error: 'Send parallel, replyPollMinutes, publishKeepDays, pickAskTo, pickNonePhrases or pickKeepPhrases' })
+export type QueueSettings = Pick<AppConfig, 'replyPollMinutes' | 'publishKeepDays' | 'pickAskTo' | 'pickNonePhrases' | 'pickKeepPhrases'> & { parallel: number }
+const settingsOf = (config: AppConfig): QueueSettings => ({ parallel: config.queueParallel, replyPollMinutes: config.replyPollMinutes, publishKeepDays: config.publishKeepDays, pickAskTo: config.pickAskTo, pickNonePhrases: config.pickNonePhrases, pickKeepPhrases: config.pickKeepPhrases })
 const NO_ITEM = 'No such queue item'
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
@@ -128,7 +133,7 @@ async function requireLocalExceptMockupAssets(context: GuardContext): Promise<vo
 }
 
 export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: () => Promise<QueueTree> = () => queueTree(store.list()), runs: QueueRunLookup = NO_RUNS, onSettings: (settings: QueueSettings) => void = () => {}) {
-  let settings: QueueSettings = { parallel: 1, replyPollMinutes: 2, publishKeepDays: 14, pickAskTo: null, pickNonePhrases: [] }
+  let settings: QueueSettings = { parallel: 1, replyPollMinutes: 2, publishKeepDays: 14, pickAskTo: null, pickNonePhrases: [], pickKeepPhrases: [] }
   const settingsListeners = new Set<() => void>()
   const readSettings = async (): Promise<QueueSettings> => { settings = settingsOf(await readConfig()); return settings }
   void readSettings().catch(() => {})
@@ -168,10 +173,11 @@ export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: 
     .post('/api/queue/:id/pick', ({ params, body, set }) => {
       const parsed = pickSchema.safeParse(body)
       if (!parsed.success) { set.status = 400; return { error: 'option is required; tester is at most 200 characters and note at most 4000; each answer needs an id, a label and an answer, at most 20; feedback is at most 4000' } }
-      const { option, feedback } = parsed.data
+      const option = normalPickOption(parsed.data.option)
+      const { feedback } = parsed.data
       if (option === NO_PICK && (feedback ?? '').trim() === '') { set.status = 400; return { error: 'Say what should change' } }
       if (option !== NO_PICK && feedback !== undefined) { set.status = 400; return { error: 'Feedback is only for none of these' } }
-      return refusing(set, async () => ({ item: cleaned(await engine.pick(params.id, parsed.data)) }))
+      return refusing(set, async () => ({ item: cleaned(await engine.pick(params.id, { ...parsed.data, option })) }))
     })
     .post('/api/queue/:id/unpublish', ({ params, set }) => refusing(set, async () => ({ item: cleaned(await engine.unpublish(params.id)) }), conflictOrMissing))
     .post('/api/queue/:id/answer', ({ params, body, set }) => {
