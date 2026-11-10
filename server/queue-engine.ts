@@ -6,7 +6,7 @@ import { agentCouldFix, bizQuestionsOf, blockedSummary, cardImagesMarkdown, KEEP
 import { adoptionProblem, grantRepos, movedRealRepos, movedText, realRepoStates, reposToOffer, SINGLE_REPO_ASK } from './queue-repo-asks'
 import { cardImagesFolder, importCardImages, refuseLinkedQueueFolders } from './queue-files'
 import { createLand, PICK_FILE, type Land } from './queue-land'
-import { isAsked, pickAsker, type PickAsker, type PickIn, type PickReplyEvent } from './queue-pick-ask'
+import { askCursor, isAsked, pickAsker, type PickAsker, type PickIn, type PickReplyEvent } from './queue-pick-ask'
 import type { Published } from './publish'
 import { afterRecoveries, applyRecovery, askOwner, buildRecoveryRequest, MAX_BUILD_RECOVERIES, ownerAnswerText, recoverGraph, withOpenBiz } from './queue-recover'
 import { buildReport } from './queue-report'
@@ -92,7 +92,6 @@ export type QueuePause = { reason: string; until: number }
 const MAX_RUN_LABEL = 120
 const MAX_AUTO_PICKS = 2
 const DAY_MS = 24 * 60 * 60_000
-const ASK_LOOKBACK_MS = 60_000
 const DEFAULT_KEEP_DAYS = 14
 const PAUSE_BACKOFF_MS = [5, 15, 60].map(minutes => minutes * 60_000)
 const MAX_TIMER_MS = 2 ** 31 - 1
@@ -634,8 +633,7 @@ export function createQueueEngine(deps: QueueEngineDeps): QueueEngine {
     if (item.worktree === null) throw new QueueRefusal('It has no workspace', 409)
     if (runningInStudio(item)) throw new QueueRefusal('It is running in Studio now', 409)
     const ask = item.pick!.ask!
-    const sinceId = ask.since ?? String(ask.postedAt - ASK_LOOKBACK_MS)
-    const result = await fromSource(() => deps.source(item.source).replies({ id: item.externalId, sinceId }))
+    const result = await fromSource(() => deps.source(item.source).replies({ id: item.externalId, sinceId: askCursor(ask) }))
     await asker!.apply(item, item.worktree, result, { keepOthers: false })
     await startNext()
     return found(store, id)

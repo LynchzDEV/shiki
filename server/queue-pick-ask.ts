@@ -8,6 +8,8 @@ import type { PickAsk, QueueItem, QueuePick } from './queue-store'
 export type PickIn = 'clickup' | 'shikidan'
 export type PickReplyEvent = { event: 'picked'; replyId: string; option: string; by: string } | { event: 'pick-unclear'; replyId: string; text: string; by: string }
 
+const ASK_LOOKBACK_MS = 60_000
+export const askCursor = (ask: PickAsk): string => ask.since ?? String(ask.postedAt - ASK_LOOKBACK_MS)
 const MAX_REASON_LINE = 200
 const firstLineOf = (text: string): string => (text.split('\n').find(line => line.trim() !== '') ?? '').trim().slice(0, MAX_REASON_LINE)
 const ACKNOWLEDGEMENT = '✅ รับทราบครับ'
@@ -45,9 +47,13 @@ export function askLines(pick: QueuePick, host: string): string[] {
   return [`รบกวนช่วยเลือกหน่อยครับว่าจะให้เป็นแบบไหนครับ https://${host}`, ...options]
 }
 
-const choiceOf = (verdict: Exclude<PickReply, { kind: 'unclear' }>): PickChoice => {
-  if (verdict.kind === 'pick') return { option: verdict.option, note: verdict.note }
-  return verdict.kind === 'keep' ? { option: KEEP_PICK, note: verdict.note } : { option: NO_PICK, feedback: verdict.feedback }
+type Decisive = Exclude<PickReply, { kind: 'unclear' }>
+
+function choiceFromThread(decided: { reply: SourceReply; verdict: Decisive }, thread: readonly SourceReply[]): PickChoice {
+  const own = decided.verdict.kind === 'none' ? decided.verdict.feedback : decided.verdict.note
+  const ordered = thread.some(reply => reply.id === decided.reply.id) ? thread : [...thread, decided.reply]
+  const text = ordered.map(reply => (reply.id === decided.reply.id ? own : reply.text.trim())).filter(part => part !== '').join('\n\n')
+  return decided.verdict.kind === 'none' ? { option: NO_PICK, feedback: text } : { option: decided.verdict.kind === 'keep' ? KEEP_PICK : decided.verdict.option, note: text }
 }
 
 const confirmation = (choice: PickChoice): string => {
@@ -163,6 +169,16 @@ export function pickAsker(deps: QueueEngineDeps, steps: PickAskerSteps): PickAsk
       .catch(error => console.error(`Queue item ${item.id} acknowledgements not saved`, error))
   }
 
+  async function ownerThread(item: QueueItem, judged: (reply: SourceReply) => boolean): Promise<SourceReply[] | null> {
+    try {
+      const { replies } = await deps.source(item.source).replies({ id: item.externalId, sinceId: askCursor(item.pick!.ask!) })
+      return replies.filter(judged).filter((reply, at, all) => all.findIndex(other => other.id === reply.id) === at)
+    } catch (error) {
+      console.error(`Queue item ${item.id} earlier replies not read, using the deciding reply only`, error)
+      return null
+    }
+  }
+
   async function apply(item: QueueItem, worktree: string, result: SourceReplies, { keepOthers = true }: { keepOthers?: boolean } = {}): Promise<boolean> {
     const asked = item.pick!.ask!
     await acknowledge(item, result.replies)
@@ -171,11 +187,11 @@ export function pickAsker(deps: QueueEngineDeps, steps: PickAskerSteps): PickAsk
     if (keepOthers && others.length > 0) await steps.keep(item, worktree, others).catch(error => console.error(`Queue item ${item.id} replies not saved`, error))
     const extraNone = await deps.pickNonePhrases?.() ?? []
     const extraKeep = await deps.pickKeepPhrases?.() ?? []
-    let decided: { reply: SourceReply; choice: PickChoice } | undefined
+    let decided: { reply: SourceReply; verdict: Decisive } | undefined
     const unclear: SourceReply[] = []
     for (const reply of result.replies.filter(judged).reverse()) {
       const verdict = parsePickReply(reply.text, item.pick!.options, extraNone, extraKeep)
-      if (verdict.kind !== 'unclear') { decided = { reply, choice: choiceOf(verdict) }; break }
+      if (verdict.kind !== 'unclear') { decided = { reply, verdict }; break }
       unclear.unshift(reply)
     }
     for (const reply of unclear) deps.notify?.(item, { event: 'pick-unclear', replyId: reply.id, text: reply.text, by: reply.author })
@@ -185,14 +201,15 @@ export function pickAsker(deps: QueueEngineDeps, steps: PickAskerSteps): PickAsk
       if (latest !== undefined) deps.needsYou(store.get(item.id) ?? item, `ClickUp reply not understood: "${firstLineOf(latest.text)}"`, { webhook: false })
       return false
     }
+    const choice = choiceFromThread(decided, await ownerThread(item, judged) ?? [decided.reply])
     try {
-      await steps.pickNow(item.id, decided.choice)
+      await steps.pickNow(item.id, choice)
     } catch (error) {
       deps.needsYou(store.get(item.id) ?? item, `Could not use the ClickUp reply "${decided.reply.text}": ${message(error)}`)
       return false
     }
-    await close(item, decided.choice)
-    deps.notify?.(store.get(item.id) ?? item, { event: 'picked', replyId: decided.reply.id, option: decided.choice.option, by: decided.reply.author })
+    await close(item, choice)
+    deps.notify?.(store.get(item.id) ?? item, { event: 'picked', replyId: decided.reply.id, option: choice.option, by: decided.reply.author })
     return true
   }
 

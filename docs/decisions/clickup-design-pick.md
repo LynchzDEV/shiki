@@ -225,6 +225,14 @@ Owners also answer "keep the current design, it is just a bug fix". `keep` is a 
 - **The pick page in the browser is unchanged.** It builds its choices from the item's options plus none, so keep never shows there and nothing in it branches on a keep value.
 - **Confirmation** posted on close: `รับทราบครับ ใช้แบบเดิม (NOW) ไม่ปรับ UI แก้บั๊กอย่างเดียว`.
 
+## Every owner reply since the ask goes into the pick
+
+An owner reply read on an earlier poll and judged unclear used to be lost: only the deciding reply reached the pick. When `apply` decides none, keep or a letter, it now reads the thread once more from the ask cursor (`ask.since`, or `postedAt - 60 000`, the same cursor `reread` uses) and builds the text from every reply by the owner or the bot account, oldest first, one copy per id. Other people's replies are left out.
+
+- **none** puts the text in the feedback; the matched phrase is stripped only from the deciding reply.
+- **keep and letters** put the text in the note. The deciding reply contributes its note (the whole reply for keep, the lines after the letter for a letter); earlier replies are joined as written, with a blank line between.
+- **A failed extra read is logged and ignored.** The pick goes through with the deciding reply only, as before. `lastSeenId` is handled exactly as before.
+
 ## Rollout order
 
 The ClickUp plugin goes first, then core, then fixstack. Core needs `people`, `resolve` and `authorId`. Without them, every ask fails into the `publish-failed` path and the pick falls back to Shikidan.

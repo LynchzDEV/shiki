@@ -1,11 +1,11 @@
-import { afterEach, beforeEach, expect, test } from 'bun:test'
+import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { QueueRefusal, SourceFailure, type QueueEngineDeps } from '../server/queue-engine'
 import { askLines, type PickReplyEvent } from '../server/queue-pick-ask'
-import type { QueueSource, SourceReplies } from '../server/queue-source'
+import type { QueueSource, SourceReplies, SourceReply } from '../server/queue-source'
 import type { QueueItem } from '../server/queue-store'
 import { createAttentionStore } from '../server/attention'
 import { createNotifyEvents } from '../server/notify-events'
@@ -553,6 +553,62 @@ test('extra keep phrases from the settings turn a reply into keep', async () => 
   h.replies.set('1', async () => h.from(KAN, 'c9', 'ใช้ของเดิม พอ'))
   await h.engine.checkReplies()
   expect(await pickFile(h.store.get(h.id)!)).toContain('Option: keep\n')
+})
+
+function threaded() {
+  const thread: SourceReply[] = []
+  const reads: Array<string | null> = []
+  let failEarlier = false
+  const source: Partial<QueueSource> = {
+    replies: async ({ sinceId }) => {
+      reads.push(sinceId)
+      if (failEarlier && sinceId === 'c1') throw new Error('ClickUp is down')
+      const at = thread.findIndex(entry => entry.id === sinceId)
+      const fresh = at === -1 ? thread : thread.slice(at + 1)
+      return { replies: fresh, lastId: fresh.at(-1)?.id ?? null }
+    },
+  }
+  return { thread, reads, source, failEarlierRead: () => { failEarlier = true } }
+}
+
+const twoPolls = async (first: string, second: string) => {
+  const t = threaded()
+  const h = await parked({ source: t.source })
+  t.thread.push(...reply('c9', first, KAN.author, KAN.id).replies, ...reply('c10', 'someone else chimes in', MAC.author, MAC.id).replies)
+  await h.engine.checkReplies()
+  expect(h.store.get(h.id)!.state).toBe('waiting-pick')
+  t.thread.push(...reply('c11', second, KAN.author, KAN.id).replies)
+  return { ...h, ...t }
+}
+
+test('an unclear owner reply on one poll and a none reply on the next: both texts reach the feedback, oldest first', async () => {
+  const h = await twoPolls('ผมงงครับ asdf', 'ไม่เอาสักแบบ ทับเว็บเลย')
+  await h.engine.checkReplies()
+  expect(await pickFile(h.store.get(h.id)!)).toContain('Option: none\n')
+  expect(await pickFile(h.store.get(h.id)!)).toContain('> ผมงงครับ asdf\n>\n> ทับเว็บเลย\n')
+  expect(await pickFile(h.store.get(h.id)!)).not.toContain('someone else')
+  expect(h.reads.at(-1)).toBe('c1')
+})
+
+test('an unclear owner reply then a keep reply: the keep note holds both texts', async () => {
+  const h = await twoPolls('แก้ยังไงดี', 'เหมือน NOW เลย แก้บั๊กอย่างเดียว')
+  await h.engine.checkReplies()
+  expect(await pickFile(h.store.get(h.id)!)).toContain('Option: keep\nTester: (not set)\nNote: แก้ยังไงดี เหมือน NOW เลย แก้บั๊กอย่างเดียว\n')
+})
+
+test('an unclear owner reply then a letter reply: the pick note holds the earlier text and the lines after the letter', async () => {
+  const h = await twoPolls('ขอดูอีกที', 'C ครับ\nปุ่มใหญ่ขึ้นหน่อย')
+  await h.engine.checkReplies()
+  expect(await pickFile(h.store.get(h.id)!)).toContain('Option: C\nTester: (not set)\nNote: ขอดูอีกที ปุ่มใหญ่ขึ้นหน่อย\n')
+})
+
+test('when the extra read fails the pick still goes through with the deciding reply only', async () => {
+  const quiet = spyOn(console, 'error').mockImplementation(() => {})
+  const h = await twoPolls('ผมงงครับ asdf', 'ไม่เอาสักแบบ ทับเว็บเลย')
+  h.failEarlierRead()
+  await h.engine.checkReplies()
+  quiet.mockRestore()
+  expect(await pickFile(h.store.get(h.id)!)).toContain('Note: (none)\n\n## Feedback on all variants\n> ทับเว็บเลย\n')
 })
 
 const withoutSince = async (h: Awaited<ReturnType<typeof parked>>, postedAt: number) => {
