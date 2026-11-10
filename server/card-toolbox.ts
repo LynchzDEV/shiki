@@ -1,14 +1,14 @@
 import { createHash } from 'node:crypto'
-import { appendFile, mkdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 
-import { logSecrets, redactAll } from './log-redaction'
+import { appendAuditLine, auditDirOf, auditLines } from './audit-log'
+import { logSecrets } from './log-redaction'
 import type { QueueEngine } from './queue-engine'
 import { normalPickOption, NO_PICK } from './queue-prompts'
 import { QueueRefusal } from './queue-refusal'
 import type { ActionKey, CardLease, QueueItem, QueueState, QueueStore } from './queue-store'
-import { configDir, readConfig } from './secrets'
+import { readConfig } from './secrets'
 import { QUEUE_STATES } from './workflows'
 
 export type Actor = string
@@ -30,6 +30,7 @@ export type AuditLine = {
 export type CardLimits = Record<Exclude<ActionName, 'show'>, number>
 export const DEFAULT_CARD_LIMITS: CardLimits = { note: 10, resume: 3, repost: 2, say: 5, pick: 3, requeue: 3, reread: 5, answer: 5, stop: 3 }
 export const HUMAN: Actor = 'human'
+export const actorSchema = z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/)
 export const MIN_LEASE_MS = 60_000
 export const MAX_LEASE_MS = 4 * 60 * 60_000
 
@@ -133,13 +134,6 @@ function table(deps: Required<Pick<ToolboxDeps, 'engine'>> & { show(item: QueueI
   return new Map(actions.map(action => [action.name, action]))
 }
 
-function redacted(value: unknown, secrets: ReadonlyArray<string | null>): unknown {
-  if (typeof value === 'string') return redactAll(value, secrets)
-  if (Array.isArray(value)) return value.map(entry => redacted(entry, secrets))
-  if (value !== null && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, redacted(entry, secrets)]))
-  return value
-}
-
 const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 const isLimited = (name: ActionName): name is keyof CardLimits => Object.hasOwn(DEFAULT_CARD_LIMITS, name)
 const live = (lease: CardLease | undefined, at: number): lease is CardLease => lease !== undefined && lease.until > at
@@ -148,7 +142,7 @@ const heldBy = (lease: CardLease): QueueRefusal => new QueueRefusal(`${lease.hol
 export function cardToolbox(deps: ToolboxDeps): CardToolbox {
   const { store, engine } = deps
   const now = deps.now ?? Date.now
-  const auditDir = deps.auditDir ?? join(configDir(), 'queue-audit')
+  const auditDir = deps.auditDir ?? auditDirOf()
   const secrets = deps.secrets ?? logSecrets
   let lane: Promise<unknown> = Promise.resolve()
   const serial = <T>(work: () => Promise<T>): Promise<T> => {
@@ -162,25 +156,14 @@ export function cardToolbox(deps: ToolboxDeps): CardToolbox {
     return join(auditDir, `${cardId}.jsonl`)
   }
 
-  async function rawLines(cardId: string): Promise<string[]> {
-    try {
-      return (await readFile(auditPath(cardId), 'utf8')).split('\n').filter(line => line !== '')
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
-      throw error
-    }
-  }
+  const rawLines = (cardId: string): Promise<string[]> => auditLines(auditPath(cardId))
 
   async function history(cardId: string, limit = MAX_HISTORY): Promise<AuditLine[]> {
     return (await rawLines(cardId)).slice(-Math.max(1, Math.min(limit, MAX_HISTORY))).map(line => JSON.parse(line) as AuditLine)
   }
 
   async function audit(entry: Omit<AuditLine, 'prev' | 'at'>): Promise<void> {
-    const known = await secrets()
-    const last = (await rawLines(entry.cardId)).at(-1)
-    const line: AuditLine = { at: now(), ...entry, why: redactAll(entry.why, known), params: redacted(entry.params, known), ...(entry.error === undefined ? {} : { error: redactAll(entry.error, known) }), prev: last === undefined ? '' : sha256(last) }
-    await mkdir(auditDir, { recursive: true, mode: 0o700 })
-    await appendFile(auditPath(entry.cardId), `${JSON.stringify(line)}\n`, { mode: 0o600 })
+    await appendAuditLine(auditPath(entry.cardId), entry, await secrets(), now())
   }
 
   const runOf = (item: QueueItem): ToolboxRun | null => {

@@ -161,8 +161,8 @@ const LIMITED_ACTIONS = ['note', 'resume', 'repost', 'say', 'pick', 'requeue', '
 const DURATION = /^(\d+)(s|m|h)$/
 const UNIT_MS: Record<string, number> = { s: 1000, m: 60_000, h: 3_600_000 }
 
-const actorOf = (ctx: Context): string => stringOpt(ctx, 'as') ?? readEnv('ACTOR', ctx.env) ?? 'human'
-const whyOf = (ctx: Context): string => stringOpt(ctx, 'why') ?? 'cli'
+export const actorOf = (ctx: Context): string => stringOpt(ctx, 'as') ?? readEnv('ACTOR', ctx.env) ?? 'human'
+export const whyOf = (ctx: Context): string => stringOpt(ctx, 'why') ?? 'cli'
 
 function perform(ctx: Context, action: string, params: Json): Promise<unknown> {
   const key = stringOpt(ctx, 'key')

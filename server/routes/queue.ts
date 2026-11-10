@@ -3,7 +3,7 @@ import { z } from 'zod'
 
 import { requireLocal, type GuardContext } from '../auth'
 import { peerAddress, trustedHostRequest } from '../local-access'
-import { cardToolbox, DEFAULT_CARD_LIMITS, HUMAN, type ActionMeta, type ActionName, type CardShow, type CardToolbox } from '../card-toolbox'
+import { actorSchema, cardToolbox, DEFAULT_CARD_LIMITS, HUMAN, type ActionMeta, type ActionName, type CardShow, type CardToolbox } from '../card-toolbox'
 import { QueueRefusal, SourceFailure, type QueueEngine } from '../queue-engine'
 import { cleanPickSummary } from '../queue-prompts'
 import type { QueueItem, QueueStore } from '../queue-store'
@@ -32,7 +32,7 @@ const addSchema = z.object({
 const ACTOR_RULE = 'actor is a short lowercase name such as human, grok or doctor'
 const doSchema = z.object({
   params: z.unknown().optional(),
-  actor: z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/),
+  actor: actorSchema,
   why: z.string().trim().min(1).max(1000),
   key: z.string().regex(/^[\w.:-]{1,100}$/).optional(),
   expect: z.enum(QUEUE_STATES).optional(),

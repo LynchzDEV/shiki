@@ -12,6 +12,7 @@ import { badAppleCommands } from './commands/badapple'
 import { clickupCommands } from './commands/clickup'
 import { jobCommands } from './commands/jobs'
 import { pluginCommands } from './commands/plugins'
+import { messageCommands } from './commands/messages'
 import { queueCommands } from './commands/queue'
 import { studioCommands } from './commands/studio'
 import { notifyCommands } from './commands/notify'
@@ -31,7 +32,7 @@ export type MainDeps = {
   pollMs?: number
 }
 
-export const COMMANDS: Command[] = [...systemCommands, ...jobCommands, ...studioCommands, ...pluginCommands, ...clickupCommands, ...queueCommands, ...notifyCommands, ...badAppleCommands]
+export const COMMANDS: Command[] = [...systemCommands, ...jobCommands, ...studioCommands, ...pluginCommands, ...clickupCommands, ...queueCommands, ...messageCommands, ...notifyCommands, ...badAppleCommands]
 
 const GLOBAL_OPTIONS: Record<string, OptionSpec> = {
   url: { type: 'string', description: `Shikidan URL (default: $SKD_URL, then ${DEFAULT_URL})`, placeholder: 'URL' },

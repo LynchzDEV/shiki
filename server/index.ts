@@ -42,6 +42,7 @@ import { cardImageFiles, writeQueueContext } from './queue-files'
 import { pluginSource } from './queue-source'
 import { createQueueStore, queuePath } from './queue-store'
 import { queueRoutes } from './routes/queue'
+import { humanSettingsRoutes } from './routes/human-settings'
 import { queueTree } from './queue-tree'
 import { prepareRepoWorkspace, registerQueueWorkspaces } from './repo-workspace'
 import { terminalsRoutes } from './routes/terminals'
@@ -351,6 +352,7 @@ export async function createApp(): Promise<Elysia> {
     .use(modelsRoutes)
     .use(providersRoutes)
     .use(pluginsRoutes())
+    .use(humanSettingsRoutes())
     .use(queueRoutes(queueStore, queueEngine, () => queueTree(queueStore.list()), { get: id => workflowRunner.get(id), subscribe: runEvents.subscribe }, settings => sweepRepliesEvery(settings.replyPollMinutes), cardToolbox({
       store: queueStore,
       engine: queueEngine,

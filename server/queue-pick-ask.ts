@@ -1,5 +1,6 @@
 import type { PickChoice, QueueEngineDeps } from './queue-engine'
 import { parsePickReply, pickOwner, type CardPeople, type Person, type PickReply } from './queue-pick-reply'
+import { message as template, messageLines } from './messages'
 import { cleanPickSummary, KEEP_PICK, NO_PICK } from './queue-prompts'
 import { message } from './queue-replies'
 import type { SourceReplies, SourceReply } from './queue-source'
@@ -12,15 +13,7 @@ const ASK_LOOKBACK_MS = 60_000
 export const askCursor = (ask: PickAsk): string => ask.since ?? String(ask.postedAt - ASK_LOOKBACK_MS)
 const MAX_REASON_LINE = 200
 const firstLineOf = (text: string): string => (text.split('\n').find(line => line.trim() !== '') ?? '').trim().slice(0, MAX_REASON_LINE)
-const ACKNOWLEDGEMENT = '✅ รับทราบครับ'
 const MAX_ACKED = 50
-const clarifyLines = (options: readonly string[]): string[] => [
-  'ขอโทษครับ ยังไม่แน่ใจว่าเลือกแบบไหน รบกวนตอบใหม่อีกครั้งครับ',
-  `- ตอบเป็นตัวอักษร: ${options.join(' / ')}`,
-  '- หรือ "ไม่เอาสักแบบ" ตามด้วยสิ่งที่อยากได้',
-  '- หรือ "เหมือน NOW" ถ้าไม่ต้องปรับ UI แก้บั๊กอย่างเดียว',
-]
-const RECOMMENDED = ' (แนะนำ)'
 const OPTIONS_HEADING = /^##\s+options\s*:?\s*$/i
 const HEADING = /^##\s/
 const BULLET = /^\s*[-*]\s+(.*)$/
@@ -44,14 +37,15 @@ function optionLine(section: readonly string[], option: string): string {
   return option
 }
 
-export function askLines(pick: QueuePick, host: string): string[] {
+export function optionLines(pick: QueuePick): string[] {
   const section = optionsSection(cleanPickSummary(pick.summary))
-  const options = pick.options.map(option => {
+  return pick.options.map(option => {
     const text = optionLine(section, option)
-    return option === pick.recommended ? `${text}${RECOMMENDED}` : text
+    return option === pick.recommended ? `${text}${template('recommended')}` : text
   })
-  return [`รบกวนช่วยเลือกหน่อยครับว่าจะให้เป็นแบบไหนครับ https://${host}`, ...options]
 }
+
+export const askLines = (pick: QueuePick, host: string): string[] => [...messageLines('ask-header', { host }), ...optionLines(pick)]
 
 type Decisive = Exclude<PickReply, { kind: 'unclear' }>
 
@@ -62,9 +56,9 @@ function choiceFromThread(decided: { reply: SourceReply; verdict: Decisive }, th
   return decided.verdict.kind === 'none' ? { option: NO_PICK, feedback: text } : { option: decided.verdict.kind === 'keep' ? KEEP_PICK : decided.verdict.option, note: text }
 }
 
-const confirmation = (choice: PickChoice): string => {
-  if (choice.option === NO_PICK) return 'ได้ครับ จะทำแบบใหม่ตามนี้ครับ'
-  return choice.option === KEEP_PICK ? 'รับทราบครับ ใช้แบบเดิม (NOW) ไม่ปรับ UI แก้บั๊กอย่างเดียว' : `ได้ครับ ใช้แบบ ${choice.option}`
+const confirmation = (choice: PickChoice): string[] => {
+  if (choice.option === NO_PICK) return messageLines('confirm-none')
+  return choice.option === KEEP_PICK ? messageLines('confirm-keep') : messageLines('confirm-pick', { option: choice.option })
 }
 
 export type PickAsker = {
@@ -152,7 +146,7 @@ export function pickAsker(deps: QueueEngineDeps, steps: PickAskerSteps): PickAsk
     const logged = (what: string) => (error: unknown): void => console.error(`Queue item ${item.id} ${what}`, error)
     try {
       const source = deps.source(item.source)
-      if (choice !== undefined) await source.post({ id: item.externalId, kind: 'update', lines: [confirmation(choice)] }).catch(logged('pick confirmation not posted'))
+      if (choice !== undefined) await source.post({ id: item.externalId, kind: 'update', lines: confirmation(choice) }).catch(logged('pick confirmation not posted'))
       await source.resolve({ id: item.externalId, ref: item.pick!.ask!.ref }).catch(logged('pick ask not resolved'))
     } catch (error) {
       logged('pick ask not closed')(error)
@@ -167,7 +161,7 @@ export function pickAsker(deps: QueueEngineDeps, steps: PickAskerSteps): PickAsk
     const source = deps.source(item.source)
     for (const reply of fresh) {
       try {
-        await source.reply({ id: item.externalId, ref: asked.ref, lines: [ACKNOWLEDGEMENT] })
+        await source.reply({ id: item.externalId, ref: asked.ref, lines: messageLines('ack') })
         acked.add(reply.id)
       } catch (error) {
         console.error(`Queue item ${item.id} acknowledgement of reply ${reply.id} not posted`, error)
@@ -183,7 +177,7 @@ export function pickAsker(deps: QueueEngineDeps, steps: PickAskerSteps): PickAsk
   async function clarify(item: QueueItem, replies: readonly SourceReply[]): Promise<boolean> {
     const asked = item.pick!.ask!
     try {
-      await deps.source(item.source).reply({ id: item.externalId, ref: asked.ref, lines: clarifyLines(item.pick!.options) })
+      await deps.source(item.source).reply({ id: item.externalId, ref: asked.ref, lines: messageLines('clarify', { options: item.pick!.options.join(' / ') }) })
     } catch (error) {
       console.error(`Queue item ${item.id} clarifying reply not posted`, error)
       return false

@@ -840,6 +840,40 @@ Remove an item that is not building.
 .TP
 .B shiki queue check
 Check sources for replies now instead of waiting for the next check.
+.SH CLICKUP MESSAGES
+The fixed texts Shikidan posts in a ClickUp pick thread are files a human
+can edit:
+.BR ack ,
+.BR clarify " (slot " {options} ),
+.BR confirm\-none ,
+.BR confirm\-keep ,
+.BR confirm\-pick " (slot " {option} ),
+.BR ask\-header " (slot " {host} )
+and
+.BR recommended .
+An edited text lives in
+.IR messages/<name>.md ;
+a missing, empty or over 2000 character file means the built-in default.
+Slots are filled from the card, never from a reply; any other
+.I {word}
+is left as it is. Every change, and every refused one, is written to
+.IR queue\-audit/_settings.jsonl .
+.TP
+.B shiki messages list
+Each message, whether it is edited, its slots and its current text.
+.TP
+.BI "shiki messages show " name
+A message's current text, its slots and, when edited, its default.
+.TP
+.BI "shiki messages set " name " \fB\-\-file\fR \fIFILE\fR [\fB\-\-as\fR \fINAME\fR] [\fB\-\-why\fR \fITEXT\fR]"
+Replace a message with the text of
+.IR FILE .
+Human only: any other
+.B \-\-as
+is refused with 403.
+.TP
+.BI "shiki messages reset " name " \fR[\fB\-\-as\fR \fINAME\fR] [\fB\-\-why\fR \fITEXT\fR]"
+Go back to the built-in default. Human only.
 .SH JUST FOR FUN
 .TP
 .B shiki badapple
