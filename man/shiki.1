@@ -681,8 +681,9 @@ When the flow's plugin has its
 setting on, the queue takes the recommended variant itself, alerts
 .RI "Auto-picked " option
 and keeps building; a pick with no recommended variant still waits for you.
-A ClickUp reply that is not understood is never dropped silently: the item
-shows up in
+A ClickUp reply that is not understood is never dropped silently: Shikidan
+answers once in the ask thread with the choices (and keeps reading from that
+reply until the answer is posted), the item shows up in
 .B shiki attention
 with the reply text and one
 .B pick\-unclear

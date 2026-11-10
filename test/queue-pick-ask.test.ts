@@ -842,3 +842,76 @@ test('the same free text from the bot account is not a rejection while the owner
   expect(h.store.get(h.id)!.state).toBe('waiting-pick')
   expect(h.notices.map(notice => notice.event)).toEqual(['pick-unclear'])
 })
+
+const CLARIFY = [
+  'ขอโทษครับ ยังไม่แน่ใจว่าเลือกแบบไหน รบกวนตอบใหม่อีกครั้งครับ',
+  '- ตอบเป็นตัวอักษร: A / B / C',
+  '- หรือ "ไม่เอาสักแบบ" ตามด้วยสิ่งที่อยากได้',
+  '- หรือ "เหมือน NOW" ถ้าไม่ต้องปรับ UI แก้บั๊กอย่างเดียว',
+]
+const clarifications = (h: { replied: Array<{ lines: string[] }> }) => h.replied.filter(sent => sent.lines[0] === CLARIFY[0])
+const notUnderstood = (h: { needs: Array<{ reason: string }> }) => h.needs.filter(need => need.reason.startsWith('ClickUp reply not understood'))
+
+test('a gibberish owner reply is acknowledged, then answered once with the choices, and is never silent', async () => {
+  const h = await parked()
+  h.replies.set('1', async () => h.from(KAN, 'c9', 'asdf'))
+  await h.engine.checkReplies()
+  expect(h.replied).toEqual([{ id: '1', ref: 'ref-1', lines: [ACK] }, { id: '1', ref: 'ref-1', lines: CLARIFY }])
+  expect(h.store.get(h.id)!.pick!.ask!.clarified).toEqual(['c9'])
+  expect(h.store.get(h.id)).toMatchObject({ state: 'waiting-pick', lastSeenId: 'c9' })
+  expect(notUnderstood(h)).toHaveLength(1)
+})
+
+test('reading the same unclear reply again asks nothing more and notifies nobody again', async () => {
+  const h = await parked()
+  h.replies.set('1', async () => h.from(KAN, 'c9', 'asdf'))
+  await h.engine.checkReplies()
+  await h.engine.reread(h.id)
+  await h.engine.reread(h.id)
+  expect(clarifications(h)).toHaveLength(1)
+  expect(notUnderstood(h)).toHaveLength(1)
+  expect(h.notices.map(notice => notice.event)).toEqual(['pick-unclear'])
+})
+
+test('several unclear replies in one batch get one clarifying reply, and all of them are marked', async () => {
+  const h = await parked()
+  h.replies.set('1', async () => ({ replies: [...h.from(KAN, 'c6', 'asdf').replies, ...h.from(KAN, 'c7', 'qwer').replies], lastId: 'c7' }))
+  await h.engine.checkReplies()
+  expect(clarifications(h)).toHaveLength(1)
+  expect(h.store.get(h.id)!.pick!.ask!.clarified).toEqual(['c6', 'c7'])
+})
+
+test('when the clarifying reply cannot be posted the cursor stays before the unclear reply, the alert is raised, and the next read retries', async () => {
+  const quiet = spyOn(console, 'error').mockImplementation(() => {})
+  let failing = true
+  const sent: string[][] = []
+  const h = await parked({ source: { reply: async input => { if (failing && input.lines[0] === CLARIFY[0]) throw new Error('ClickUp is down'); sent.push(input.lines); return { commentId: 'r' } } } })
+  h.replies.set('1', async () => ({ replies: [...h.from(MAC, 'c8', 'ผมว่า A').replies, ...h.from(KAN, 'c9', 'asdf').replies, ...h.from(MAC, 'c10', 'ok').replies], lastId: 'c10' }))
+  await h.engine.checkReplies()
+  expect(h.store.get(h.id)!.lastSeenId).toBe('c8')
+  expect(h.store.get(h.id)!.pick!.ask!.clarified).toBeUndefined()
+  expect(notUnderstood(h)).toHaveLength(1)
+  failing = false
+  await h.engine.checkReplies()
+  quiet.mockRestore()
+  expect(sent.filter(lines => lines[0] === CLARIFY[0])).toEqual([CLARIFY])
+  expect(h.store.get(h.id)).toMatchObject({ lastSeenId: 'c10' })
+  expect(h.store.get(h.id)!.pick!.ask!.clarified).toEqual(['c9'])
+})
+
+test('a failed clarifying reply for the first reply of the batch leaves the cursor where it was', async () => {
+  const quiet = spyOn(console, 'error').mockImplementation(() => {})
+  const h = await parked({ source: { reply: async input => { if (input.lines[0] === CLARIFY[0]) throw new Error('ClickUp is down'); return { commentId: 'r' } } } })
+  h.replies.set('1', async () => h.from(KAN, 'c9', 'asdf'))
+  await h.engine.checkReplies()
+  quiet.mockRestore()
+  expect(h.store.get(h.id)!.lastSeenId).toBe('c1')
+})
+
+test('a decided pick sends no clarifying reply, even with an older unclear reply in the batch', async () => {
+  const h = await parked()
+  batch(h, 'asdf', 'B')
+  await h.engine.checkReplies()
+  expect(clarifications(h)).toHaveLength(0)
+  expect(await pickFile(h.store.get(h.id)!)).toContain('Option: B\n')
+})

@@ -14,6 +14,12 @@ const MAX_REASON_LINE = 200
 const firstLineOf = (text: string): string => (text.split('\n').find(line => line.trim() !== '') ?? '').trim().slice(0, MAX_REASON_LINE)
 const ACKNOWLEDGEMENT = '✅ รับทราบครับ'
 const MAX_ACKED = 50
+const clarifyLines = (options: readonly string[]): string[] => [
+  'ขอโทษครับ ยังไม่แน่ใจว่าเลือกแบบไหน รบกวนตอบใหม่อีกครั้งครับ',
+  `- ตอบเป็นตัวอักษร: ${options.join(' / ')}`,
+  '- หรือ "ไม่เอาสักแบบ" ตามด้วยสิ่งที่อยากได้',
+  '- หรือ "เหมือน NOW" ถ้าไม่ต้องปรับ UI แก้บั๊กอย่างเดียว',
+]
 const RECOMMENDED = ' (แนะนำ)'
 const OPTIONS_HEADING = /^##\s+options\s*:?\s*$/i
 const HEADING = /^##\s/
@@ -72,6 +78,11 @@ export type PickAsker = {
 export type PickAskerSteps = {
   pickNow(id: string, choice: PickChoice): Promise<void>
   keep(item: QueueItem, worktree: string, replies: SourceReply[]): Promise<void>
+}
+
+function heldCursor(item: QueueItem, replies: readonly SourceReply[], firstUnclear: SourceReply): string | null {
+  const at = replies.findIndex(reply => reply.id === firstUnclear.id)
+  return at > 0 ? replies[at - 1]!.id : item.lastSeenId
 }
 
 export const POSSIBLY_POSTED = 'The ClickUp question may have been posted before a restart; check the card'
@@ -169,6 +180,22 @@ export function pickAsker(deps: QueueEngineDeps, steps: PickAskerSteps): PickAsk
       .catch(error => console.error(`Queue item ${item.id} acknowledgements not saved`, error))
   }
 
+  async function clarify(item: QueueItem, replies: readonly SourceReply[]): Promise<boolean> {
+    const asked = item.pick!.ask!
+    try {
+      await deps.source(item.source).reply({ id: item.externalId, ref: asked.ref, lines: clarifyLines(item.pick!.options) })
+    } catch (error) {
+      console.error(`Queue item ${item.id} clarifying reply not posted`, error)
+      return false
+    }
+    const current = store.get(item.id)
+    if (current?.pick?.ask === undefined) return true
+    const clarified = [...(current.pick.ask.clarified ?? []), ...replies.map(reply => reply.id)].slice(-MAX_ACKED)
+    await store.update(item.id, { pick: { ...current.pick, ask: { ...current.pick.ask, clarified } } })
+      .catch(error => console.error(`Queue item ${item.id} clarified replies not saved`, error))
+    return true
+  }
+
   async function ownerThread(item: QueueItem, judged: (reply: SourceReply) => boolean): Promise<SourceReply[] | null> {
     try {
       const { replies } = await deps.source(item.source).replies({ id: item.externalId, sinceId: askCursor(item.pick!.ask!) })
@@ -194,10 +221,13 @@ export function pickAsker(deps: QueueEngineDeps, steps: PickAskerSteps): PickAsk
       if (verdict.kind !== 'unclear') { decided = { reply, verdict }; break }
       unclear.unshift(reply)
     }
-    for (const reply of unclear) deps.notify?.(item, { event: 'pick-unclear', replyId: reply.id, text: reply.text, by: reply.author })
-    if (result.lastId !== null) await store.update(item.id, { lastSeenId: result.lastId })
+    const pending = unclear.filter(reply => !(asked.clarified ?? []).includes(reply.id))
+    for (const reply of pending) deps.notify?.(item, { event: 'pick-unclear', replyId: reply.id, text: reply.text, by: reply.author })
+    const clarified = decided !== undefined || pending.length === 0 || await clarify(item, pending)
+    const cursor = clarified ? result.lastId : heldCursor(item, result.replies, pending[0]!)
+    if (cursor !== null) await store.update(item.id, { lastSeenId: cursor })
     if (decided === undefined) {
-      const latest = unclear.at(-1)
+      const latest = pending.at(-1)
       if (latest !== undefined) deps.needsYou(store.get(item.id) ?? item, `ClickUp reply not understood: "${firstLineOf(latest.text)}"`, { webhook: false })
       return false
     }
