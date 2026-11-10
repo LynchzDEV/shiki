@@ -112,6 +112,7 @@ const explainMissing = (error: unknown): string => message(error)
 const text = (body: string, type: string): Response => new Response(body, { headers: { 'content-type': `${type}; charset=utf-8` } })
 const isConflict = (error: unknown): boolean => error instanceof QueueRefusal && error.status === 409
 const conflictOrMissing = (error: unknown): string => (isConflict(error) ? message(error) : NO_ITEM)
+const missingAsNoItem = (error: unknown): string => (error instanceof QueueRefusal && error.status === 404 ? NO_ITEM : message(error))
 
 function itemsChecksAndRuns(store: QueueStore, engine: QueueEngineRoutes, runs: QueueRunLookup, settings: Set<() => void>): RunEvents {
   return {
@@ -244,6 +245,6 @@ export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: 
     .get('/api/queue/:id/land/:stage/log', ({ params, set }) => refusing(set, async () => text(await engine.landLog(params.id, params.stage), 'text/plain'), explainMissing))
     .get('/api/queue/:id/report', ({ params, set }) => refusing(set, async () => text(await engine.report(params.id), 'text/markdown'), explainMissing))
     .post('/api/queue/:id/requeue', ({ params, body, set }) => act(params.id, 'requeue', body, set))
-    .post('/api/queue/:id/stop', ({ params, set }) => act(params.id, 'stop', {}, set, conflictOrMissing))
+    .post('/api/queue/:id/stop', ({ params, set }) => act(params.id, 'stop', {}, set, missingAsNoItem))
     .delete('/api/queue/:id', ({ params, set }) => refusing(set, async () => { await engine.remove(params.id); return { ok: true } }, conflictOrMissing))
 }

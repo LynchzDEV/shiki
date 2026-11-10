@@ -8,7 +8,7 @@ import { Elysia } from 'elysia'
 import { cardToolbox, type AuditLine, type ToolboxDeps } from '../server/card-toolbox'
 import { QueueRefusal } from '../server/queue-engine'
 import { queueRoutes } from '../server/routes/queue'
-import { parkedItem, queueHarness, refusal, type QueueHarness } from './support/queue-harness'
+import { add, blockedWith, parkedItem, queueHarness, refusal, type QueueHarness } from './support/queue-harness'
 
 const SECRET = 'sk-test-secret-0123456789'
 let dir: string
@@ -314,4 +314,30 @@ test('a card parked to resume at a step keeps it across a restart, and loses it 
   expect(h.restart().store.get(item.id)).toMatchObject({ resumeRunId: 'run-1', resumeAt: { node: 'how', note: 'n' }, lease: { holder: 'grok', until: 5 } })
   await h.store.update(item.id, { state: 'building' })
   expect(h.store.get(item.id)!.resumeAt).toBeUndefined()
+})
+
+test('incidents 1 and 2 on a card waiting on a ClickUp pick: pick none with the owner\'s text, and repost round 2', async () => {
+  const h = queueHarness(dir, { pickIn: async () => 'clickup', publish: async () => ({ sub: '1-ab12cd34', host: '1-ab12cd34.shikidan.com', at: 7 }) })
+  const card = await h.engine.add(add)
+  await h.engine.onRunSettled(h.settle('run-1', { status: 'blocked', attempts: [blockedWith(['pick: A,B | visualizer/login'])] }))
+  expect(h.store.get(card.id)!.pick!.ask!.ref).toBe('ref-1')
+  const toolbox = toolboxOf(h)
+  expect(await toolbox.perform(card.id, 'repost', {}, { actor: 'grok', why: 'round 2 mockups, no new ask' })).toEqual({ state: 'waiting-pick', node: null })
+  expect(h.store.get(card.id)!.pick!.ask!.ref).toBe('ref-2')
+  expect(h.resolved).toEqual([{ id: '1', ref: 'ref-1' }])
+  expect(await toolbox.perform(card.id, 'pick', { option: 'none', feedback: 'ไม่ชอบทั้งสองแบบ อยากได้ปุ่มใหญ่ขึ้น' }, { actor: 'grok', why: 'reject with free text was read as unclear' })).toMatchObject({ node: null })
+  expect(h.store.get(card.id)!.pick).toBeUndefined()
+  expect(h.started).toHaveLength(2)
+  expect((await toolbox.history(card.id)).map(line => `${line.action} ${line.result}`)).toEqual(['repost ok', 'pick ok'])
+})
+
+test('the browser stop route names the holder of a lease instead of calling the card missing', async () => {
+  const h = queueHarness(dir)
+  const card = await h.engine.add(add)
+  const app = appOf(h)
+  expect((await post(app, `/api/queue/${card.id}/claim`, { actor: 'grok', ms: 60_000 })).status).toBe(200)
+  const stopped = await post(app, `/api/queue/${card.id}/stop`, {})
+  expect(stopped.status).toBe(423)
+  expect((await stopped.json()).error).toStartWith('grok holds this card until')
+  expect((await (await post(app, '/api/queue/nope/stop', {})).json()).error).toBe('No such queue item')
 })

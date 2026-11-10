@@ -1497,12 +1497,13 @@ test('a join conflict takes the fail edge, keeps the unjoined branch and the fix
   expect(await readFile(join(repo, 'same.txt'), 'utf8')).toBe('a\n')
 })
 
-test('resumeAt moves a finished run back to a step with a note: same run, earlier attempts as evidence, fresh budget', async () => {
-  const store = await build()
+test('resumeAt moves a failed run back to a step with a note: same run, earlier attempts as evidence, no sent-back, fresh budget', async () => {
+  let calls = 0
+  const store = await build(() => ({ cmd: '/bin/echo', args: [report(calls++ === 2 ? 'fail' : 'pass')], env: {} }))
   const step = (id: string) => ({ id, title: id.toUpperCase(), instructions: `Do ${id}`, maxVisits: 1 })
   await store.save({ ...classicWorkflow(), id: 'line', entry: 'ask', nodes: [step('ask'), step('how'), step('build')], edges: [{ source: 'ask', target: 'how', outcome: 'pass' }, { source: 'how', target: 'build', outcome: 'pass' }] })
   const started = await runner.start({ workflowId: 'line', cwd: repo, request: 'Make it', label: 'line' })
-  expect((await finished(started.id)).status).toBe('done')
+  expect((await finished(started.id)).status).toBe('failed')
   const resumed = await runner.resumeAt(started.id, 'how', 'Operator note from grok: keep NOW; fix the switcher')
   expect(resumed.id).toBe(started.id)
   const done = await finished(started.id)
@@ -1511,6 +1512,7 @@ test('resumeAt moves a finished run back to a step with a note: same run, earlie
   const again = assignmentOf(done.attempts[3]!.prompt)
   expect(again.request).toBe('Make it\n\nOperator note from grok: keep NOW; fix the switcher')
   expect(again.upstreamEvidence.map((input: { node: string }) => input.node)).toEqual(['ask', 'how', 'build'])
+  expect(again.sentBack).toBeUndefined()
   expect(runner.list().filter(run => run.label === 'line')).toHaveLength(1)
 })
 
@@ -1521,7 +1523,8 @@ test('a queue card waiting on a pick resumes at a later step of the same run, wh
   const step = (id: string) => ({ id, title: id.toUpperCase(), instructions: `Do ${id}`, maxVisits: 2 })
   await store.save({ ...classicWorkflow(), id: 'card', entry: 'ask', nodes: [step('ask'), step('how'), step('build')], edges: [{ source: 'ask', target: 'how', outcome: 'pass' }, { source: 'how', target: 'build', outcome: 'pass' }] })
   const h = queueHarness(dir, { runner: { start: (input, context) => runner.start(input, context), get: id => runner.get(id), retry: (id, note) => runner.retry(id, note), resumeAt: (id, nodeId, note) => runner.resumeAt(id, nodeId, note) }, prepareWorktree: async () => ({ worktree: repo }) })
-  runner = createWorkflowRunner({ manager, resolver: () => ({ cmd: '/bin/echo', args: [calls++ === 0 ? picking : report()], env: {} }), store, base: dir, requireApproval: async () => false, onRunSettled: run => { void h.engine.onRunSettled(run) } })
+  const slowly = { cmd: '/bin/sh', args: ['-c', `sleep 0.5; echo '${report()}'`], env: {} }
+  runner = createWorkflowRunner({ manager, resolver: () => (calls++ === 0 ? { cmd: '/bin/echo', args: [picking], env: {} } : slowly), store, base: dir, requireApproval: async () => false, onRunSettled: run => { void h.engine.onRunSettled(run) } })
   const card = await h.engine.add({ source: 'clickup-board', externalId: '6ea3', repo, flowId: 'card' })
   const cardState = async (state: string) => { for (let i = 0; i < 200 && h.store.get(card.id)!.state !== state; i++) await Bun.sleep(20); return h.store.get(card.id)! }
   const parked = await cardState('waiting-pick')
@@ -1538,6 +1541,7 @@ test('a queue card waiting on a pick resumes at a later step of the same run, wh
   const assignment = assignmentOf(run.attempts[1]!.prompt)
   expect(assignment.request).toContain('Operator note from grok: keep current design; fix: switcher on top on every page')
   expect(assignment.upstreamEvidence.map((input: { node: string; outcome: { outcome: string } }) => [input.node, input.outcome.outcome])).toEqual([['ask', 'blocked']])
+  expect(assignment.sentBack).toBeUndefined()
   expect(h.store.get(card.id)!.answerPaths.some(path => path.endsWith('operator-note-1.md'))).toBe(true)
 })
 

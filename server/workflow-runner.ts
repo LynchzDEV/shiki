@@ -1202,7 +1202,7 @@ export function createWorkflowRunner(deps: { manager: JobManager; resolver: Engi
     await reresolve(run)
     delete run.unavailable
     interrupt(run)
-    if (nodeId !== undefined) Object.assign(run.tokens[0]!, { nodeId, state: 'ready', attempt: null })
+    if (nodeId !== undefined) Object.assign(run.tokens[0]!, { nodeId, state: 'ready', attempt: null, from: [] })
     run.budgetFrom = run.attempts.length
     if (!deps.manager.claimWorkspace(run.cwd, run.id)) throw new Error('Workspace already has running work')
     const taken = claimPaths(run)
