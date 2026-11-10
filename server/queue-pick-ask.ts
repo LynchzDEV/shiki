@@ -10,6 +10,8 @@ export type PickReplyEvent = { event: 'picked'; replyId: string; option: string;
 
 const MAX_REASON_LINE = 200
 const firstLineOf = (text: string): string => (text.split('\n').find(line => line.trim() !== '') ?? '').trim().slice(0, MAX_REASON_LINE)
+const ACKNOWLEDGEMENT = '✅ รับทราบครับ'
+const MAX_ACKED = 50
 const RECOMMENDED = ' (แนะนำ)'
 const OPTIONS_HEADING = /^##\s+options\s*:?\s*$/i
 const HEADING = /^##\s/
@@ -135,8 +137,30 @@ export function pickAsker(deps: QueueEngineDeps, steps: PickAskerSteps): PickAsk
     }
   }
 
+  async function acknowledge(item: QueueItem, replies: readonly SourceReply[]): Promise<void> {
+    const asked = item.pick!.ask!
+    const acked = new Set(asked.acked ?? [])
+    const fresh = replies.filter(reply => !acked.has(reply.id))
+    if (fresh.length === 0) return
+    const source = deps.source(item.source)
+    for (const reply of fresh) {
+      try {
+        await source.reply({ id: item.externalId, ref: asked.ref, lines: [ACKNOWLEDGEMENT] })
+        acked.add(reply.id)
+      } catch (error) {
+        console.error(`Queue item ${item.id} acknowledgement of reply ${reply.id} not posted`, error)
+      }
+    }
+    if (acked.size === (asked.acked ?? []).length) return
+    const current = store.get(item.id)
+    if (current?.pick?.ask === undefined) return
+    await store.update(item.id, { pick: { ...current.pick, ask: { ...current.pick.ask, acked: [...acked].slice(-MAX_ACKED) } } })
+      .catch(error => console.error(`Queue item ${item.id} acknowledgements not saved`, error))
+  }
+
   async function apply(item: QueueItem, worktree: string, result: SourceReplies, { keepOthers = true }: { keepOthers?: boolean } = {}): Promise<boolean> {
     const asked = item.pick!.ask!
+    await acknowledge(item, result.replies)
     const judged = (reply: SourceReply): boolean => reply.authorId !== '' && (reply.authorId === asked.ownerId || reply.authorId === asked.meId)
     const others = result.replies.filter(reply => !judged(reply))
     if (keepOthers && others.length > 0) await steps.keep(item, worktree, others).catch(error => console.error(`Queue item ${item.id} replies not saved`, error))

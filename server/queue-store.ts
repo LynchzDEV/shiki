@@ -12,7 +12,7 @@ export const QUEUE_FILE = 'queue.json'
 
 export type QueueState = typeof QUEUE_STATES[number]
 
-export type PickAsk = { ref: string; ownerId: string; ownerName: string; meId: string; host: string | null; postedAt: number; since?: string; posting?: true; error?: string }
+export type PickAsk = { ref: string; ownerId: string; ownerName: string; meId: string; host: string | null; postedAt: number; since?: string; acked?: string[]; posting?: true; error?: string }
 export type QueuePick = { options: string[]; path: string; recommended: string | null; tester: string | null; summary: string; ask?: PickAsk }
 export type LandStageState = {
   status: 'running' | 'ok' | 'failed' | 'waiting' | 'skipped'
@@ -61,7 +61,7 @@ function isPick(value: unknown): boolean {
 function isAsk(value: unknown): boolean {
   if (!isRecord(value)) return false
   const ask = value as Record<string, unknown>
-  return [ask.ref, ask.ownerId, ask.ownerName, ask.meId].every(isText) && isTextOrNull(ask.host) && typeof ask.postedAt === 'number' && (ask.since === undefined || isText(ask.since)) && (ask.posting === undefined || ask.posting === true) && (ask.error === undefined || isText(ask.error))
+  return [ask.ref, ask.ownerId, ask.ownerName, ask.meId].every(isText) && isTextOrNull(ask.host) && typeof ask.postedAt === 'number' && (ask.since === undefined || isText(ask.since)) && (ask.acked === undefined || isTexts(ask.acked)) && (ask.posting === undefined || ask.posting === true) && (ask.error === undefined || isText(ask.error))
 }
 
 function isPublished(value: unknown): boolean {

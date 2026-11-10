@@ -218,3 +218,4 @@ A real reply, "ไม่เอาซักช้อยส์เลย มัน�
 ## Rollout order
 
 The ClickUp plugin goes first, then core, then fixstack. Core needs `people`, `resolve` and `authorId`. Without them, every ask fails into the `publish-failed` path and the pick falls back to Shikidan.
+- **Every reply in the ask thread is acknowledged once.** `apply` posts `✅ รับทราบครับ` inside the thread for each reply it reads (owner, bot account and other people; the plugin already hides Shikidan's own posts), before acting on the pick. The ids are stored on the ask as `acked` (newest 50), so a later poll or `reread` does not repeat it. An id is recorded only after its post succeeded; a failed one is logged and never blocks the pick. A fresh ask starts with an empty list. It is automatic, so it has no command.

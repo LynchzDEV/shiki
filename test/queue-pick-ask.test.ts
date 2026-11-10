@@ -658,3 +658,54 @@ test('reread of the real stuck reply goes straight to a rebuild with its feedbac
   expect(h.posted.filter(post => post.kind === 'update')).toEqual([{ id: '1', kind: 'update', lines: ['ได้ครับ จะทำแบบใหม่ตามนี้ครับ'] }])
   expect(h.resolved).toEqual([{ id: '1', ref: 'ref-1' }])
 })
+
+const ACK = '✅ รับทราบครับ'
+const acks = (h: { replied: Array<{ lines: string[] }> }) => h.replied.filter(sent => sent.lines[0] === ACK)
+
+test('the owner reply is acknowledged once in the ask thread, before the pick is acted on', async () => {
+  const h = await parked()
+  h.replies.set('1', async () => h.from(KAN, 'c9', 'แบบ C'))
+  await h.engine.checkReplies()
+  expect(h.replied).toEqual([{ id: '1', ref: 'ref-1', lines: [ACK] }])
+})
+
+test('replies from other people are acknowledged too', async () => {
+  const h = await parked()
+  h.replies.set('1', async () => h.from(PALM, 'c8', 'ขอดูก่อนนะ'))
+  await h.engine.checkReplies()
+  expect(acks(h)).toHaveLength(1)
+  expect(h.store.get(h.id)!.pick!.ask!.acked).toEqual(['c8'])
+})
+
+test('a reply is never acknowledged twice, not by the next poll and not by reread', async () => {
+  const h = await parked()
+  h.replies.set('1', async () => h.from(KAN, 'c9', 'ขอคิดก่อนครับ'))
+  await h.engine.checkReplies()
+  await h.engine.checkReplies()
+  await h.engine.reread(h.id)
+  expect(acks(h)).toHaveLength(1)
+  expect(h.store.get(h.id)!.pick!.ask!.acked).toEqual(['c9'])
+})
+
+test('a failed acknowledgement is logged and never blocks the pick', async () => {
+  const h = await parked({ source: { reply: async () => { throw new Error('ClickUp is down') } } })
+  const logged = console.error
+  console.error = () => {}
+  h.replies.set('1', async () => h.from(KAN, 'c9', 'แบบ C'))
+  try {
+    await h.engine.checkReplies()
+  } finally {
+    console.error = logged
+  }
+  expect(await pickFile(h.store.get(h.id)!)).toContain('Option: C\n')
+})
+
+test('the acknowledged ids are kept per ask and capped at the newest 50', async () => {
+  const h = await parked()
+  const many = Array.from({ length: 60 }, (_, index) => ({ id: `c${100 + index}`, author: 'Palm', authorId: '99x', text: 'hi', images: [] }))
+  h.replies.set('1', async () => ({ replies: many, lastId: 'c159' }))
+  await h.engine.checkReplies()
+  const acked = h.store.get(h.id)!.pick!.ask!.acked!
+  expect(acked).toHaveLength(50)
+  expect(acked.at(-1)).toBe('c159')
+})
