@@ -140,6 +140,20 @@ describe('shiki doctor', () => {
     expect(h.err()).toContain('No queue item bogus')
   })
 
+  test('auto lists the switches; auto <intent> on|off puts the change as the given actor', async () => {
+    const h = harness(() => Response.json({ auto: { pick: true, reject: false, keep: false } }))
+    expect(await main(['doctor', 'auto'], h.deps)).toBe(0)
+    expect(h.out()).toContain('pick on')
+    expect(h.out()).toContain('keep off')
+    expect(await main(['doctor', 'auto', 'keep', 'on', '--as', 'human', '--why', 'trusted'], h.deps)).toBe(0)
+    expect(h.calls).toEqual([
+      { method: 'GET', path: '/api/doctor/auto', body: undefined },
+      { method: 'PUT', path: '/api/doctor/auto', body: { actor: 'human', why: 'trusted', intent: 'keep', on: true } },
+    ])
+    expect(await main(['doctor', 'auto', 'land', 'on'], h.deps)).not.toBe(0)
+    expect(await main(['doctor', 'auto', 'pick', 'maybe'], h.deps)).not.toBe(0)
+  })
+
   test('apply and dismiss post the actor from SKD_ACTOR', async () => {
     const h = harness(() => Response.json({ suggestion: { ...SUGGESTION, status: 'applied' } }), { SKD_ACTOR: 'grok' })
     expect(await main(['doctor', 'apply', '6ea3'], h.deps)).toBe(0)

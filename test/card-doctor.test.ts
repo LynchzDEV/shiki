@@ -383,3 +383,87 @@ test('with the real workflow runner the doctor graph runs in its own empty repo 
     await rm(home, { recursive: true, force: true })
   }
 })
+
+const autoOn = (...intents: Array<'pick' | 'reject' | 'keep'>) => async () => ({ pick: intents.includes('pick'), reject: intents.includes('reject'), keep: intents.includes('keep') })
+
+test('auto-apply is off by default: a pick suggestion stays proposed and the card does not move', async () => {
+  const s = setup({ replies: () => [said('c9', 'เอา B ครับ')] })
+  const item = await s.park()
+  await s.doctor.diagnose(item.id, by('grok'))
+  await s.answer([pickB])
+  expect(s.doctor.show(item.id).status).toBe('proposed')
+  expect(s.h.store.get(item.id)!.state).toBe('waiting-pick')
+  expect((await s.history(item.id)).map(entry => entry.action)).toEqual(['diagnose'])
+})
+
+test('an enabled intent is applied at once as doctor-auto through the toolbox, with audit lines', async () => {
+  const s = setup({ replies: () => [said('c9', 'เอา B ครับ')], doctor: { auto: autoOn('pick') } })
+  const item = await s.park()
+  await s.doctor.diagnose(item.id, by('grok'))
+  await s.answer([pickB])
+  const suggestion = s.doctor.show(item.id)
+  expect(suggestion.status).toBe('applied')
+  expect(['queued', 'building']).toContain(s.h.store.get(item.id)!.state)
+  const audit = await s.history(item.id)
+  expect(audit.map(entry => [entry.actor, entry.action, entry.result])).toEqual([['grok', 'diagnose', 'ok'], ['doctor-auto', 'pick', 'ok']])
+  expect(audit[1]).toMatchObject({ why: `auto: doctor ${suggestion.id}`, key: `doctor-${suggestion.id}-0`, params: { option: 'B' } })
+})
+
+test('a disabled intent is only proposed while another intent is enabled, and an empty plan is never applied', async () => {
+  const s = setup({ replies: () => [said('c9', 'ไม่เอาสักแบบ')], doctor: { auto: autoOn('pick', 'keep') } })
+  const item = await s.park()
+  await s.doctor.diagnose(item.id, by('grok'))
+  await s.answer([line({ intent: 'reject', replyId: 'c9', confidence: 0.8 })])
+  expect(s.doctor.show(item.id).status).toBe('proposed')
+  expect(s.h.store.get(item.id)!.state).toBe('waiting-pick')
+
+  await rm(dir, { recursive: true, force: true })
+  await mkdir(dir, { recursive: true })
+  const none = setup({ replies: () => [said('c9', 'A กับ B ต่างกันยังไง')], doctor: { auto: autoOn('pick', 'reject', 'keep') } })
+  const card = await none.park()
+  await none.doctor.diagnose(card.id, by('grok'))
+  await none.answer([line({ intent: 'question', replyId: 'c9', confidence: 0.9 })])
+  expect(none.doctor.show(card.id)).toMatchObject({ status: 'proposed', actions: [] })
+  expect((await none.history(card.id)).map(entry => entry.action)).toEqual(['diagnose'])
+})
+
+test('when the card is held, auto-apply is refused, the suggestion stays proposed and the attention entry says why; nothing is retried', async () => {
+  const s = setup({ replies: () => [said('c9', 'เอา B ครับ')], doctor: { auto: autoOn('pick') } })
+  const item = await s.park()
+  await s.toolbox.claim(item.id, 'grok', 30 * 60_000, 'fixing')
+  await s.doctor.diagnose(item.id, by('grok'))
+  await s.answer([pickB])
+  expect(s.doctor.show(item.id).status).toBe('proposed')
+  expect(s.h.store.get(item.id)!.state).toBe('waiting-pick')
+  expect(s.alerts.at(-1)!.detail).toContain('Auto-apply was refused')
+  expect(s.alerts.at(-1)!.detail).toContain('grok holds this card')
+  expect(s.alerts.at(-1)!.detail).toContain(`shiki doctor apply ${item.id}`)
+  expect((await s.history(item.id)).filter(entry => entry.actor === 'doctor-auto').map(entry => entry.result)).toEqual(['refused'])
+  await Bun.sleep(30)
+  expect((await s.history(item.id)).filter(entry => entry.actor === 'doctor-auto')).toHaveLength(1)
+})
+
+test('doctor-auto cannot be named from outside: the public apply and the routes refuse it with 403, and the doctor still cannot apply', async () => {
+  const s = setup({ replies: () => [said('c9', 'เอา B ครับ')] })
+  const item = await s.park()
+  await s.doctor.diagnose(item.id, by('grok'))
+  await s.answer([pickB])
+  expect(await refusal(s.doctor.apply(item.id, by('doctor-auto')))).toMatchObject({ status: 403 })
+  expect(await refusal(s.doctor.apply(item.id, by('doctor')))).toMatchObject({ status: 403 })
+  const app = new Elysia().use(queueRoutes(s.h.store, s.h.engine, undefined, undefined, undefined, s.toolbox, s.doctor))
+  for (const path of ['doctor', 'doctor/apply', 'doctor/dismiss', 'pick']) {
+    const res = await app.handle(new Request(`http://127.0.0.1:7777/api/queue/${item.id}/${path}`, { method: 'POST', headers: { host: '127.0.0.1:7777', 'content-type': 'application/json' }, body: JSON.stringify({ actor: 'doctor-auto', params: { option: 'B' } }) }))
+    expect(res.status).toBe(403)
+  }
+  expect(s.doctor.show(item.id).status).toBe('proposed')
+})
+
+test('the card state changing before auto-apply marks the suggestion stale and reports it', async () => {
+  const s = setup({ replies: () => [said('c9', 'เอา B ครับ')], doctor: { auto: autoOn('pick') } })
+  const item = await s.park()
+  await s.doctor.diagnose(item.id, by('grok'))
+  await s.h.store.update(item.id, { state: 'ready' })
+  await s.answer([pickB])
+  expect(s.doctor.show(item.id).status).toBe('stale')
+  expect(s.alerts.at(-1)!.detail).toContain('Auto-apply was refused')
+})

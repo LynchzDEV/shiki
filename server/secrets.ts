@@ -58,7 +58,12 @@ export type AppConfig = {
   pickNonePhrases: string[]
   pickKeepPhrases: string[]
   cardLimits: Record<string, number>
+  doctorAuto: DoctorAuto
 }
+
+export const DOCTOR_AUTO_INTENTS = ['pick', 'reject', 'keep'] as const
+export type DoctorAutoIntent = typeof DOCTOR_AUTO_INTENTS[number]
+export type DoctorAuto = Record<DoctorAutoIntent, boolean>
 
 export type PublicSecretsView = {
   zaiBaseUrl: string
@@ -222,6 +227,10 @@ export const MAX_CARD_LIMIT = 100
 const readCardLimits = (raw: unknown): Record<string, number> => (raw !== null && typeof raw === 'object' && !Array.isArray(raw)
   ? Object.fromEntries(Object.entries(raw).filter(([action, limit]) => /^[a-z]{1,20}$/.test(action) && Number.isInteger(limit) && (limit as number) >= 0 && (limit as number) <= MAX_CARD_LIMIT))
   : {})
+const readDoctorAuto = (raw: unknown): DoctorAuto => {
+  const given = raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : {}
+  return { pick: given.pick === true, reject: given.reject === true, keep: given.keep === true }
+}
 const readQueueParallel = (raw: unknown): number => wholeIn(raw, MAX_QUEUE_PARALLEL, 1)
 
 export async function readConfig(): Promise<AppConfig> {
@@ -240,6 +249,7 @@ export async function readConfig(): Promise<AppConfig> {
     pickNonePhrases: readNonePhrases(raw.pickNonePhrases),
     pickKeepPhrases: readNonePhrases(raw.pickKeepPhrases),
     cardLimits: readCardLimits(raw.cardLimits),
+    doctorAuto: readDoctorAuto(raw.doctorAuto),
   }
 }
 

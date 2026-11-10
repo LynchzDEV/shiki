@@ -1,5 +1,5 @@
 import { segment } from '../client'
-import { arg, emit, type Command, type Context, type OptionSpec } from '../command'
+import { arg, emit, UsageError, type Command, type Context, type OptionSpec } from '../command'
 import { actorOf, whyOf } from './queue'
 
 type Json = Record<string, unknown>
@@ -33,6 +33,22 @@ function suggestionText(id: string, value: unknown): string {
   ].join('\n') + '\n'
 }
 
+const AUTO_INTENTS = ['pick', 'reject', 'keep']
+
+function autoText(value: unknown): string {
+  const auto = ((value ?? {}) as Json).auto as Json | undefined
+  return `Doctor auto-apply (off until a human turns it on):\n${AUTO_INTENTS.map(intent => `  ${intent} ${auto?.[intent] === true ? 'on' : 'off'}`).join('\n')}\n`
+}
+
+async function auto(ctx: Context): Promise<void> {
+  const intent = ctx.args.intent
+  const state = ctx.args.state
+  if (intent === undefined) return emit(ctx, await ctx.client.get('/api/doctor/auto'), autoText)
+  if (!AUTO_INTENTS.includes(intent)) throw new UsageError(`intent must be one of ${AUTO_INTENTS.join(', ')}`)
+  if (state !== 'on' && state !== 'off') throw new UsageError('say on or off')
+  emit(ctx, await ctx.client.put('/api/doctor/auto', { ...body(ctx), intent, on: state === 'on' }), autoText)
+}
+
 const body = (ctx: Context): Json => ({ actor: actorOf(ctx), why: whyOf(ctx) })
 
 export const doctorCommands: Command[] = [
@@ -62,5 +78,12 @@ export const doctorCommands: Command[] = [
     options: OPTIONS,
     summary: 'Mark the doctor\'s suggestion as wrong; nothing is run',
     run: async (ctx) => emit(ctx, await ctx.client.post(doctorPath(ctx, '/dismiss'), body(ctx)), value => suggestionText(arg(ctx, 'id'), value)),
+  },
+  {
+    path: ['doctor', 'auto'],
+    args: ['intent?', 'state?'],
+    options: OPTIONS,
+    summary: 'Show which doctor intents apply by themselves; with an intent and on or off, change one (human only)',
+    run: auto,
   },
 ]

@@ -916,6 +916,25 @@ can never apply.
 .TP
 .BI "shiki doctor dismiss " id " \fR[\fB\-\-as\fR \fINAME\fR] [\fB\-\-why\fR \fITEXT\fR]"
 Mark the suggestion wrong; nothing is run.
+.TP
+.BI "shiki doctor auto " "\fR[\fIintent\fR \fBon\fR|\fBoff\fR] [\fB\-\-as\fR \fINAME\fR] [\fB\-\-why\fR \fITEXT\fR]"
+Without arguments, show which intents
+.RB ( pick ,
+.BR reject ,
+.BR keep )
+the doctor applies by itself as soon as it has a suggestion. All are off
+until a human turns one on; only
+.B human
+may change it, and each change is logged in the settings audit log. An
+auto\-applied suggestion runs the same way as
+.B doctor apply
+as the actor
+.B doctor\-auto
+with why
+.IR "auto: doctor <suggestion id>" ,
+which no one else may use. If the item is held, a limit is reached or the
+item moved, nothing is run: the suggestion stays proposed (or becomes
+stale), the attention entry says why, and it is not retried.
 .SH CLICKUP MESSAGES
 The fixed texts Shikidan posts in a ClickUp pick thread are files a human
 can edit:

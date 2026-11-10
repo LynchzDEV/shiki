@@ -7,6 +7,7 @@ import { actorSchema, HUMAN } from '../card-toolbox'
 import { isMessageName, listMessages, MAX_MESSAGE, resetMessage, setMessage } from '../messages'
 import { clearOverlay, FLOW_ID, overlayNodeOf, readFlowOverlay, setOverlayNode } from '../plugins/flow-overlays'
 import { QueueRefusal } from '../queue-refusal'
+import { DOCTOR_AUTO_INTENTS, readConfig, writeConfig } from '../secrets'
 
 type Status = { status?: number | string }
 
@@ -14,6 +15,8 @@ const changeSchema = z.object({ actor: actorSchema, why: z.string().trim().min(1
 const messageSchema = changeSchema.extend({ text: z.string().max(MAX_MESSAGE * 2) })
 const overlaySetSchema = changeSchema.extend({ nodeId: z.string().min(1).max(64) }).passthrough()
 const overlayClearSchema = changeSchema.extend({ nodeId: z.string().min(1).max(64).optional() })
+const autoSchema = changeSchema.extend({ intent: z.enum(DOCTOR_AUTO_INTENTS), on: z.boolean() })
+const AUTO_RULE = `Send { actor, intent, on }: actor is a short lowercase name such as human, intent is one of ${DOCTOR_AUTO_INTENTS.join(', ')}, on is true or false`
 const OVERLAY_RULE = 'Send { actor, nodeId, instructions?, title? }: actor is a short lowercase name such as human'
 
 export async function humanChange<T>(set: Status, change: { actor: string; why?: string | undefined; action: string; params: unknown }, work: () => Promise<T>): Promise<T | { error: string }> {
@@ -57,6 +60,12 @@ export function humanSettingsRoutes() {
       const input = parsedBody(changeSchema, body, set, 'Send { actor }: actor is a short lowercase name such as human')
       if ('error' in input) return input
       return humanChange(set, { ...input, action: 'message-reset', params: { name } }, async () => { await resetMessage(name); return { ok: true } })
+    })
+    .get('/api/doctor/auto', async () => ({ auto: (await readConfig()).doctorAuto }))
+    .put('/api/doctor/auto', ({ body, set }) => {
+      const input = parsedBody(autoSchema, body, set, AUTO_RULE)
+      if ('error' in input) return input
+      return humanChange(set, { ...input, action: 'doctor-auto-set', params: { intent: input.intent, on: input.on } }, async () => ({ auto: (await writeConfig({ doctorAuto: { ...(await readConfig()).doctorAuto, [input.intent]: input.on } })).doctorAuto }))
     })
     .get('/api/studio/flow-overlays/:flowId', async ({ params, set }) => {
       if (!FLOW_ID.test(params.flowId)) { set.status = 400; return { error: `Not a flow id: ${params.flowId}` } }

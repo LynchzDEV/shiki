@@ -11,10 +11,11 @@ import { lastEvidence, SETTLED, taggedBody, type RunView } from './queue-prompts
 import { QueueRefusal } from './queue-refusal'
 import type { SourceReply } from './queue-source'
 import type { DoctorAction, DoctorSuggestion, QueueItem, QueueStore } from './queue-store'
-import { configDir, readConfig } from './secrets'
+import { configDir, readConfig, type DoctorAuto } from './secrets'
 import { identifier, workflowSchema, type Workflow } from './workflows'
 
 export const DOCTOR = 'doctor'
+export const DOCTOR_AUTO = 'doctor-auto'
 export const DOCTOR_INTENTS = ['pick', 'reject', 'keep', 'question', 'off-topic', 'unknown'] as const
 export type DoctorIntent = typeof DOCTOR_INTENTS[number]
 export const DIAGNOSES_PER_DAY = 3
@@ -58,6 +59,7 @@ export type DoctorDeps = {
   replies(item: QueueItem): Promise<SourceReply[]>
   alert(item: QueueItem, detail: string, command: string | null): void
   agent?: () => Promise<DoctorAgent>
+  auto?: () => Promise<DoctorAuto>
   workRoot?: () => string
   now?: () => number
 }
@@ -209,6 +211,7 @@ export function cardDoctor(deps: DoctorDeps): CardDoctor {
   const { store, toolbox } = deps
   const now = deps.now ?? Date.now
   const agent = deps.agent ?? defaultAgent
+  const autoSettings = deps.auto ?? (async () => (await readConfig()).doctorAuto)
   const workRoot = deps.workRoot ?? (() => join(configDir(), 'doctor', 'runs'))
   const pending = new Map<string, Pending>()
   const diagnosing = new Set<string>()
@@ -252,16 +255,16 @@ export function cardDoctor(deps: DoctorDeps): CardDoctor {
     if (used >= DIAGNOSES_PER_DAY) throw new QueueRefusal(`The doctor looked at this card ${DIAGNOSES_PER_DAY} times in 24 hours; it needs a human now`, 429)
   }
 
-  async function finish(runId: string, run: RunView): Promise<void> {
+  async function finish(runId: string, run: RunView): Promise<{ id: string; suggestion: DoctorSuggestion } | null> {
     const given = pending.get(runId)
-    if (given === undefined) return
+    if (given === undefined) return null
     pending.delete(runId)
     diagnosing.delete(given.cardId)
     try {
       const verdict = doctorVerdict(run, given)
       const reply = given.replies.find(entry => entry.id === verdict.replyId)
       const item = store.get(given.cardId)
-      if (item !== undefined) await surface(item, verdict, doctorPlan(verdict, { reply, keepStep: keepStepOf(given.flowId) }), given)
+      return item === undefined ? null : { id: item.id, suggestion: await surface(item, verdict, doctorPlan(verdict, { reply, keepStep: keepStepOf(given.flowId) }), given) }
     } finally {
       await rm(given.dir, { recursive: true, force: true }).catch(error => console.error('doctor: run folder not removed', error))
     }
@@ -273,7 +276,8 @@ export function cardDoctor(deps: DoctorDeps): CardDoctor {
     const replies = (await deps.replies(first)).slice(-MAX_REPLIES)
     if (replies.length === 0) throw new QueueRefusal('The owner has not replied since the ask', 409)
     const params = { replyIds: replies.map(reply => reply.id) }
-    return toolbox.logged(id, meta.actor, 'diagnose', meta.why, params, async (item, history) => {
+    let settled: { id: string; suggestion: DoctorSuggestion } | null = null
+    const result = await toolbox.logged(id, meta.actor, 'diagnose', meta.why, params, async (item, history) => {
       refuseDiagnosis(item, meta.actor, history)
       const given = { cardId: item.id, state: item.state, askRef: item.pick?.ask?.ref ?? null, options: item.pick!.options, replies, flowId: deps.runner.get(item.runIds.at(-1) ?? '')?.workflow?.id ?? item.flowId }
       let dir: string | null = null
@@ -290,13 +294,14 @@ export function cardDoctor(deps: DoctorDeps): CardDoctor {
       pending.set(runId, { ...given, dir })
       diagnosing.add(item.id)
       const run = deps.runner.get(runId)
-      if (run !== undefined && SETTLED.has(run.status)) await finish(runId, run)
+      if (run !== undefined && SETTLED.has(run.status)) settled = await finish(runId, run)
       return { runId, suggestion: null }
     })
+    if (settled !== null) await autoApply(settled.id, settled.suggestion)
+    return result
   }
 
-  const apply = (id: string, meta: DiagnoseMeta): Promise<DoctorSuggestion> => serial(async () => {
-    if (meta.actor === DOCTOR) throw new QueueRefusal('The doctor can never apply its own suggestion; a human or another actor must', 403)
+  const applyAs = (id: string, actor: string, whyFor: (suggestion: DoctorSuggestion) => string): Promise<DoctorSuggestion> => serial(async () => {
     const item = found(id)
     const suggestion = suggestionOf(item)
     if (suggestion.status !== 'proposed') throw new QueueRefusal(`The suggestion is ${suggestion.status}`, 409)
@@ -307,12 +312,31 @@ export function cardDoctor(deps: DoctorDeps): CardDoctor {
     if (suggestion.actions.length === 0) throw new QueueRefusal(`The suggestion has no actions: ${suggestion.reason}`, 409)
     for (const [index, step] of suggestion.actions.entries()) {
       if ((step.action !== 'pick' && step.action !== 'resume') || !toolbox.traits(step.action, step.params).doctor) throw new QueueRefusal(`The doctor may not ${String(step.action)}`, 403)
-      await toolbox.perform(id, step.action, step.params, { actor: meta.actor, why: `doctor ${suggestion.id}: ${meta.why}`, key: `doctor-${suggestion.id}-${index}`, expect: suggestion.state })
+      await toolbox.perform(id, step.action, step.params, { actor, why: whyFor(suggestion), key: `doctor-${suggestion.id}-${index}`, expect: suggestion.state })
     }
     const applied: DoctorSuggestion = { ...suggestion, status: 'applied' }
     if (store.get(id) !== undefined) await store.update(id, { doctor: applied }, { touch: false })
     return applied
   })
+
+  const apply = async (id: string, meta: DiagnoseMeta): Promise<DoctorSuggestion> => {
+    if (meta.actor === DOCTOR) throw new QueueRefusal('The doctor can never apply its own suggestion; a human or another actor must', 403)
+    if (meta.actor === DOCTOR_AUTO) throw new QueueRefusal('doctor-auto is only used by the doctor\'s own auto-apply', 403)
+    return applyAs(id, meta.actor, suggestion => `doctor ${suggestion.id}: ${meta.why}`)
+  }
+
+  async function autoApply(id: string, suggestion: DoctorSuggestion): Promise<void> {
+    const { intent } = suggestion
+    if (suggestion.actions.length === 0 || (intent !== 'pick' && intent !== 'reject' && intent !== 'keep') || !(await autoSettings())[intent]) return
+    try {
+      await applyAs(id, DOCTOR_AUTO, found => `auto: doctor ${found.id}`)
+    } catch (error) {
+      const item = store.get(id)
+      if (item === undefined) return
+      const reason = error instanceof QueueRefusal ? error.message : `it failed: ${error instanceof Error ? error.message : String(error)}`
+      deps.alert(item, `Doctor suggests: ${summaryOf(suggestion)}. Auto-apply was refused (${reason}). Apply: shiki doctor apply ${id} --as <you>`, `shiki doctor show ${id}`)
+    }
+  }
 
   const dismiss = (id: string, meta: DiagnoseMeta): Promise<DoctorSuggestion> => serial(async () => {
     if (meta.actor === DOCTOR) throw new QueueRefusal('The doctor cannot dismiss its own suggestion', 403)
@@ -330,7 +354,11 @@ export function cardDoctor(deps: DoctorDeps): CardDoctor {
 
   return {
     diagnose,
-    onRunSettled: async run => { if (SETTLED.has(run.status)) await finish(run.id, run) },
+    onRunSettled: async run => {
+      if (!SETTLED.has(run.status)) return
+      const settled = await finish(run.id, run)
+      if (settled !== null) await autoApply(settled.id, settled.suggestion)
+    },
     apply,
     dismiss,
     show: id => suggestionOf(found(id)),

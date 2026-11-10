@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { requireLocal, type GuardContext } from '../auth'
 import { peerAddress, trustedHostRequest } from '../local-access'
 import { actorSchema, cardToolbox, DEFAULT_CARD_LIMITS, HUMAN, type ActionMeta, type ActionName, type CardShow, type CardToolbox } from '../card-toolbox'
-import type { CardDoctor, DiagnoseMeta } from '../card-doctor'
+import { DOCTOR_AUTO, type CardDoctor, type DiagnoseMeta } from '../card-doctor'
 import { QueueRefusal, SourceFailure, type QueueEngine } from '../queue-engine'
 import { cleanPickSummary } from '../queue-prompts'
 import type { QueueItem, QueueStore } from '../queue-store'
@@ -169,6 +169,11 @@ export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: 
   const snapshot = () => ({ items: store.list().map(item => withStep(cleaned(item), runs, engine.preparing?.() ?? null)), checkedAt: engine.checkedAt(), paused: engine.paused?.() ?? null, ...settings })
   return new Elysia()
     .onBeforeHandle(requireLocalExceptMockupAssets)
+    .onBeforeHandle(({ body, set }) => {
+      if ((body as { actor?: unknown } | null | undefined)?.actor !== DOCTOR_AUTO) return
+      set.status = 403
+      return { error: `${DOCTOR_AUTO} is only used by the doctor's own auto-apply` }
+    })
     .onBeforeHandle(({ params, set }) => {
       const given = (params as { id?: string } | undefined)?.id
       if (given === undefined) return
