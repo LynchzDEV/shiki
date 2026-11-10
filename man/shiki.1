@@ -582,6 +582,10 @@ itself.
 .B shiki queue list
 Items in build order: id, state, source, title, and the error or open
 questions.
+Every command that takes an item
+.I id
+also accepts the start of an id: at least 4 characters that match exactly one item.
+An id that matches several items is refused.
 .TP
 .BI "shiki queue add " "source externalId" " \fR[\fB\-\-repo\fR \fIDIR\fR] [\fB\-\-flow\fR \fIID\fR] [\fB\-\-next\fR]"
 Add an item. It is built in

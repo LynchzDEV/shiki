@@ -6,6 +6,7 @@ import { peerAddress, trustedHostRequest } from '../local-access'
 import { QueueRefusal, SourceFailure, type QueueEngine } from '../queue-engine'
 import { cleanPickSummary, NO_PICK } from '../queue-prompts'
 import type { QueueItem, QueueStore } from '../queue-store'
+import { resolveQueueId } from '../queue-id'
 import { mockupResponse } from '../queue-mockups'
 import { queueStep, type QueueStep, type QueueStepRun } from '../queue-step'
 import { listFolderRepos, resolveQueueFolder } from '../queue-folder'
@@ -134,6 +135,14 @@ export function queueRoutes(store: QueueStore, engine: QueueEngineRoutes, tree: 
   const snapshot = () => ({ items: store.list().map(item => withStep(cleaned(item), runs, engine.preparing?.() ?? null)), checkedAt: engine.checkedAt(), paused: engine.paused?.() ?? null, ...settings })
   return new Elysia()
     .onBeforeHandle(requireLocalExceptMockupAssets)
+    .onBeforeHandle(({ params, set }) => {
+      const given = (params as { id?: string } | undefined)?.id
+      if (given === undefined) return
+      const resolved = resolveQueueId(store.list(), given)
+      if ('error' in resolved && resolved.status === 404) return
+      if ('error' in resolved) { set.status = resolved.status; return { error: resolved.error } }
+      ;(params as { id: string }).id = resolved.id
+    })
     .get('/api/queue', async () => { await readSettings(); return snapshot() })
     .put('/api/queue/settings', async ({ body, set }) => {
       const parsed = settingsSchema.safeParse(body)

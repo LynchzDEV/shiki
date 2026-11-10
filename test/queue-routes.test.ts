@@ -658,6 +658,17 @@ test('POST reread returns the item and maps the engine refusals', async () => {
   expect((await post(app, '/api/queue/nope/reread')).status).toBe(404)
 })
 
+test('a route accepts a unique id prefix and refuses an ambiguous one', async () => {
+  const items = store()
+  const a = await items.add({ ...newItem, externalId: '1' }, 'end')
+  await items.update(a.id, { state: 'waiting-pick' })
+  const app = new Elysia().use(queueRoutes(items, engine(items)))
+  const ok = await post(app, `/api/queue/${a.id.slice(0, 8)}/reread`)
+  expect([ok.status, (await ok.json()).item.id]).toEqual([200, a.id])
+  const short = await post(app, `/api/queue/${a.id.slice(0, 3)}/reread`)
+  expect([short.status, (await short.json()).error]).toEqual([404, `No queue item ${a.id.slice(0, 3)}`])
+})
+
 test('PUT /api/queue/settings stores pickAskTo and the none phrases, trims them, clears with null or [], and GET shows them', async () => {
   const items = store()
   const app = new Elysia().use(queueRoutes(items, engine(items)))
