@@ -657,7 +657,7 @@ test('one unclear reply yields one attention entry and exactly one webhook event
 
 test('an unclear reply with several lines or a very long first line is cut to its first line, 200 characters', async () => {
   const h = await parked()
-  h.replies.set('1', async () => h.from(KAN, 'c9', `\n${'ก'.repeat(300)}\nsecond line`))
+  h.replies.set('1', async () => h.from(KAN, 'c9', `\n${'ก'.repeat(300)}?\nsecond line`))
   await h.engine.checkReplies()
   expect(h.needs.at(-1)!.reason).toBe(`ClickUp reply not understood: "${'ก'.repeat(200)}"`)
 })
@@ -821,4 +821,24 @@ test('repost reports a failed publish or post as a SourceFailure and leaves the 
   expect(error).toBeInstanceOf(SourceFailure)
   expect((error as Error).message).toBe('Publishing is down')
   expect(h.store.get(h.id)!.pick!.ask).toMatchObject({ ref: '', error: 'Publishing is down' })
+})
+
+const FREE_TEXT = 'มันควรแสดงผลทับเว็บไปเลย ไม่ใช่ดันออกมา'
+
+test('a free-text reply from the card owner is a rejection that carries the text as feedback', async () => {
+  const h = await parked()
+  h.replies.set('1', async () => h.from(KAN, 'c9', FREE_TEXT))
+  await h.engine.checkReplies()
+  const file = await pickFile(h.store.get(h.id)!)
+  expect(file).toContain('Option: none\n')
+  expect(file).toContain(`> ${FREE_TEXT}`)
+  expect(h.notices.map(notice => notice.event)).toEqual(['picked'])
+})
+
+test('the same free text from the bot account is not a rejection while the owner is someone else', async () => {
+  const h = await parked()
+  h.replies.set('1', async () => h.from(PALM, 'c9', FREE_TEXT))
+  await h.engine.checkReplies()
+  expect(h.store.get(h.id)!.state).toBe('waiting-pick')
+  expect(h.notices.map(notice => notice.event)).toEqual(['pick-unclear'])
 })

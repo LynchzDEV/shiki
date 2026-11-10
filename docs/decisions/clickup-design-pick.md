@@ -95,7 +95,7 @@ C <description>
 
 - **none:** the text contains `ไม่เอาสักแบบ`, `ไม่ชอบเลย`, or the word `none`. The feedback is the text without that phrase, or the whole text when nothing else is left.
 - **pick:** exactly one distinct option id appears as a standalone token, and the text has no negation (`ไม่`, `not`, `no`, `don't`). A token is standalone when no Latin letter or digit sits right before or after it, so `แบบC`, `C ครับ` and `(C)` all count. The note is the text with that token and the filler words removed (`แบบ`, `เอา`, `ข้อ`, `เลือก`, `ครับ`, `ค่ะ`, `คะ`, `นะ`), plus punctuation, trimmed. An empty note means none.
-- **unclear:** anything else, which covers zero letters, two letters, or a negation.
+- **unclear:** anything else, which covers zero letters, two letters, or a negation. Exception since 2026-11-10: an owner's free-text comment is a none (see Operator-driven replies).
 
 Examples:
 
@@ -193,7 +193,7 @@ These replace the earlier sections where they disagree.
 - **Reply parsing is strict.** Only the first non-empty line decides. Filler words (แบบ, เอา, ข้อ, เลือก, ตัว, option, ครับ, ค่ะ, คะ, นะ, จ้า), spaces and punctuation are removed.
   - The none phrase on that line gives none.
   - Exactly one option id left gives a pick, and the lines after the first become the note.
-  - Anything else is unclear: the card keeps waiting and the webhook sends `pick-unclear`.
+  - Anything else is unclear, unless it is an owner's free-text comment (2026-11-10, see Operator-driven replies): the card keeps waiting and the webhook sends `pick-unclear`.
   - So `C ครับ ปุ่มใหญ่ขึ้นหน่อย` on one line is unclear, while the same text with the note on the next line picks C. English sentences that happen to contain "a" never pick.
 - **Publishing skips `renders/` and `verify/` at any depth.** The overview render shows the real screenshots as thumbnails. Any copied image whose bytes match an image the card downloaded from ClickUp is replaced by the placeholder.
 - **Option lines come only from `## Options`** (`- A | subtitle | desc` becomes `A subtitle — desc`). The `## Recommendation` section is ignored.
@@ -205,9 +205,16 @@ These replace the earlier sections where they disagree.
 
 ## Operator-driven replies
 
-A real reply, "ไม่เอาซักช้อยส์เลย มันควรแสดงผลทับเว็บไปเลย ไม่ใช่ดันออกมา" (reject all, show it as an overlay, not a push), was read as unclear, `lastSeenId` moved on, and the card sat with nobody told. Hardcoding a rule per phrasing does not scale, so an operator bot (Grok) that runs `shiki` on the same machine reads the reply and acts. The parser stays strict on purpose; no "no letter means none" rule.
+A real reply, "ไม่เอาซักช้อยส์เลย มันควรแสดงผลทับเว็บไปเลย ไม่ใช่ดันออกมา" (reject all, show it as an overlay, not a push), was read as unclear, `lastSeenId` moved on, and the card sat with nobody told. Hardcoding a rule per phrasing does not scale, so an operator bot (Grok) that runs `shiki` on the same machine reads the reply and acts. The parser stays strict about letters and phrases, but since 2026-11-10 it has one "no letter means none" rule for the card owner (below).
 
 - **Unclear is never silent.** `apply` raises an attention entry, `ClickUp reply not understood: "<first line, 200 characters>"`, and the webhook sends `pick-unclear`. `needsYou` would also have sent a `pick` event, because the reason changes the notify fingerprint; the unclear path calls it with `{ webhook: false }`, so one unclear reply is one attention entry and one webhook event (`queueNeedsYou` in `queue-attention.ts`).
+- **An owner's free-text reply is a rejection with feedback (2026-11-10).** `parsePickReply(..., { freeText: true })` turns a reply that would be unclear into `none` with the trimmed text as feedback, when all of these hold:
+  - the caller allows it: `apply` passes `freeText` only when the reply's author is the ask's `ownerId`, never for `meId` alone (Shikidan's own ClickUp account, which the developer may also chat from), unless the owner is `me`;
+  - no line names an option, and no line starts with a keep phrase (the none plus keep conflict stays unclear);
+  - it is not a question (`?`, `？`, Thai question words, or an English question opener) and has no deferral anywhere in it (`เดี๋ยว`, `รอก่อน`, `ขอดูก่อน`, `ขอคิดก่อน`, `later`, `wait`);
+  - it has substance: after removing pleasantries (`ครับ`, `ค่ะ`, `โอเค`, `ขอบคุณ`, `ok`, `thanks`, runs of `5`, and so on) at least 10 letters remain (`MIN_FEEDBACK_LETTERS`). Thai vowel and tone marks are not letters here.
+
+  Known limit: a long off-topic owner comment that is neither a question nor a deferral is read as a rejection. The confirmation reply `ได้ครับ จะทำแบบใหม่ตามนี้ครับ` lets the owner see and correct it, and Grok can fix it with `shiki queue pick <id> <letter>`.
 - **`shiki queue pick <id> none --feedback TEXT`** rejects every variant with a reason. The route already took `feedback`; the CLI now exposes it.
 - **`shiki queue say <id> <text>`** writes through the plugin's `source.reply` (ClickUp plugin 1.11.0) inside the ask thread while the pick is open, and as an update on the card otherwise. It does not move `lastSeenId`: the plugin marks its own posts so they are skipped.
 - **`shiki queue reread <id>`** sets `lastSeenId` back to the ask and runs the normal reply check. The cursor is `ask.since`, the comment id the ask was posted as. Asks from before it existed have none, so reread uses `postedAt - 60 000` (the plugin compares `sinceId` as ms dates and `postedAt` is local ms).

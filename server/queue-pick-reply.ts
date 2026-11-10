@@ -12,6 +12,11 @@ const tidy = (text: string): string => text.replace(/\p{P}/gu, ' ').replace(/\s+
 const escaped = (word: string): string => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const asciiEdge = /[a-z0-9]/i
 
+const MIN_FEEDBACK_LETTERS = 10
+const DEFERRALS = /เดี๋ยว|รอก่อน|ขอดูก่อน|ขอคิดก่อน|\b(?:later|wait)\b/i
+const QUESTION_MARKERS = /[?？]|ไหม|มั้ย|มั๊ย|หรือเปล่า|รึเปล่า|ป่าว|ยังไง|อย่างไร|อะไร|ไหน|เหรอ|หรอ|ทำไม|เมื่อไหร่|ใคร/
+const QUESTION_OPENERS = /^[\s\p{P}]*(?:what|which|how|why|when|where|who|can|could|should|is|are|do|does)(?![a-z0-9])/iu
+const PLEASANTRIES = /ครับ|ค่ะ|คะ|นะ|จ้า|ขอบคุณ|โอเค|okay|ok|thanks|thank you|ได้|ดี|รับทราบ|5+/giu
 const THAI_MARKS = '\\u0E31\\u0E34-\\u0E3A\\u0E47-\\u0E4E'
 
 function phraseRegex(word: string): RegExp {
@@ -35,7 +40,17 @@ const noneWith = (text: string, rest: string): PickReply => {
   return { kind: 'none', feedback: feedback === '' ? text.trim() : feedback }
 }
 
-export function parsePickReply(text: string, options: readonly string[], extraNonePhrases: readonly string[] = [], extraKeepPhrases: readonly string[] = []): PickReply {
+const letterCount = (text: string): number => text.match(/\p{L}/gu)?.length ?? 0
+
+function isFeedback(lines: readonly string[], first: string, options: readonly string[], keeps: readonly RegExp[]): boolean {
+  const text = lines.join('\n')
+  if (lines.some(line => namesAnOption(line, options) || matchedBy(keeps, line) !== undefined)) return false
+  if (QUESTION_MARKERS.test(text) || QUESTION_OPENERS.test(first)) return false
+  if (DEFERRALS.test(text)) return false
+  return letterCount(text.replace(PLEASANTRIES, '')) >= MIN_FEEDBACK_LETTERS
+}
+
+export function parsePickReply(text: string, options: readonly string[], extraNonePhrases: readonly string[] = [], extraKeepPhrases: readonly string[] = [], { freeText = false }: { freeText?: boolean } = {}): PickReply {
   const lines = text.split('\n')
   const at = lines.findIndex(line => line.trim() !== '')
   if (at === -1) return { kind: 'unclear' }
@@ -52,7 +67,8 @@ export function parsePickReply(text: string, options: readonly string[], extraNo
   if (first.replace(EDGE_PUNCTUATION, '').toLowerCase() === 'no') return noneWith(text, after.join('\n'))
   const left = first.replace(FILLERS, '').replace(NOISE, '').toLowerCase()
   const option = options.find(id => id.toLowerCase() === left)
-  return option === undefined ? { kind: 'unclear' } : { kind: 'pick', option, note: after.join('\n').trim() }
+  if (option !== undefined) return { kind: 'pick', option, note: after.join('\n').trim() }
+  return freeText && isFeedback(lines, first, options, keeps) ? { kind: 'none', feedback: text.trim() } : { kind: 'unclear' }
 }
 
 export function pickOwner({ creator, assignees, me }: CardPeople): Person {

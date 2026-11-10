@@ -159,3 +159,25 @@ test('extra keep phrases match like the built-ins, and a keep phrase after a non
   expect(parsePickReply('ใช้ของเดิม', OPTIONS)).toEqual({ kind: 'unclear' })
   expect(parsePickReply('ขอใหม่ ใช้ของเดิม', OPTIONS, ['ขอใหม่'], extra)).toEqual({ kind: 'unclear' })
 })
+
+const free = (text: string) => parsePickReply(text, OPTIONS, [], [], { freeText: true })
+const FREE_REJECTIONS = ['มันควรแสดงผลทับเว็บไปเลย ไม่ใช่ดันออกมา', 'ปุ่มบางอันแสดงสูงกว่า domain switcher']
+const NOT_FEEDBACK = ['ขอบคุณครับ', 'โอเคครับ', '555', 'asdf', '???', 'แบบไหนดีครับ', 'can you make it bigger', 'ทำไมปุ่มหาย', 'เดี๋ยวดูให้นะครับ', 'ดูแล้วครับ เดี๋ยวแจ้งอีกที', 'looks fine, will check it later', 'A ครับ เหมือน NOW', 'ชอบ A กับ B', 'ไม่เอา A', 'A หรือ C ดี', 'ปุ่มบางอันแสดงสูงกว่า domain switcher\nB', 'ปุ่มบางอันแสดงสูงกว่า domain switcher\nเหมือน NOW']
+
+test('with free text allowed, a plain owner comment is a rejection carrying the comment', () => {
+  for (const text of FREE_REJECTIONS) expect(free(text)).toEqual(none(text))
+  expect(free('  ปุ่มบางอันแสดงสูงกว่า domain switcher\nและซ้อนกัน  ')).toEqual(none('ปุ่มบางอันแสดงสูงกว่า domain switcher\nและซ้อนกัน'))
+})
+
+test('with free text allowed, pleasantries, questions, deferrals and replies naming an option stay unclear', () => {
+  for (const text of NOT_FEEDBACK) expect(free(text)).toEqual({ kind: 'unclear' })
+})
+
+test('without free text allowed the same comments stay unclear', () => {
+  for (const text of [...FREE_REJECTIONS, ...NOT_FEEDBACK]) expect(parsePickReply(text, OPTIONS)).toEqual({ kind: 'unclear' })
+})
+
+test('a free-text comment starting with an extra keep phrase is not a rejection', () => {
+  expect(parsePickReply('ใช้ของเดิม ปุ่มบางอันแสดงสูงกว่า domain switcher', OPTIONS, [], ['ใช้ของเดิม'], { freeText: true })).toEqual({ kind: 'keep', note: 'ใช้ของเดิม ปุ่มบางอันแสดงสูงกว่า domain switcher' })
+  expect(parsePickReply('ขอใหม่ ใช้ของเดิม ปุ่มบางอันแสดงสูงกว่า domain switcher', OPTIONS, ['ขอใหม่'], ['ใช้ของเดิม'], { freeText: true })).toEqual({ kind: 'unclear' })
+})

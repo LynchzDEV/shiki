@@ -190,7 +190,7 @@ export function pickAsker(deps: QueueEngineDeps, steps: PickAskerSteps): PickAsk
     let decided: { reply: SourceReply; verdict: Decisive } | undefined
     const unclear: SourceReply[] = []
     for (const reply of result.replies.filter(judged).reverse()) {
-      const verdict = parsePickReply(reply.text, item.pick!.options, extraNone, extraKeep)
+      const verdict = parsePickReply(reply.text, item.pick!.options, extraNone, extraKeep, { freeText: reply.authorId === asked.ownerId })
       if (verdict.kind !== 'unclear') { decided = { reply, verdict }; break }
       unclear.unshift(reply)
     }
